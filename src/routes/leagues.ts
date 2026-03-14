@@ -7,7 +7,8 @@
 import type { FastifyInstance } from 'fastify';
 import type Database from 'better-sqlite3';
 import type { SQLiteJobQueue } from '../job-queue';
-import { makeResolveLeagueHook, requireLeagueAdmin, requireLeagueMember } from '../auth';
+import { makeResolveLeagueHook, requireLeagueAdmin, requireLeagueMember, requireAuth } from '../auth';
+import { randomUUID } from 'crypto';
 
 interface LeagueRouteOptions {
   db: Database.Database;
@@ -30,6 +31,59 @@ export async function registerLeagueRoutes(
     ).all();
 
     return reply.send({ leagues });
+  });
+
+  // ── Create a new league ────────────────────────────────────────────────────
+  // Any authenticated user can create a league and becomes the first admin
+  fastify.post('/leagues', async (request, reply) => {
+    requireAuth(request, reply);
+    
+    const body = request.body as {
+      name: string;
+      slug: string;
+      description?: string;
+      logo_url?: string;
+    };
+    
+    // Validate slug format (alphanumeric + hyphens only)
+    if (!/^[a-z0-9-]+$/.test(body.slug)) {
+      return reply.status(400).send({ 
+        error: 'Slug must be lowercase alphanumeric with hyphens only' 
+      });
+    }
+    
+    // Check slug uniqueness
+    const existing = db.prepare(
+      `SELECT id FROM leagues WHERE slug = ? AND deleted_at IS NULL`
+    ).get(body.slug);
+    
+    if (existing) {
+      return reply.status(409).send({ error: 'League slug already exists' });
+    }
+    
+    const leagueId = randomUUID();
+    const membershipId = randomUUID();
+    
+    // Create league and make creator the first admin in a transaction
+    db.transaction(() => {
+      db.prepare(
+        `INSERT INTO leagues (id, name, slug, description, logo_url, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+      ).run(leagueId, body.name, body.slug, body.description || null, body.logo_url || null);
+      
+      db.prepare(
+        `INSERT INTO league_memberships (id, league_id, user_id, role, joined_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'admin', datetime('now'), datetime('now'), datetime('now'))`
+      ).run(membershipId, leagueId, (request as any).user!.userId);
+    })();
+    
+    const league = db.prepare(
+      `SELECT id, name, slug, description, logo_url as logoUrl, created_at as createdAt
+       FROM leagues WHERE id = ?`
+    ).get(leagueId);
+    
+    request.log.info({ leagueId, userId: (request as any).user!.userId }, 'League created');
+    return reply.status(201).send({ league });
   });
 
   // ── League-scoped routes (require :leagueSlug param) ───────────────────────
@@ -227,6 +281,171 @@ export async function registerLeagueRoutes(
       ).all(seasonId, league.id);
 
       return reply.send({ standings });
+    });
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // LEAGUE MEMBER MANAGEMENT
+    // ──────────────────────────────────────────────────────────────────────────
+
+    // ── Join a league ──────────────────────────────────────────────────────
+    leagueScope.post('/leagues/:leagueSlug/join', async (request, reply) => {
+      requireAuth(request, reply);
+      
+      const league = (request as any).league;
+      const userId = (request as any).user!.userId;
+      
+      // Check if already a member
+      const existing = db.prepare(
+        `SELECT id FROM league_memberships
+         WHERE league_id = ? AND user_id = ? AND left_at IS NULL AND deleted_at IS NULL`
+      ).get(league.id, userId);
+      
+      if (existing) {
+        return reply.status(400).send({ error: 'Already a member of this league' });
+      }
+      
+      // Add as pilot
+      const membershipId = randomUUID();
+      db.prepare(
+        `INSERT INTO league_memberships (id, league_id, user_id, role, joined_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'pilot', datetime('now'), datetime('now'), datetime('now'))`
+      ).run(membershipId, league.id, userId);
+      
+      request.log.info({ leagueId: league.id, userId }, 'User joined league');
+      return reply.status(201).send({ message: 'Joined league successfully' });
+    });
+
+    // ── List league members ────────────────────────────────────────────────
+    leagueScope.get('/leagues/:leagueSlug/members', async (request, reply) => {
+      requireLeagueMember(request, reply);
+      
+      const league = (request as any).league;
+      
+      const members = db.prepare(
+        `SELECT 
+           lm.id, lm.role, lm.joined_at as joinedAt,
+           u.id as userId, u.email, u.display_name as displayName, u.avatar_url as avatarUrl
+         FROM league_memberships lm
+         JOIN users u ON lm.user_id = u.id
+         WHERE lm.league_id = ? AND lm.left_at IS NULL AND lm.deleted_at IS NULL
+         ORDER BY lm.joined_at ASC`
+      ).all(league.id);
+      
+      return reply.send({ members });
+    });
+
+    // ── Promote member to admin ────────────────────────────────────────────
+    leagueScope.post('/leagues/:leagueSlug/members/:userId/promote', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const { userId } = request.params as { userId: string };
+      const league = (request as any).league;
+      
+      // Check if user is a member
+      const membership = db.prepare(
+        `SELECT id, role FROM league_memberships
+         WHERE league_id = ? AND user_id = ? AND left_at IS NULL AND deleted_at IS NULL`
+      ).get(league.id, userId) as { id: string; role: string } | undefined;
+      
+      if (!membership) {
+        return reply.status(404).send({ error: 'User is not a member of this league' });
+      }
+      
+      if (membership.role === 'admin') {
+        return reply.status(400).send({ error: 'User is already an admin' });
+      }
+      
+      db.prepare(
+        `UPDATE league_memberships
+         SET role = 'admin', updated_at = datetime('now')
+         WHERE id = ?`
+      ).run(membership.id);
+      
+      request.log.info({ leagueId: league.id, userId }, 'Member promoted to admin');
+      return reply.send({ message: 'Member promoted to admin' });
+    });
+
+    // ── Demote admin to pilot ──────────────────────────────────────────────
+    leagueScope.post('/leagues/:leagueSlug/members/:userId/demote', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const { userId } = request.params as { userId: string };
+      const league = (request as any).league;
+      
+      const membership = db.prepare(
+        `SELECT id, role FROM league_memberships
+         WHERE league_id = ? AND user_id = ? AND left_at IS NULL AND deleted_at IS NULL`
+      ).get(league.id, userId) as { id: string; role: string } | undefined;
+      
+      if (!membership) {
+        return reply.status(404).send({ error: 'User is not a member of this league' });
+      }
+      
+      if (membership.role !== 'admin') {
+        return reply.status(400).send({ error: 'User is not an admin' });
+      }
+      
+      // Prevent demoting the last admin
+      const adminCount = db.prepare(
+        `SELECT COUNT(*) as count FROM league_memberships
+         WHERE league_id = ? AND role = 'admin' AND left_at IS NULL AND deleted_at IS NULL`
+      ).get(league.id) as { count: number };
+      
+      if (adminCount.count <= 1) {
+        return reply.status(400).send({ error: 'Cannot demote the last admin' });
+      }
+      
+      db.prepare(
+        `UPDATE league_memberships
+         SET role = 'pilot', updated_at = datetime('now')
+         WHERE id = ?`
+      ).run(membership.id);
+      
+      request.log.info({ leagueId: league.id, userId }, 'Admin demoted to pilot');
+      return reply.send({ message: 'Admin demoted to pilot' });
+    });
+
+    // ── Remove member from league ──────────────────────────────────────────
+    leagueScope.delete('/leagues/:leagueSlug/members/:userId', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const { userId } = request.params as { userId: string };
+      const league = (request as any).league;
+      const actorUserId = (request as any).user!.userId;
+      
+      // Check if trying to remove themselves
+      const isSelf = userId === actorUserId;
+      
+      const membership = db.prepare(
+        `SELECT id, role FROM league_memberships
+         WHERE league_id = ? AND user_id = ? AND left_at IS NULL AND deleted_at IS NULL`
+      ).get(league.id, userId) as { id: string; role: string } | undefined;
+      
+      if (!membership) {
+        return reply.status(404).send({ error: 'User is not a member of this league' });
+      }
+      
+      // If removing self as admin, ensure there's another admin
+      if (isSelf && membership.role === 'admin') {
+        const adminCount = db.prepare(
+          `SELECT COUNT(*) as count FROM league_memberships
+           WHERE league_id = ? AND role = 'admin' AND left_at IS NULL AND deleted_at IS NULL`
+        ).get(league.id) as { count: number };
+        
+        if (adminCount.count <= 1) {
+          return reply.status(400).send({ error: 'Cannot remove yourself as the last admin' });
+        }
+      }
+      
+      // Soft delete the membership by setting left_at
+      db.prepare(
+        `UPDATE league_memberships
+         SET left_at = datetime('now'), updated_at = datetime('now')
+         WHERE id = ?`
+      ).run(membership.id);
+      
+      request.log.info({ leagueId: league.id, userId, removedByUserId: actorUserId }, 'Member removed from league');
+      return reply.send({ message: 'Member removed from league' });
     });
   });
 }

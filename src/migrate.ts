@@ -14,6 +14,7 @@ import 'dotenv/config';
 import Database from 'better-sqlite3';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
+import { randomUUID } from 'crypto';
 
 const DB_PATH = process.env['DB_PATH'] ?? './league.db';
 
@@ -75,6 +76,52 @@ for (const file of migrationFiles) {
   db.prepare('INSERT INTO migrations (name) VALUES (?)').run(name);
   console.log(`[migrate] ${name} applied`);
 }
+
+// ---- Bootstrap Super Admin ----
+// If BOOTSTRAP_SUPER_ADMIN_EMAIL is set and no super admins exist,
+// promote that user to super admin.
+function bootstrapSuperAdmin() {
+  const bootstrapEmail = process.env['BOOTSTRAP_SUPER_ADMIN_EMAIL'];
+  if (!bootstrapEmail) {
+    console.log('[migrate] No BOOTSTRAP_SUPER_ADMIN_EMAIL set, skipping super admin bootstrap');
+    return;
+  }
+
+  // Check if any super admins exist
+  const existingSuperAdmin = db.prepare(
+    `SELECT id FROM users WHERE is_super_admin = 1 AND deleted_at IS NULL LIMIT 1`
+  ).get();
+
+  if (existingSuperAdmin) {
+    console.log('[migrate] Super admin already exists, skipping bootstrap');
+    return;
+  }
+
+  // Check if the bootstrap email user exists
+  const user = db.prepare(
+    `SELECT id, email FROM users WHERE email = ? AND deleted_at IS NULL`
+  ).get(bootstrapEmail) as { id: string; email: string } | undefined;
+
+  if (!user) {
+    console.warn(`[migrate] Bootstrap super admin email ${bootstrapEmail} not found - user must sign in first`);
+    return;
+  }
+
+  // Promote to super admin
+  db.prepare(
+    `UPDATE users SET is_super_admin = 1, updated_at = datetime('now') WHERE id = ?`
+  ).run(user.id);
+
+  // Log the bootstrap action
+  db.prepare(
+    `INSERT INTO admin_audit_log (id, actor_user_id, target_user_id, action, created_at)
+     VALUES (?, ?, ?, 'BOOTSTRAP_SUPER_ADMIN', datetime('now'))`
+  ).run(randomUUID(), user.id, user.id);
+
+  console.log(`[migrate] ✅ Bootstrapped super admin: ${bootstrapEmail}`);
+}
+
+bootstrapSuperAdmin();
 
 db.close();
 console.log('[migrate] All migrations complete');

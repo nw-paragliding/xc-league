@@ -128,6 +128,10 @@ async function main() {
       const { registerAuthRoutes } = await import('./routes/auth');
       await registerAuthRoutes(api, { config: authConfig, db });
 
+      // Admin routes
+      const { registerAdminRoutes } = await import('./routes/admin');
+      await registerAdminRoutes(api, { db });
+
       // League routes
       const { registerLeagueRoutes } = await import('./routes/leagues');
       await registerLeagueRoutes(api, { db, queue });

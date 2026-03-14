@@ -12,7 +12,17 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:3000',
         changeOrigin: true,
-        // Credentials (cookies) are forwarded automatically
+        configure: (proxy, _options) => {
+          proxy.on('proxyRes', (proxyRes, req, res) => {
+            // Rewrite cookies from :3000 to :5173 so they work cross-port
+            const cookies = proxyRes.headers['set-cookie'];
+            if (cookies) {
+              proxyRes.headers['set-cookie'] = cookies.map(cookie =>
+                cookie.replace(/Domain=localhost:3000/gi, 'Domain=localhost')
+              );
+            }
+          });
+        },
       },
     },
   },

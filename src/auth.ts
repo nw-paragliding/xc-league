@@ -17,6 +17,8 @@
 // zod   — payload validation
 // All route types below reference Fastify but are framework-agnostic in logic
 
+import fp = require('fastify-plugin');
+
 // ---------------------------------------------------------------------------
 // Minimal Fastify stubs — replaced by real imports in your project
 // (kept inline here so this file type-checks without installed packages)
@@ -44,7 +46,7 @@ interface FastifyReply {
 }
 interface CookieOptions {
   httpOnly?: boolean; secure?: boolean; sameSite?: string;
-  path?: string; maxAge?: number;
+  path?: string; maxAge?: number; domain?: string;
 }
 type FastifyPluginAsync<O = unknown> = (app: {
   decorateRequest(key: string, val: unknown): void;
@@ -161,15 +163,21 @@ export async function verifyJwt(
       algorithms: [JWT_ALGORITHM],
     });
     // Validate required claims are present
+    console.log('[AUTH] JWT payload:', JSON.stringify(payload));
     if (
       typeof payload.sub !== 'string' ||
-      typeof payload['email'] !== 'string' ||
-      typeof payload['tokenVersion'] !== 'number'
+      typeof payload['email'] !== 'string'
     ) {
+      console.log('[AUTH] Missing required claims (sub or email)');
+      return null;
+    }
+    if (typeof payload['tokenVersion'] !== 'number') {
+      console.log('[AUTH] Missing or invalid tokenVersion:', payload['tokenVersion']);
       return null;
     }
     return payload as unknown as JwtClaims;
-  } catch {
+  } catch (err) {
+    console.log('[AUTH] JWT verification failed:', err);
     return null;
   }
 }
@@ -377,6 +385,7 @@ export function setAuthCookie(reply: FastifyReply, jwt: string, config: AuthConf
     secure:   config.secureCookies,
     sameSite: 'lax',    // 'lax' allows cookie on top-level navigations (OAuth redirect)
     path:     '/',
+    domain:   config.secureCookies ? undefined : 'localhost', // Share cookie across ports in dev
     maxAge:   COOKIE_MAX_AGE_SECONDS,
   });
 }
@@ -387,6 +396,7 @@ export function clearAuthCookie(reply: FastifyReply, config: AuthConfig): void {
     secure:   config.secureCookies,
     sameSite: 'lax',
     path:     '/',
+    domain:   config.secureCookies ? undefined : 'localhost', // Match cookie domain from setAuthCookie
     maxAge:   0,
   });
 }
@@ -422,19 +432,23 @@ export function extractToken(request: FastifyRequest, config: AuthConfig): strin
  * authenticated request but is the only way to support immediate revocation
  * with stateless JWTs.
  */
-export const authPlugin: FastifyPluginAsync<{ config: AuthConfig; db: Database }> = async (
+const authPluginImpl: FastifyPluginAsync<{ config: AuthConfig; db: Database }> = async (
   fastify: any,
   { config, db }: { config: AuthConfig; db: Database },
 ) => {
+  console.log('[AUTH PLUGIN] Registering auth plugin...');
   fastify.decorateRequest('user', null);
   fastify.decorateRequest('league', null);
   fastify.decorateRequest('membership', null);
 
   fastify.addHook('preHandler', async (request: FastifyRequest, _reply: FastifyReply) => {
+    console.log('[AUTH HOOK] preHandler running for', (request as any).url);
     const token = extractToken(request, config);
+    console.log('[AUTH HOOK] Token extracted:', token ? 'YES (' + token.length + ' chars)' : 'NO');
     if (!token) return; // unauthenticated — request.user stays null
 
     const claims = await verifyJwt(token, config);
+    console.log('[AUTH HOOK] Claims verified:', claims ? 'YES (sub=' + claims.sub + ')' : 'NO');
     if (!claims) return; // invalid/expired token — treat as unauthenticated
 
     // Verify token_version — protects against revoked tokens
@@ -442,6 +456,7 @@ export const authPlugin: FastifyPluginAsync<{ config: AuthConfig; db: Database }
       `SELECT token_version, is_super_admin FROM users WHERE id = ? AND deleted_at IS NULL`
     ).get(claims.sub) as { token_version: number; is_super_admin: number } | undefined;
     
+    console.log('[AUTH HOOK] User row:', userRow ? 'YES (token_version=' + userRow.token_version + ', tokenVersion in claims=' + claims.tokenVersion + ')' : 'NO');
     if (!userRow || userRow.token_version !== claims.tokenVersion) return;
 
     request.user = {
@@ -449,8 +464,15 @@ export const authPlugin: FastifyPluginAsync<{ config: AuthConfig; db: Database }
       userId: claims.sub,
       isAdmin: Boolean(userRow.is_super_admin),
     };
+    console.log('[AUTH HOOK] request.user set to:', request.user.userId);
   });
 };
+
+// Wrap with fastify-plugin to avoid encapsulation
+export const authPlugin = fp(authPluginImpl, {
+  name: 'auth-plugin',
+  fastify: '4.x'
+});
 
 // =============================================================================
 // AUTHORIZATION GUARDS
@@ -486,7 +508,12 @@ export function requireLeagueMember(request: FastifyRequest, reply: FastifyReply
 /** Reject request if not a league admin or super-admin. Returns 403. */
 export function requireLeagueAdmin(request: FastifyRequest, reply: FastifyReply): void {
   requireAuth(request, reply);
-  if (!request.user!.isAdmin && request.membership?.role !== 'ADMIN') {
+  
+  // Super admins have automatic admin access to all leagues
+  if (request.user!.isAdmin) return;
+  
+  // Regular users need explicit league admin membership
+  if (!request.membership || request.membership.role !== 'admin') {
     reply.status(403).send({ error: 'League admin access required' });
     throw new Error('Forbidden');
   }
@@ -571,6 +598,7 @@ export async function handleGoogleAuthInitiate(
     secure:   config.secureCookies,
     sameSite: 'lax',
     path:     '/api/v1/auth',
+    domain:   config.secureCookies ? undefined : 'localhost', // Share cookie across ports in dev
     maxAge:   600, // 10 minutes
   });
 
@@ -621,19 +649,28 @@ export async function handleGoogleAuthCallback(
   try {
     const googleUser = await exchangeGoogleCode(query.code, config);
     const user = findOrCreateGoogleUser(googleUser, db);
+    
+    console.log('[OAUTH CALLBACK] User from DB:', JSON.stringify(user));
 
     const claims: JwtClaims = {
       sub:          user.id,
       email:        user.email,
-      displayName:  user.displayName,
-      isAdmin:      user.isAdmin,
-      tokenVersion: user.tokenVersion,
+      displayName:  user.display_name,
+      isAdmin:      Boolean(user.is_super_admin),
+      tokenVersion: user.token_version,
     };
+    
+    console.log('[OAUTH CALLBACK] Claims to sign:', JSON.stringify(claims));
 
     const jwt = await signJwt(claims, config);
+    console.log('[OAUTH CALLBACK] JWT created, length:', jwt.length);
 
     // Clear the state cookie
-    reply.setCookie('oauth_state', '', { path: '/api/v1/auth', maxAge: 0 });
+    reply.setCookie('oauth_state', '', { 
+      path: '/api/v1/auth', 
+      domain: config.secureCookies ? undefined : 'localhost',
+      maxAge: 0 
+    });
 
     // Set long-lived auth cookie — this is how web clients stay authenticated
     setAuthCookie(reply, jwt, config);
