@@ -75,6 +75,8 @@ export interface AuthConfig {
   cookieName: string;
   /** true in production — sets Secure flag on cookies */
   secureCookies: boolean;
+  /** Frontend URL for redirects (e.g. http://localhost:5173 in dev) */
+  frontendUrl: string;
 }
 
 export function loadAuthConfig(): AuthConfig {
@@ -100,6 +102,7 @@ export function loadAuthConfig(): AuthConfig {
     oauthStateSecret:    process.env.OAUTH_STATE_SECRET!,
     cookieName:          process.env.COOKIE_NAME ?? 'xcleague_jwt',
     secureCookies:       process.env.NODE_ENV === 'production',
+    frontendUrl:         process.env.FRONTEND_URL ?? (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5173'),
   };
 }
 
@@ -594,7 +597,8 @@ export async function handleGoogleAuthCallback(
 
   // User denied consent
   if (query.error) {
-    return reply.redirect(302, '/login?error=access_denied');
+    const errorUrl = config.frontendUrl ? `${config.frontendUrl}/?error=access_denied` : '/?error=access_denied';
+    return reply.redirect(302, errorUrl);
   }
 
   const cookieState = (request.cookies as Record<string, string>)['oauth_state'];
@@ -605,11 +609,13 @@ export async function handleGoogleAuthCallback(
     if (query.state !== cookieState) throw new Error('State mismatch');
     await verifyOAuthState(query.state, config.oauthStateSecret);
   } catch {
-    return reply.redirect(302, '/login?error=auth_failed');
+    const errorUrl = config.frontendUrl ? `${config.frontendUrl}/?error=auth_failed` : '/?error=auth_failed';
+    return reply.redirect(302, errorUrl);
   }
 
   if (!query.code) {
-    return reply.redirect(302, '/login?error=auth_failed');
+    const errorUrl = config.frontendUrl ? `${config.frontendUrl}/?error=auth_failed` : '/?error=auth_failed';
+    return reply.redirect(302, errorUrl);
   }
 
   try {
@@ -653,11 +659,13 @@ export async function handleGoogleAuthCallback(
     } else {
       // Browser flow — redirect to frontend; cookie is already set.
       // Frontend detects ?auth=success, calls /auth/me to hydrate user state.
-      reply.redirect(302, '/?auth=success');
+      const redirectUrl = config.frontendUrl ? `${config.frontendUrl}/?auth=success` : '/?auth=success';
+      reply.redirect(302, redirectUrl);
     }
   } catch (err) {
     request.log.error(err, 'OAuth callback error');
-    reply.redirect(302, '/login?error=auth_failed');
+    const errorUrl = config.frontendUrl ? `${config.frontendUrl}/?error=auth_failed` : '/?error=auth_failed';
+    reply.redirect(302, errorUrl);
   }
 }
 
