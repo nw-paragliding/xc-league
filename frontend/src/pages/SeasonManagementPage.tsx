@@ -51,6 +51,28 @@ export default function SeasonManagementPage() {
     },
   });
 
+  const openMutation = useMutation({
+    mutationFn: (seasonId: string) => leagueApi.openSeason(leagueSlug, seasonId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leagues', leagueSlug, 'seasons'] });
+      setError(null);
+    },
+    onError: (err: any) => {
+      setError(err.message || 'Failed to open season');
+    },
+  });
+
+  const closeMutation = useMutation({
+    mutationFn: (seasonId: string) => leagueApi.closeSeason(leagueSlug, seasonId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leagues', leagueSlug, 'seasons'] });
+      setError(null);
+    },
+    onError: (err: any) => {
+      setError(err.message || 'Failed to close season');
+    },
+  });
+
   if (isLoading) {
     return (
       <div style={{ padding: '2rem' }}>
@@ -178,8 +200,46 @@ export default function SeasonManagementPage() {
               }}
             >
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: '1.125rem', marginBottom: '0.5rem' }}>
-                  {season.name}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                  <span style={{ fontWeight: 600, fontSize: '1.125rem' }}>
+                    {season.name}
+                  </span>
+                  {season.status === 'draft' && (
+                    <span style={{
+                      padding: '0.25rem 0.5rem',
+                      background: '#e0e0e0',
+                      color: '#666',
+                      borderRadius: 4,
+                      fontSize: '0.75rem',
+                      fontWeight: 500
+                    }}>
+                      DRAFT
+                    </span>
+                  )}
+                  {season.status === 'open' && (
+                    <span style={{
+                      padding: '0.25rem 0.5rem',
+                      background: '#d1fae5',
+                      color: '#065f46',
+                      borderRadius: 4,
+                      fontSize: '0.75rem',
+                      fontWeight: 500
+                    }}>
+                      OPEN
+                    </span>
+                  )}
+                  {season.status === 'closed' && (
+                    <span style={{
+                      padding: '0.25rem 0.5rem',
+                      background: '#fee',
+                      color: '#991b1b',
+                      borderRadius: 4,
+                      fontSize: '0.75rem',
+                      fontWeight: 500
+                    }}>
+                      CLOSED
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginBottom: '0.25rem' }}>
                   Type: {season.competitionType === 'XC' ? 'Cross Country' : 'Hike & Fly'}
@@ -193,41 +253,89 @@ export default function SeasonManagementPage() {
                   </div>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button
-                  onClick={() => setEditingSeason(season)}
-                  disabled={updateMutation.isPending}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    border: '1px solid var(--border)',
-                    borderRadius: 4,
-                    background: 'var(--bg1)',
-                    color: 'var(--text1)',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem'
-                  }}
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => {
-                    if (confirm(`Delete season "${season.name}"? This cannot be undone.`)) {
-                      deleteMutation.mutate(season.id);
-                    }
-                  }}
-                  disabled={deleteMutation.isPending}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    border: '1px solid #fcc',
-                    borderRadius: 4,
-                    background: 'var(--bg1)',
-                    color: '#c00',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem'
-                  }}
-                >
-                  Delete
-                </button>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {season.status === 'draft' && (
+                  <button
+                    onClick={() => {
+                      if (confirm(`Open season "${season.name}"? Pilots will be able to register and view tasks.`)) {
+                        openMutation.mutate(season.id);
+                      }
+                    }}
+                    disabled={openMutation.isPending}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      border: '1px solid #86efac',
+                      borderRadius: 4,
+                      background: '#d1fae5',
+                      color: '#065f46',
+                      cursor: 'pointer',
+                      fontSize: '0.875rem',
+                      fontWeight: 500
+                    }}
+                  >
+                    Open Season
+                  </button>
+                )}
+                {season.status === 'open' && (
+                  <button
+                    onClick={() => {
+                      if (confirm(`Close season "${season.name}"? This will freeze all task scores and prevent new submissions. This cannot be undone.`)) {
+                        closeMutation.mutate(season.id);
+                      }
+                    }}
+                    disabled={closeMutation.isPending}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      border: '1px solid #fca5a5',
+                      borderRadius: 4,
+                      background: '#fee',
+                      color: '#991b1b',
+                      cursor: 'pointer',
+                      fontSize: '0.875rem',
+                      fontWeight: 500
+                    }}
+                  >
+                    Close Season
+                  </button>
+                )}
+                {season.status !== 'closed' && (
+                  <button
+                    onClick={() => setEditingSeason(season)}
+                    disabled={updateMutation.isPending}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      border: '1px solid var(--border)',
+                      borderRadius: 4,
+                      background: 'var(--bg1)',
+                      color: 'var(--text1)',
+                      cursor: 'pointer',
+                      fontSize: '0.875rem'
+                    }}
+                  >
+                    Edit
+                  </button>
+                )}
+                {season.status === 'draft' && (
+                  <button
+                    onClick={() => {
+                      if (confirm(`Delete season "${season.name}"? This cannot be undone.`)) {
+                        deleteMutation.mutate(season.id);
+                      }
+                    }}
+                    disabled={deleteMutation.isPending}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      border: '1px solid #fcc',
+                      borderRadius: 4,
+                      background: 'var(--bg1)',
+                      color: '#c00',
+                      cursor: 'pointer',
+                      fontSize: '0.875rem'
+                    }}
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             </div>
           ))

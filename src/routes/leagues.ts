@@ -643,6 +643,202 @@ export async function registerLeagueRoutes(
       return reply.send({ message: 'Season deleted' });
     });
 
+    // ── Open a season ──────────────────────────────────────────────────────
+    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/open', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const { seasonId } = request.params as { seasonId: string };
+      const league = (request as any).league;
+      
+      // Verify season belongs to this league
+      const season = db.prepare(
+        `SELECT id, status FROM seasons
+         WHERE id = ? AND league_id = ? AND deleted_at IS NULL`
+      ).get(seasonId, league.id) as { id: string; status: string } | undefined;
+      
+      if (!season) {
+        return reply.status(404).send({ error: 'Season not found' });
+      }
+      
+      if (season.status === 'open') {
+        return reply.status(400).send({ error: 'Season is already open' });
+      }
+      
+      if (season.status === 'closed') {
+        return reply.status(400).send({ error: 'Cannot reopen a closed season' });
+      }
+      
+      // Update season status to open
+      db.prepare(
+        `UPDATE seasons
+         SET status = 'open', updated_at = datetime('now')
+         WHERE id = ?`
+      ).run(seasonId);
+      
+      const updatedSeason = db.prepare(
+        `SELECT 
+          id, name, competition_type as competitionType,
+          start_date as startDate, end_date as endDate,
+          status, updated_at as updatedAt
+        FROM seasons WHERE id = ?`
+      ).get(seasonId);
+      
+      request.log.info({ leagueId: league.id, seasonId }, 'Season opened');
+      return reply.send({ season: updatedSeason });
+    });
+
+    // ── Close a season ─────────────────────────────────────────────────────
+    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/close', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const { seasonId } = request.params as { seasonId: string };
+      const league = (request as any).league;
+      
+      // Verify season belongs to this league
+      const season = db.prepare(
+        `SELECT id, status FROM seasons
+         WHERE id = ? AND league_id = ? AND deleted_at IS NULL`
+      ).get(seasonId, league.id) as { id: string; status: string } | undefined;
+      
+      if (!season) {
+        return reply.status(404).send({ error: 'Season not found' });
+      }
+      
+      if (season.status === 'closed') {
+        return reply.status(400).send({ error: 'Season is already closed' });
+      }
+      
+      if (season.status === 'draft') {
+        return reply.status(400).send({ error: 'Cannot close a draft season (open it first)' });
+      }
+      
+      // Use transaction to close season and freeze all unfrozen tasks
+      db.transaction(() => {
+        // Update season status to closed
+        db.prepare(
+          `UPDATE seasons
+           SET status = 'closed', updated_at = datetime('now')
+           WHERE id = ?`
+        ).run(seasonId);
+        
+        // Freeze all unfrozen tasks in this season
+        db.prepare(
+          `UPDATE tasks
+           SET scores_frozen_at = datetime('now'), updated_at = datetime('now')
+           WHERE season_id = ? AND scores_frozen_at IS NULL AND deleted_at IS NULL`
+        ).run(seasonId);
+      })();
+      
+      const updatedSeason = db.prepare(
+        `SELECT 
+          id, name, competition_type as competitionType,
+          start_date as startDate, end_date as endDate,
+          status, updated_at as updatedAt
+        FROM seasons WHERE id = ?`
+      ).get(seasonId);
+      
+      request.log.info({ leagueId: league.id, seasonId }, 'Season closed and all tasks frozen');
+      return reply.send({ season: updatedSeason });
+    });
+
+    // ──────────────────────────────────────────────────────────────────────
+    // SEASON REGISTRATION (Pilot Actions)
+    // ──────────────────────────────────────────────────────────────────────
+
+    // ── Register pilot for season ──────────────────────────────────────────
+    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/register', async (request, reply) => {
+      requireAuth(request, reply);
+      
+      const { seasonId } = request.params as { seasonId: string };
+      const league = (request as any).league;
+      const userId = (request as any).user!.userId;
+      
+      // Verify season exists and is open
+      const season = db.prepare(
+        `SELECT id, status FROM seasons
+         WHERE id = ? AND league_id = ? AND deleted_at IS NULL`
+      ).get(seasonId, league.id) as { id: string; status: string } | undefined;
+      
+      if (!season) {
+        return reply.status(404).send({ error: 'Season not found' });
+      }
+      
+      if (season.status !== 'open') {
+        return reply.status(400).send({ error: 'Season is not open for registration' });
+      }
+      
+      // Check if already registered
+      const existing = db.prepare(
+        `SELECT id FROM season_registrations
+         WHERE season_id = ? AND user_id = ? AND deleted_at IS NULL`
+      ).get(seasonId, userId);
+      
+      if (existing) {
+        return reply.status(400).send({ error: 'Already registered for this season' });
+      }
+      
+      // Create registration
+      const registrationId = randomUUID();
+      db.prepare(
+        `INSERT INTO season_registrations (id, season_id, user_id, registered_at, created_at, updated_at)
+         VALUES (?, ?, ?, datetime('now'), datetime('now'), datetime('now'))`
+      ).run(registrationId, seasonId, userId);
+      
+      request.log.info({ leagueId: league.id, seasonId, userId }, 'Pilot registered for season');
+      return reply.status(201).send({ message: 'Successfully registered for season' });
+    });
+
+    // ── Get season registration status ─────────────────────────────────────
+    leagueScope.get('/leagues/:leagueSlug/seasons/:seasonId/registration', async (request, reply) => {
+      const { seasonId } = request.params as { seasonId: string };
+      const league = (request as any).league;
+      const user = (request as any).user;
+      
+      // Get total registration count
+      const countResult = db.prepare(
+        `SELECT COUNT(*) as count FROM season_registrations
+         WHERE season_id = ? AND deleted_at IS NULL`
+      ).get(seasonId) as { count: number };
+      
+      let isRegistered = false;
+      if (user) {
+        const registration = db.prepare(
+          `SELECT id FROM season_registrations
+           WHERE season_id = ? AND user_id = ? AND deleted_at IS NULL`
+        ).get(seasonId, user.userId);
+        isRegistered = !!registration;
+      }
+      
+      return reply.send({
+        isRegistered,
+        registrationCount: countResult.count,
+      });
+    });
+
+    // ── List pilots registered for season ──────────────────────────────────
+    leagueScope.get('/leagues/:leagueSlug/seasons/:seasonId/registrations', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const { seasonId } = request.params as { seasonId: string };
+      const league = (request as any).league;
+      
+      const pilots = db.prepare(
+        `SELECT 
+          sr.id,
+          sr.user_id as userId,
+          u.email,
+          u.display_name as displayName,
+          u.avatar_url as avatarUrl,
+          sr.registered_at as registeredAt
+         FROM season_registrations sr
+         JOIN users u ON u.id = sr.user_id
+         WHERE sr.season_id = ? AND sr.deleted_at IS NULL
+         ORDER BY sr.registered_at ASC`
+      ).all(seasonId);
+      
+      return reply.send({ pilots });
+    });
+
     // ──────────────────────────────────────────────────────────────────────
     // TASK MANAGEMENT (League Admin Only)
     // ──────────────────────────────────────────────────────────────────────
@@ -879,6 +1075,92 @@ export async function registerLeagueRoutes(
       
       request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task scores frozen');
       return reply.send({ message: 'Task scores frozen' });
+    });
+
+    // ── Publish task ───────────────────────────────────────────────────────
+    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/publish', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const { seasonId, taskId } = request.params as { seasonId: string; taskId: string };
+      const league = (request as any).league;
+      
+      // Verify task belongs to this season/league
+      const task = db.prepare(
+        `SELECT t.id, t.status
+         FROM tasks t
+         JOIN seasons s ON s.id = t.season_id
+         WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`
+      ).get(taskId, seasonId, league.id) as { id: string; status: string } | undefined;
+      
+      if (!task) {
+        return reply.status(404).send({ error: 'Task not found' });
+      }
+      
+      if (task.status === 'published') {
+        return reply.status(400).send({ error: 'Task is already published' });
+      }
+      
+      // Verify task has turnpoints (required for publication)
+      const turnpointCount = db.prepare(
+        `SELECT COUNT(*) as count FROM turnpoints WHERE task_id = ?`
+      ).get(taskId) as { count: number };
+      
+      if (turnpointCount.count === 0) {
+        return reply.status(400).send({ error: 'Cannot publish task without turnpoints' });
+      }
+      
+      // Publish the task
+      db.prepare(
+        `UPDATE tasks
+         SET status = 'published', updated_at = datetime('now')
+         WHERE id = ?`
+      ).run(taskId);
+      
+      request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task published');
+      return reply.send({ message: 'Task published' });
+    });
+
+    // ── Unpublish task ─────────────────────────────────────────────────────
+    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/unpublish', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const { seasonId, taskId } = request.params as { seasonId: string; taskId: string };
+      const league = (request as any).league;
+      
+      // Verify task belongs to this season/league
+      const task = db.prepare(
+        `SELECT t.id, t.status
+         FROM tasks t
+         JOIN seasons s ON s.id = t.season_id
+         WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`
+      ).get(taskId, seasonId, league.id) as { id: string; status: string } | undefined;
+      
+      if (!task) {
+        return reply.status(404).send({ error: 'Task not found' });
+      }
+      
+      if (task.status === 'draft') {
+        return reply.status(400).send({ error: 'Task is already in draft status' });
+      }
+      
+      // Check if task has submissions
+      const submissionCount = db.prepare(
+        `SELECT COUNT(*) as count FROM flight_submissions WHERE task_id = ? AND deleted_at IS NULL`
+      ).get(taskId) as { count: number };
+      
+      if (submissionCount.count > 0) {
+        return reply.status(400).send({ error: 'Cannot unpublish task with existing submissions' });
+      }
+      
+      // Unpublish the task
+      db.prepare(
+        `UPDATE tasks
+         SET status = 'draft', updated_at = datetime('now')
+         WHERE id = ?`
+      ).run(taskId);
+      
+      request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task unpublished');
+      return reply.send({ message: 'Task unpublished (returned to draft)' });
     });
 
     // ──────────────────────────────────────────────────────────────────────

@@ -47,6 +47,7 @@ export interface Season {
   nominalDistanceKm: number;
   nominalTimeS: number;
   nominalGoalRatio: number;
+  status?: 'draft' | 'open' | 'closed';
   createdAt: string;
   updatedAt?: string;
   taskCount?: number;
@@ -83,6 +84,7 @@ export interface Task {
   optimisedDistanceKm?: number;
   isFrozen?: boolean;
   scoresFrozenAt?: string;
+  status?: 'draft' | 'published';
   createdAt: string;
   updatedAt?: string;
   pilotCount?: number;
@@ -156,6 +158,26 @@ export const leagueApi = {
   deleteSeason: (leagueSlug: string, seasonId: string) =>
     api.delete<{ message: string }>(`/leagues/${leagueSlug}/seasons/${seasonId}`),
   
+  /** Open a season (league admin only) */
+  openSeason: (leagueSlug: string, seasonId: string) =>
+    api.post<{ season: Season }>(`/leagues/${leagueSlug}/seasons/${seasonId}/open`),
+  
+  /** Close a season (league admin only) */
+  closeSeason: (leagueSlug: string, seasonId: string) =>
+    api.post<{ season: Season }>(`/leagues/${leagueSlug}/seasons/${seasonId}/close`),
+  
+  /** Register pilot for season */
+  registerForSeason: (leagueSlug: string, seasonId: string) =>
+    api.post<{ message: string }>(`/leagues/${leagueSlug}/seasons/${seasonId}/register`),
+  
+  /** Get season registration status */
+  getSeasonRegistration: (leagueSlug: string, seasonId: string) =>
+    api.get<{ isRegistered: boolean; registrationCount: number }>(`/leagues/${leagueSlug}/seasons/${seasonId}/registration`),
+  
+  /** List pilots registered for season (admin only) */
+  listSeasonRegistrations: (leagueSlug: string, seasonId: string) =>
+    api.get<{ pilots: Array<{ userId: string; email: string; displayName: string; registeredAt: string }> }>(`/leagues/${leagueSlug}/seasons/${seasonId}/registrations`),
+  
   // ── Task Management ────────────────────────────────────────────────────
   
   /** List all tasks for a season */
@@ -177,4 +199,12 @@ export const leagueApi = {
   /** Freeze task scores (league admin only) */
   freezeTask: (leagueSlug: string, seasonId: string, taskId: string) =>
     api.post<{ message: string }>(`/leagues/${leagueSlug}/seasons/${seasonId}/tasks/${taskId}/freeze`),
+  
+  /** Publish task (league admin only) */
+  publishTask: (leagueSlug: string, seasonId: string, taskId: string) =>
+    api.post<{ message: string }>(`/leagues/${leagueSlug}/seasons/${seasonId}/tasks/${taskId}/publish`),
+  
+  /** Unpublish task (league admin only) */
+  unpublishTask: (leagueSlug: string, seasonId: string, taskId: string) =>
+    api.post<{ message: string }>(`/leagues/${leagueSlug}/seasons/${seasonId}/tasks/${taskId}/unpublish`),
 };
