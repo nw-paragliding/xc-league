@@ -13,7 +13,12 @@
     "dev:client": "cd frontend && vite",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "start": "node dist/migrate.js && node dist/server.js",
-    "typecheck": "tsc --noEmit && cd frontend && tsc --noEmit"
+    "typecheck": "tsc --noEmit && cd frontend && tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "test:all": "npm run test && cd frontend && npm run test"
   },
   "dependencies": {
     "@fastify/cookie": "^9.3.1",
@@ -30,9 +35,11 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.8",
     "@types/node": "^20.11.20",
+    "@vitest/ui": "^4.1.0",
     "concurrently": "^8.2.2",
     "pino-pretty": "^11.0.0",
     "tsx": "^4.7.1",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^4.1.0"
   }
 }
