@@ -310,26 +310,25 @@ export interface UserRecord {
  */
 export function findOrCreateGoogleUser(
   googleUser: GoogleUserInfo,
-  db: Database,
+  db: any,
 ): UserRecord {
   // Step 1: look up by stable Google ID
-  const existingIdentity = db.get<{ user_id: string }>(
+  const existingIdentity = db.prepare(
     `SELECT user_id FROM oauth_identities
-     WHERE provider = 'google' AND provider_user_id = ?`,
-    [googleUser.sub],
-  );
+     WHERE provider = 'google' AND provider_user_id = ?`
+  ).get(googleUser.sub) as { user_id: string } | undefined;
 
   if (existingIdentity) {
     // Sync profile fields in case they changed in Google
-    db.run(
+    db.prepare(
       `UPDATE users SET display_name = ?, avatar_url = ?, updated_at = datetime('now')
-       WHERE id = ?`,
-      [googleUser.name, googleUser.picture ?? null, existingIdentity.user_id],
-    );
-    const user = db.get<UserRecord>(
-      `SELECT * FROM users WHERE id = ?`,
-      [existingIdentity.user_id],
-    );
+       WHERE id = ?`
+    ).run(googleUser.name, googleUser.picture ?? null, existingIdentity.user_id);
+    
+    const user = db.prepare(
+      `SELECT * FROM users WHERE id = ?`
+    ).get(existingIdentity.user_id) as UserRecord | undefined;
+    
     if (!user) throw new Error('User record missing after identity lookup');
     return user;
   }
@@ -337,30 +336,27 @@ export function findOrCreateGoogleUser(
   // Step 3: no identity found
   return db.transaction((): UserRecord => {
     // Check if email exists (e.g. future second provider with same email)
-    const existingUser = db.get<UserRecord>(
-      `SELECT * FROM users WHERE email = ?`,
-      [googleUser.email],
-    );
+    const existingUser = db.prepare(
+      `SELECT * FROM users WHERE email = ?`
+    ).get(googleUser.email) as UserRecord | undefined;
 
     const userId = existingUser?.id ?? crypto.randomUUID();
 
     if (!existingUser) {
       // New user
-      db.run(
+      db.prepare(
         `INSERT INTO users (id, email, display_name, avatar_url, is_admin, token_version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 0, 1, datetime('now'), datetime('now'))`,
-        [userId, googleUser.email, googleUser.name, googleUser.picture ?? null],
-      );
+         VALUES (?, ?, ?, ?, 0, 1, datetime('now'), datetime('now'))`
+      ).run(userId, googleUser.email, googleUser.name, googleUser.picture ?? null);
     }
 
     // Link Google identity
-    db.run(
+    db.prepare(
       `INSERT INTO oauth_identities (id, user_id, provider, provider_user_id, created_at)
-       VALUES (?, ?, 'google', ?, datetime('now'))`,
-      [crypto.randomUUID(), userId, googleUser.sub],
-    );
+       VALUES (?, ?, 'google', ?, datetime('now'))`
+    ).run(crypto.randomUUID(), userId, googleUser.sub);
 
-    const user = db.get<UserRecord>(`SELECT * FROM users WHERE id = ?`, [userId]);
+    const user = db.prepare(`SELECT * FROM users WHERE id = ?`).get(userId) as UserRecord | undefined;
     if (!user) throw new Error('User record missing after creation');
     return user;
   })();
@@ -439,10 +435,10 @@ export const authPlugin: FastifyPluginAsync<{ config: AuthConfig; db: Database }
     if (!claims) return; // invalid/expired token — treat as unauthenticated
 
     // Verify token_version — protects against revoked tokens
-    const userRow = db.get<{ token_version: number; is_admin: number }>(
-      `SELECT token_version, is_admin FROM users WHERE id = ? AND deleted_at IS NULL`,
-      [claims.sub],
-    );
+    const userRow = db.prepare(
+      `SELECT token_version, is_admin FROM users WHERE id = ? AND deleted_at IS NULL`
+    ).get(claims.sub) as { token_version: number; is_admin: number } | undefined;
+    
     if (!userRow || userRow.token_version !== claims.tokenVersion) return;
 
     request.user = {
@@ -674,14 +670,14 @@ export async function handleGoogleAuthCallback(
 export async function handleGetMe(
   request: FastifyRequest,
   reply: FastifyReply,
-  db: Database,
+  db: any,
 ): Promise<void> {
   requireAuth(request, reply);
-  const user = db.get<UserRecord>(
+  const user = db.prepare(
     `SELECT id, email, display_name as displayName, avatar_url as avatarUrl, is_admin as isAdmin
-     FROM users WHERE id = ?`,
-    [request.user!.userId],
-  );
+     FROM users WHERE id = ?`
+  ).get(request.user!.userId) as UserRecord | undefined;
+  
   if (!user) { reply.status(404).send({ error: 'User not found' }); return; }
   reply.send({ user });
 }
@@ -695,29 +691,27 @@ export async function handleGetMe(
 export async function handleUpdateMe(
   request: FastifyRequest,
   reply: FastifyReply,
-  db: Database,
+  db: any,
 ): Promise<void> {
   requireAuth(request, reply);
   const body = request.body as { displayName?: string; avatarUrl?: string | null };
 
   // Only update provided fields
   if (body.displayName !== undefined) {
-    db.run(
-      `UPDATE users SET display_name = ?, updated_at = datetime('now') WHERE id = ?`,
-      [body.displayName.trim(), request.user!.userId],
-    );
+    db.prepare(
+      `UPDATE users SET display_name = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(body.displayName.trim(), request.user!.userId);
   }
   if (body.avatarUrl !== undefined) {
-    db.run(
-      `UPDATE users SET avatar_url = ?, updated_at = datetime('now') WHERE id = ?`,
-      [body.avatarUrl, request.user!.userId],
-    );
+    db.prepare(
+      `UPDATE users SET avatar_url = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(body.avatarUrl, request.user!.userId);
   }
 
-  const user = db.get<UserRecord>(
-    `SELECT id, email, display_name as displayName, avatar_url as avatarUrl FROM users WHERE id = ?`,
-    [request.user!.userId],
-  );
+  const user = db.prepare(
+    `SELECT id, email, display_name as displayName, avatar_url as avatarUrl FROM users WHERE id = ?`
+  ).get(request.user!.userId) as UserRecord | undefined;
+  
   reply.send({ user });
 }
 
@@ -749,7 +743,7 @@ export async function handleLogout(
 export async function handleRevokeTokens(
   request: FastifyRequest,
   reply: FastifyReply,
-  db: Database,
+  db: any,
 ): Promise<void> {
   requireAuth(request, reply);
 
@@ -764,11 +758,10 @@ export async function handleRevokeTokens(
     targetUserId = body.userId;
   }
 
-  db.run(
+  db.prepare(
     `UPDATE users SET token_version = token_version + 1, updated_at = datetime('now')
-     WHERE id = ?`,
-    [targetUserId],
-  );
+     WHERE id = ?`
+  ).run(targetUserId);
 
   // If revoking own tokens, also clear the cookie
   if (targetUserId === request.user!.userId) {
