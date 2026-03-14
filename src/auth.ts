@@ -163,21 +163,17 @@ export async function verifyJwt(
       algorithms: [JWT_ALGORITHM],
     });
     // Validate required claims are present
-    console.log('[AUTH] JWT payload:', JSON.stringify(payload));
     if (
       typeof payload.sub !== 'string' ||
       typeof payload['email'] !== 'string'
     ) {
-      console.log('[AUTH] Missing required claims (sub or email)');
       return null;
     }
     if (typeof payload['tokenVersion'] !== 'number') {
-      console.log('[AUTH] Missing or invalid tokenVersion:', payload['tokenVersion']);
       return null;
     }
     return payload as unknown as JwtClaims;
   } catch (err) {
-    console.log('[AUTH] JWT verification failed:', err);
     return null;
   }
 }
@@ -436,19 +432,15 @@ const authPluginImpl: FastifyPluginAsync<{ config: AuthConfig; db: Database }> =
   fastify: any,
   { config, db }: { config: AuthConfig; db: Database },
 ) => {
-  console.log('[AUTH PLUGIN] Registering auth plugin...');
   fastify.decorateRequest('user', null);
   fastify.decorateRequest('league', null);
   fastify.decorateRequest('membership', null);
 
   fastify.addHook('preHandler', async (request: FastifyRequest, _reply: FastifyReply) => {
-    console.log('[AUTH HOOK] preHandler running for', (request as any).url);
     const token = extractToken(request, config);
-    console.log('[AUTH HOOK] Token extracted:', token ? 'YES (' + token.length + ' chars)' : 'NO');
     if (!token) return; // unauthenticated — request.user stays null
 
     const claims = await verifyJwt(token, config);
-    console.log('[AUTH HOOK] Claims verified:', claims ? 'YES (sub=' + claims.sub + ')' : 'NO');
     if (!claims) return; // invalid/expired token — treat as unauthenticated
 
     // Verify token_version — protects against revoked tokens
@@ -456,7 +448,6 @@ const authPluginImpl: FastifyPluginAsync<{ config: AuthConfig; db: Database }> =
       `SELECT token_version, is_super_admin FROM users WHERE id = ? AND deleted_at IS NULL`
     ).get(claims.sub) as { token_version: number; is_super_admin: number } | undefined;
     
-    console.log('[AUTH HOOK] User row:', userRow ? 'YES (token_version=' + userRow.token_version + ', tokenVersion in claims=' + claims.tokenVersion + ')' : 'NO');
     if (!userRow || userRow.token_version !== claims.tokenVersion) return;
 
     request.user = {
@@ -464,7 +455,6 @@ const authPluginImpl: FastifyPluginAsync<{ config: AuthConfig; db: Database }> =
       userId: claims.sub,
       isAdmin: Boolean(userRow.is_super_admin),
     };
-    console.log('[AUTH HOOK] request.user set to:', request.user.userId);
   });
 };
 
@@ -649,8 +639,6 @@ export async function handleGoogleAuthCallback(
   try {
     const googleUser = await exchangeGoogleCode(query.code, config);
     const user = findOrCreateGoogleUser(googleUser, db);
-    
-    console.log('[OAUTH CALLBACK] User from DB:', JSON.stringify(user));
 
     const claims: JwtClaims = {
       sub:          user.id,
@@ -659,11 +647,8 @@ export async function handleGoogleAuthCallback(
       isAdmin:      Boolean(user.is_super_admin),
       tokenVersion: user.token_version,
     };
-    
-    console.log('[OAUTH CALLBACK] Claims to sign:', JSON.stringify(claims));
 
     const jwt = await signJwt(claims, config);
-    console.log('[OAUTH CALLBACK] JWT created, length:', jwt.length);
 
     // Clear the state cookie
     reply.setCookie('oauth_state', '', { 

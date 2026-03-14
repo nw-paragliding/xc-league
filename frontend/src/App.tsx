@@ -1,17 +1,21 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from './hooks/useAuth';
 import { LeagueProvider } from './hooks/useLeague';
+import { leagueApi } from './api/leagues';
 import UploadPage      from './pages/UploadPage';
 import LeaderboardPage from './pages/LeaderboardPage';
 import StandingsPage   from './pages/StandingsPage';
 import TrackPage       from './pages/TrackPage';
 import ProfilePage     from './pages/ProfilePage';
+import SuperAdminPage  from './pages/SuperAdminPage';
+import CreateLeaguePage from './pages/CreateLeaguePage';
+import LeagueSettingsPage from './pages/LeagueSettingsPage';
 
 // Paste the full CSS string from xcleague-app.jsx here,
 // or import it from a shared CSS file.
 // For brevity this imports the styles defined in index.css.
 
-type Page = 'upload' | 'leaderboard' | 'standings' | 'track' | 'profile';
+type Page = 'upload' | 'leaderboard' | 'standings' | 'track' | 'profile' | 'super-admin' | 'create-league' | 'league-settings';
 
 function initials(name: string) {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -22,6 +26,8 @@ interface NavItem {
   icon:  string;
   label: string;
   auth?: boolean;
+  adminOnly?: boolean;
+  leagueAdminOnly?: boolean;
 }
 
 const NAV: NavItem[] = [
@@ -32,9 +38,44 @@ const NAV: NavItem[] = [
   { id: 'profile',     icon: '◉',  label: 'Profile',  auth: true },
 ];
 
+const ADMIN_NAV: NavItem[] = [
+  { id: 'super-admin',     icon: '⚡', label: 'Admin Panel',      auth: true, adminOnly: true },
+  { id: 'create-league',   icon: '+',  label: 'Create League',   auth: true },
+  { id: 'league-settings', icon: '⚙',  label: 'League Settings', auth: true, leagueAdminOnly: true },
+];
+
 export default function App() {
   const { user, isLoading, login, logout } = useAuth();
   const [page, setPage] = useState<Page>('leaderboard');
+  const [isLeagueAdmin, setIsLeagueAdmin] = useState(false);
+  
+  // Hardcoded league slug for now - in production this would come from URL
+  const currentLeagueSlug = 'alps-xc-2025';
+  
+  // Fetch user's league membership to determine if they're a league admin
+  useEffect(() => {
+    if (!user) {
+      setIsLeagueAdmin(false);
+      return;
+    }
+    
+    // Super admins have automatic admin access to all leagues
+    if (user.isAdmin) {
+      setIsLeagueAdmin(true);
+      return;
+    }
+    
+    // Fetch membership for current league
+    leagueApi.listMembers(currentLeagueSlug)
+      .then(data => {
+        const membership = data.members.find(m => m.userId === user.id);
+        setIsLeagueAdmin(membership?.role === 'admin');
+      })
+      .catch(() => {
+        // User might not be a member of this league
+        setIsLeagueAdmin(false);
+      });
+  }, [user]);
 
   const handleNavClick = (item: NavItem) => {
     if (item.auth && !user) { login(); return; }
@@ -90,6 +131,30 @@ export default function App() {
                 {item.auth && !user && <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.4 }}>🔒</span>}
               </button>
             ))}
+
+            {/* Admin section - only show if user is authenticated */}
+            {user && (
+              <>
+                <div className="nav-section-label">Management</div>
+                {ADMIN_NAV.map(item => {
+                  // Hide super admin panel if user is not a super admin
+                  if (item.adminOnly && !user.isAdmin) return null;
+                  // Hide league settings if user is not a league admin
+                  if (item.leagueAdminOnly && !isLeagueAdmin) return null;
+                  
+                  return (
+                    <button
+                      key={item.id}
+                      className={`nav-item${page === item.id ? ' active' : ''}`}
+                      onClick={() => handleNavClick(item)}
+                    >
+                      <span style={{ fontSize: 15, lineHeight: 1 }}>{item.icon}</span>
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+              </>
+            )}
           </nav>
 
           {/* User section */}
@@ -121,11 +186,14 @@ export default function App() {
 
         {/* Main content */}
         <main className="main">
-          {page === 'upload'      && <UploadPage />}
-          {page === 'leaderboard' && <LeaderboardPage />}
-          {page === 'standings'   && <StandingsPage />}
-          {page === 'track'       && <TrackPage />}
-          {page === 'profile'     && <ProfilePage />}
+          {page === 'upload'          && <UploadPage />}
+          {page === 'leaderboard'     && <LeaderboardPage />}
+          {page === 'standings'       && <StandingsPage />}
+          {page === 'track'           && <TrackPage />}
+          {page === 'profile'         && <ProfilePage />}
+          {page === 'super-admin'     && <SuperAdminPage />}
+          {page === 'create-league'   && <CreateLeaguePage onSuccess={() => setPage('leaderboard')} />}
+          {page === 'league-settings' && <LeagueSettingsPage />}
         </main>
       </div>
     </LeagueProvider>
