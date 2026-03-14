@@ -45,6 +45,38 @@ cp .env.example .env
 # Edit .env with your OAuth credentials and JWT keys
 ```
 
+### Google OAuth Setup
+
+This project uses Google OAuth for authentication. The OAuth client is managed under **admin@nwparagliding.com**.
+
+**For Local Development:**
+
+1. **The OAuth client is already configured** with these credentials (managed by admin@nwparagliding.com):
+   - Client ID: `861900491662-msd4hraiu4dqre5f3ktgpopc4j1gc8pg.apps.googleusercontent.com`
+   - Client Secret: `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`
+   - Authorized redirect URI: `http://localhost:3000/api/v1/auth/oauth/google/callback`
+
+2. **These credentials are already in the project** - you just need to copy `.env.example` to `.env` (they're pre-filled)
+
+3. **To test login:**
+   - Start the dev server: `npm run dev`
+   - Visit http://localhost:5173/
+   - Click "Sign in" and authenticate with any Google account
+
+**For Production Deployment:**
+
+Contact admin@nwparagliding.com to:
+- Add production redirect URIs to the OAuth client
+- Get production environment credentials
+- Configure authorized domains
+
+**Managing OAuth Settings:**
+
+Access the Google Cloud Console with admin@nwparagliding.com:
+- Console: https://console.cloud.google.com/apis/credentials
+- Project: (TBD - check with admin@nwparagliding.com)
+- OAuth 2.0 Client ID: `861900491662-msd4hraiu4dqre5f3ktgpopc4j1gc8pg`
+
 ### Development
 
 ```bash
@@ -92,9 +124,10 @@ npm run typecheck    # Type check both projects
 - ✅ Authentication architecture implemented
 - ✅ Frontend UI components complete
 - ✅ IGC processing pipeline designed
-- 🚧 API route handlers (not yet implemented)
+- ✅ API route handlers (auth, leagues, tasks, submissions)
+- ✅ Google OAuth login working (localhost)
 - 🚧 Job worker (disabled until TaskRepository implemented)
-- 🚧 OAuth integration (requires credentials)
+- 🚧 IGC upload and processing (route exists, needs implementation)
 
 ## Documentation
 
