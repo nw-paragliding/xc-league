@@ -10,12 +10,14 @@ import ProfilePage     from './pages/ProfilePage';
 import SuperAdminPage  from './pages/SuperAdminPage';
 import CreateLeaguePage from './pages/CreateLeaguePage';
 import LeagueSettingsPage from './pages/LeagueSettingsPage';
+import SeasonManagementPage from './pages/SeasonManagementPage';
+import TaskManagementPage from './pages/TaskManagementPage';
 
 // Paste the full CSS string from xcleague-app.jsx here,
 // or import it from a shared CSS file.
 // For brevity this imports the styles defined in index.css.
 
-type Page = 'upload' | 'leaderboard' | 'standings' | 'track' | 'profile' | 'super-admin' | 'create-league' | 'league-settings';
+type Page = 'upload' | 'leaderboard' | 'standings' | 'track' | 'profile' | 'super-admin' | 'create-league' | 'league-settings' | 'season-management' | 'task-management';
 
 function initials(name: string) {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -39,9 +41,11 @@ const NAV: NavItem[] = [
 ];
 
 const ADMIN_NAV: NavItem[] = [
-  { id: 'super-admin',     icon: '⚡', label: 'Admin Panel',      auth: true, adminOnly: true },
-  { id: 'create-league',   icon: '+',  label: 'Create League',   auth: true },
-  { id: 'league-settings', icon: '⚙',  label: 'League Settings', auth: true, leagueAdminOnly: true },
+  { id: 'super-admin',       icon: '⚡', label: 'Admin Panel',      auth: true, adminOnly: true },
+  { id: 'create-league',     icon: '+',  label: 'Create League',   auth: true },
+  { id: 'league-settings',   icon: '⚙',  label: 'League Settings', auth: true, leagueAdminOnly: true },
+  { id: 'season-management', icon: '📅', label: 'Seasons',         auth: true, leagueAdminOnly: true },
+  { id: 'task-management',   icon: '📍', label: 'Tasks',           auth: true, leagueAdminOnly: true },
 ];
 
 export default function App() {
@@ -186,14 +190,16 @@ export default function App() {
 
         {/* Main content */}
         <main className="main">
-          {page === 'upload'          && <UploadPage />}
-          {page === 'leaderboard'     && <LeaderboardPage />}
-          {page === 'standings'       && <StandingsPage />}
-          {page === 'track'           && <TrackPage />}
-          {page === 'profile'         && <ProfilePage />}
-          {page === 'super-admin'     && <SuperAdminPage />}
-          {page === 'create-league'   && <CreateLeaguePage onSuccess={() => setPage('leaderboard')} />}
-          {page === 'league-settings' && <LeagueSettingsPage />}
+          {page === 'upload'           && <UploadPage />}
+          {page === 'leaderboard'      && <LeaderboardPage />}
+          {page === 'standings'        && <StandingsPage />}
+          {page === 'track'            && <TrackPage />}
+          {page === 'profile'          && <ProfilePage />}
+          {page === 'super-admin'      && <SuperAdminPage />}
+          {page === 'create-league'    && <CreateLeaguePage onSuccess={() => setPage('leaderboard')} />}
+          {page === 'league-settings'  && <LeagueSettingsPage />}
+          {page === 'season-management' && <SeasonManagementPage />}
+          {page === 'task-management'  && <TaskManagementPage />}
         </main>
       </div>
     </LeagueProvider>

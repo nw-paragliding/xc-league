@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { leagueApi, type LeagueMember } from '../api/leagues';
+import { leagueApi, type LeagueMember, type UpdateLeagueInput } from '../api/leagues';
 import { useLeague } from '../hooks/useLeague';
 
 export default function LeagueSettingsPage() {
@@ -9,10 +9,35 @@ export default function LeagueSettingsPage() {
   const [selectedMember, setSelectedMember] = useState<LeagueMember | null>(null);
   const [action, setAction] = useState<'promote' | 'demote' | 'remove' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isEditingDetails, setIsEditingDetails] = useState(false);
+
+  // Fetch league details
+  const { data: leagueData } = useQuery({
+    queryKey: ['leagues', leagueSlug],
+    queryFn: async () => {
+      const response = await fetch(`/api/v1/leagues/${leagueSlug}`, {
+        credentials: 'include'
+      });
+      if (!response.ok) throw new Error('Failed to fetch league');
+      return response.json();
+    },
+  });
 
   const { data, isLoading, error: queryError } = useQuery({
     queryKey: ['leagues', leagueSlug, 'members'],
     queryFn: () => leagueApi.listMembers(leagueSlug),
+  });
+
+  const updateLeagueMutation = useMutation({
+    mutationFn: (input: UpdateLeagueInput) => leagueApi.update(leagueSlug, input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leagues', leagueSlug] });
+      setIsEditingDetails(false);
+      setError(null);
+    },
+    onError: (err: any) => {
+      setError(err.message || 'Failed to update league');
+    },
   });
 
   const promoteMutation = useMutation({
@@ -139,6 +164,84 @@ export default function LeagueSettingsPage() {
           </div>
         )}
       </header>
+
+      {/* League Details */}
+      <section style={{ marginBottom: '3rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>
+            League Details
+          </h2>
+          {!isEditingDetails && (
+            <button
+              onClick={() => setIsEditingDetails(true)}
+              style={{
+                padding: '0.5rem 1rem',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                background: 'var(--bg1)',
+                color: 'var(--text1)',
+                cursor: 'pointer',
+                fontSize: '0.875rem'
+              }}
+            >
+              Edit Details
+            </button>
+          )}
+        </div>
+
+        {isEditingDetails ? (
+          <LeagueDetailsForm
+            league={leagueData?.league}
+            onSubmit={(input) => updateLeagueMutation.mutate(input)}
+            onCancel={() => setIsEditingDetails(false)}
+            isSubmitting={updateLeagueMutation.isPending}
+          />
+        ) : (
+          <div style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: '1.5rem',
+            background: 'var(--bg2)'
+          }}>
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginBottom: '0.25rem' }}>
+                League Name
+              </div>
+              <div style={{ fontWeight: 500 }}>
+                {leagueData?.league?.name || leagueSlug}
+              </div>
+            </div>
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginBottom: '0.25rem' }}>
+                URL Slug
+              </div>
+              <div style={{ fontWeight: 500, fontFamily: 'monospace' }}>
+                {leagueData?.league?.slug || leagueSlug}
+              </div>
+            </div>
+            {leagueData?.league?.description && (
+              <div style={{ marginBottom: '1rem' }}>
+                <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginBottom: '0.25rem' }}>
+                  Description
+                </div>
+                <div>
+                  {leagueData.league.description}
+                </div>
+              </div>
+            )}
+            {leagueData?.league?.logoUrl && (
+              <div>
+                <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginBottom: '0.25rem' }}>
+                  Logo URL
+                </div>
+                <div style={{ fontFamily: 'monospace', fontSize: '0.875rem', wordBreak: 'break-all' }}>
+                  {leagueData.league.logoUrl}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
 
       {/* Admins */}
       <section style={{ marginBottom: '3rem' }}>
@@ -370,6 +473,167 @@ export default function LeagueSettingsPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+interface LeagueDetailsFormProps {
+  league: any;
+  onSubmit: (input: UpdateLeagueInput) => void;
+  onCancel: () => void;
+  isSubmitting: boolean;
+}
+
+function LeagueDetailsForm({ league, onSubmit, onCancel, isSubmitting }: LeagueDetailsFormProps) {
+  const [name, setName] = useState(league?.name || '');
+  const [slug, setSlug] = useState(league?.slug || '');
+  const [description, setDescription] = useState(league?.description || '');
+  const [logoUrl, setLogoUrl] = useState(league?.logoUrl || '');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const input: UpdateLeagueInput = {};
+    
+    if (name !== league?.name) input.name = name;
+    if (slug !== league?.slug) input.slug = slug;
+    if (description !== league?.description) input.description = description;
+    if (logoUrl !== league?.logoUrl) input.logoUrl = logoUrl;
+    
+    onSubmit(input);
+  };
+
+  return (
+    <div style={{
+      border: '1px solid var(--border)',
+      borderRadius: 8,
+      padding: '1.5rem',
+      background: 'var(--bg2)'
+    }}>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div>
+          <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, fontSize: '0.875rem' }}>
+            League Name *
+          </label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            style={{
+              width: '100%',
+              padding: '0.5rem',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              fontSize: '0.875rem',
+              background: 'var(--bg1)',
+              color: 'var(--text1)'
+            }}
+          />
+        </div>
+
+        <div>
+          <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, fontSize: '0.875rem' }}>
+            URL Slug *
+          </label>
+          <input
+            type="text"
+            value={slug}
+            onChange={(e) => setSlug(e.target.value.toLowerCase())}
+            pattern="[a-z0-9-]+"
+            required
+            style={{
+              width: '100%',
+              padding: '0.5rem',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              fontSize: '0.875rem',
+              background: 'var(--bg1)',
+              color: 'var(--text1)',
+              fontFamily: 'monospace'
+            }}
+          />
+          <div style={{ fontSize: '0.75rem', color: 'var(--text2)', marginTop: '0.25rem' }}>
+            Lowercase letters, numbers, and hyphens only
+          </div>
+        </div>
+
+        <div>
+          <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, fontSize: '0.875rem' }}>
+            Description
+          </label>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            style={{
+              width: '100%',
+              padding: '0.5rem',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              fontSize: '0.875rem',
+              background: 'var(--bg1)',
+              color: 'var(--text1)',
+              resize: 'vertical'
+            }}
+          />
+        </div>
+
+        <div>
+          <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, fontSize: '0.875rem' }}>
+            Logo URL
+          </label>
+          <input
+            type="url"
+            value={logoUrl}
+            onChange={(e) => setLogoUrl(e.target.value)}
+            placeholder="https://example.com/logo.png"
+            style={{
+              width: '100%',
+              padding: '0.5rem',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              fontSize: '0.875rem',
+              background: 'var(--bg1)',
+              color: 'var(--text1)',
+              fontFamily: 'monospace'
+            }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isSubmitting}
+            style={{
+              padding: '0.5rem 1rem',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              background: 'var(--bg1)',
+              cursor: 'pointer',
+              fontSize: '0.875rem'
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={isSubmitting || !name || !slug}
+            style={{
+              padding: '0.5rem 1rem',
+              border: 'none',
+              borderRadius: 4,
+              background: isSubmitting || !name || !slug ? 'var(--border)' : 'var(--primary)',
+              color: 'white',
+              cursor: isSubmitting || !name || !slug ? 'not-allowed' : 'pointer',
+              fontSize: '0.875rem',
+              fontWeight: 500
+            }}
+          >
+            {isSubmitting ? 'Saving...' : 'Save Changes'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

@@ -447,5 +447,516 @@ export async function registerLeagueRoutes(
       request.log.info({ leagueId: league.id, userId, removedByUserId: actorUserId }, 'Member removed from league');
       return reply.send({ message: 'Member removed from league' });
     });
+
+    // ──────────────────────────────────────────────────────────────────────
+    // SEASON MANAGEMENT (League Admin Only)
+    // ──────────────────────────────────────────────────────────────────────
+
+    // ── Create a new season ────────────────────────────────────────────────
+    leagueScope.post('/leagues/:leagueSlug/seasons', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const league = (request as any).league;
+      const body = request.body as {
+        name: string;
+        competitionType: 'XC' | 'HIKE_AND_FLY';
+        startDate: string;  // ISO 8601 date
+        endDate: string;    // ISO 8601 date
+        nominalDistanceKm?: number;
+        nominalTimeS?: number;
+        nominalGoalRatio?: number;
+      };
+      
+      // Validate dates
+      const start = new Date(body.startDate);
+      const end = new Date(body.endDate);
+      
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return reply.status(400).send({ error: 'Invalid date format. Use ISO 8601 (YYYY-MM-DD)' });
+      }
+      
+      if (end <= start) {
+        return reply.status(400).send({ error: 'End date must be after start date' });
+      }
+      
+      const seasonId = randomUUID();
+      
+      db.prepare(
+        `INSERT INTO seasons (
+          id, league_id, name, competition_type, start_date, end_date,
+          nominal_distance_km, nominal_time_s, nominal_goal_ratio,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+      ).run(
+        seasonId,
+        league.id,
+        body.name,
+        body.competitionType,
+        body.startDate,
+        body.endDate,
+        body.nominalDistanceKm ?? 70.0,
+        body.nominalTimeS ?? 5400,
+        body.nominalGoalRatio ?? 0.3
+      );
+      
+      const season = db.prepare(
+        `SELECT 
+          id, name, competition_type as competitionType,
+          start_date as startDate, end_date as endDate,
+          nominal_distance_km as nominalDistanceKm,
+          nominal_time_s as nominalTimeS,
+          nominal_goal_ratio as nominalGoalRatio,
+          created_at as createdAt
+        FROM seasons WHERE id = ?`
+      ).get(seasonId);
+      
+      request.log.info({ leagueId: league.id, seasonId }, 'Season created');
+      return reply.status(201).send({ season });
+    });
+
+    // ── Update a season ────────────────────────────────────────────────────
+    leagueScope.put('/leagues/:leagueSlug/seasons/:seasonId', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const { seasonId } = request.params as { seasonId: string };
+      const league = (request as any).league;
+      const body = request.body as {
+        name?: string;
+        competitionType?: 'XC' | 'HIKE_AND_FLY';
+        startDate?: string;
+        endDate?: string;
+        nominalDistanceKm?: number;
+        nominalTimeS?: number;
+        nominalGoalRatio?: number;
+      };
+      
+      // Verify season belongs to this league
+      const existingSeason = db.prepare(
+        `SELECT id, start_date, end_date FROM seasons
+         WHERE id = ? AND league_id = ? AND deleted_at IS NULL`
+      ).get(seasonId, league.id);
+      
+      if (!existingSeason) {
+        return reply.status(404).send({ error: 'Season not found' });
+      }
+      
+      // Validate dates if provided
+      if (body.startDate || body.endDate) {
+        const startDate = body.startDate || existingSeason.start_date;
+        const endDate = body.endDate || existingSeason.end_date;
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+          return reply.status(400).send({ error: 'Invalid date format' });
+        }
+        
+        if (end <= start) {
+          return reply.status(400).send({ error: 'End date must be after start date' });
+        }
+      }
+      
+      // Build update query dynamically based on provided fields
+      const updates: string[] = [];
+      const params: any[] = [];
+      
+      if (body.name !== undefined) {
+        updates.push('name = ?');
+        params.push(body.name);
+      }
+      if (body.competitionType !== undefined) {
+        updates.push('competition_type = ?');
+        params.push(body.competitionType);
+      }
+      if (body.startDate !== undefined) {
+        updates.push('start_date = ?');
+        params.push(body.startDate);
+      }
+      if (body.endDate !== undefined) {
+        updates.push('end_date = ?');
+        params.push(body.endDate);
+      }
+      if (body.nominalDistanceKm !== undefined) {
+        updates.push('nominal_distance_km = ?');
+        params.push(body.nominalDistanceKm);
+      }
+      if (body.nominalTimeS !== undefined) {
+        updates.push('nominal_time_s = ?');
+        params.push(body.nominalTimeS);
+      }
+      if (body.nominalGoalRatio !== undefined) {
+        updates.push('nominal_goal_ratio = ?');
+        params.push(body.nominalGoalRatio);
+      }
+      
+      if (updates.length === 0) {
+        return reply.status(400).send({ error: 'No fields to update' });
+      }
+      
+      updates.push('updated_at = datetime(\'now\')');
+      params.push(seasonId);
+      
+      db.prepare(
+        `UPDATE seasons SET ${updates.join(', ')} WHERE id = ?`
+      ).run(...params);
+      
+      const season = db.prepare(
+        `SELECT 
+          id, name, competition_type as competitionType,
+          start_date as startDate, end_date as endDate,
+          nominal_distance_km as nominalDistanceKm,
+          nominal_time_s as nominalTimeS,
+          nominal_goal_ratio as nominalGoalRatio,
+          updated_at as updatedAt
+        FROM seasons WHERE id = ?`
+      ).get(seasonId);
+      
+      request.log.info({ leagueId: league.id, seasonId }, 'Season updated');
+      return reply.send({ season });
+    });
+
+    // ── Delete a season ────────────────────────────────────────────────────
+    leagueScope.delete('/leagues/:leagueSlug/seasons/:seasonId', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const { seasonId } = request.params as { seasonId: string };
+      const league = (request as any).league;
+      
+      // Verify season belongs to this league
+      const season = db.prepare(
+        `SELECT id FROM seasons
+         WHERE id = ? AND league_id = ? AND deleted_at IS NULL`
+      ).get(seasonId, league.id);
+      
+      if (!season) {
+        return reply.status(404).send({ error: 'Season not found' });
+      }
+      
+      // Soft delete the season
+      db.prepare(
+        `UPDATE seasons
+         SET deleted_at = datetime('now'), updated_at = datetime('now')
+         WHERE id = ?`
+      ).run(seasonId);
+      
+      request.log.info({ leagueId: league.id, seasonId }, 'Season deleted');
+      return reply.send({ message: 'Season deleted' });
+    });
+
+    // ──────────────────────────────────────────────────────────────────────
+    // TASK MANAGEMENT (League Admin Only)
+    // ──────────────────────────────────────────────────────────────────────
+
+    // ── Create a new task ──────────────────────────────────────────────────
+    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/tasks', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const { seasonId } = request.params as { seasonId: string };
+      const league = (request as any).league;
+      const body = request.body as {
+        name: string;
+        description?: string;
+        taskType: 'RACE_TO_GOAL' | 'OPEN_DISTANCE';
+        openDate: string;   // ISO 8601 datetime
+        closeDate: string;  // ISO 8601 datetime
+      };
+      
+      // Verify season belongs to this league
+      const season = db.prepare(
+        `SELECT id FROM seasons
+         WHERE id = ? AND league_id = ? AND deleted_at IS NULL`
+      ).get(seasonId, league.id);
+      
+      if (!season) {
+        return reply.status(404).send({ error: 'Season not found' });
+      }
+      
+      // Validate dates
+      const open = new Date(body.openDate);
+      const close = new Date(body.closeDate);
+      
+      if (isNaN(open.getTime()) || isNaN(close.getTime())) {
+        return reply.status(400).send({ error: 'Invalid date format. Use ISO 8601 datetime' });
+      }
+      
+      if (close <= open) {
+        return reply.status(400).send({ error: 'Close date must be after open date' });
+      }
+      
+      const taskId = randomUUID();
+      
+      db.prepare(
+        `INSERT INTO tasks (
+          id, season_id, league_id, name, description, task_type,
+          open_date, close_date, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+      ).run(
+        taskId,
+        seasonId,
+        league.id,
+        body.name,
+        body.description || null,
+        body.taskType,
+        body.openDate,
+        body.closeDate
+      );
+      
+      const task = db.prepare(
+        `SELECT 
+          id, name, description,
+          task_type as taskType,
+          open_date as openDate,
+          close_date as closeDate,
+          created_at as createdAt
+        FROM tasks WHERE id = ?`
+      ).get(taskId);
+      
+      request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task created');
+      return reply.status(201).send({ task });
+    });
+
+    // ── Update a task ──────────────────────────────────────────────────────
+    leagueScope.put('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const { seasonId, taskId } = request.params as { seasonId: string; taskId: string };
+      const league = (request as any).league;
+      const body = request.body as {
+        name?: string;
+        description?: string;
+        taskType?: 'RACE_TO_GOAL' | 'OPEN_DISTANCE';
+        openDate?: string;
+        closeDate?: string;
+      };
+      
+      // Verify task belongs to this season/league
+      const existingTask = db.prepare(
+        `SELECT t.id, t.open_date, t.close_date, t.scores_frozen_at
+         FROM tasks t
+         JOIN seasons s ON s.id = t.season_id
+         WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`
+      ).get(taskId, seasonId, league.id) as { id: string; open_date: string; close_date: string; scores_frozen_at: string | null } | undefined;
+      
+      if (!existingTask) {
+        return reply.status(404).send({ error: 'Task not found' });
+      }
+      
+      // Prevent editing frozen tasks
+      if (existingTask.scores_frozen_at) {
+        return reply.status(400).send({ error: 'Cannot edit a frozen task' });
+      }
+      
+      // Validate dates if provided
+      if (body.openDate || body.closeDate) {
+        const openDate = body.openDate || existingTask.open_date;
+        const closeDate = body.closeDate || existingTask.close_date;
+        const open = new Date(openDate);
+        const close = new Date(closeDate);
+        
+        if (isNaN(open.getTime()) || isNaN(close.getTime())) {
+          return reply.status(400).send({ error: 'Invalid date format' });
+        }
+        
+        if (close <= open) {
+          return reply.status(400).send({ error: 'Close date must be after open date' });
+        }
+      }
+      
+      // Build update query dynamically
+      const updates: string[] = [];
+      const params: any[] = [];
+      
+      if (body.name !== undefined) {
+        updates.push('name = ?');
+        params.push(body.name);
+      }
+      if (body.description !== undefined) {
+        updates.push('description = ?');
+        params.push(body.description);
+      }
+      if (body.taskType !== undefined) {
+        updates.push('task_type = ?');
+        params.push(body.taskType);
+      }
+      if (body.openDate !== undefined) {
+        updates.push('open_date = ?');
+        params.push(body.openDate);
+      }
+      if (body.closeDate !== undefined) {
+        updates.push('close_date = ?');
+        params.push(body.closeDate);
+      }
+      
+      if (updates.length === 0) {
+        return reply.status(400).send({ error: 'No fields to update' });
+      }
+      
+      updates.push('updated_at = datetime(\'now\')');
+      params.push(taskId);
+      
+      db.prepare(
+        `UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`
+      ).run(...params);
+      
+      const task = db.prepare(
+        `SELECT 
+          id, name, description,
+          task_type as taskType,
+          open_date as openDate,
+          close_date as closeDate,
+          updated_at as updatedAt
+        FROM tasks WHERE id = ?`
+      ).get(taskId);
+      
+      request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task updated');
+      return reply.send({ task });
+    });
+
+    // ── Delete a task ──────────────────────────────────────────────────────
+    leagueScope.delete('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const { seasonId, taskId } = request.params as { seasonId: string; taskId: string };
+      const league = (request as any).league;
+      
+      // Verify task belongs to this season/league
+      const task = db.prepare(
+        `SELECT t.id, t.scores_frozen_at
+         FROM tasks t
+         JOIN seasons s ON s.id = t.season_id
+         WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`
+      ).get(taskId, seasonId, league.id) as { id: string; scores_frozen_at: string | null } | undefined;
+      
+      if (!task) {
+        return reply.status(404).send({ error: 'Task not found' });
+      }
+      
+      // Prevent deleting frozen tasks
+      if (task.scores_frozen_at) {
+        return reply.status(400).send({ error: 'Cannot delete a frozen task' });
+      }
+      
+      // Soft delete the task
+      db.prepare(
+        `UPDATE tasks
+         SET deleted_at = datetime('now'), updated_at = datetime('now')
+         WHERE id = ?`
+      ).run(taskId);
+      
+      request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task deleted');
+      return reply.send({ message: 'Task deleted' });
+    });
+
+    // ── Freeze task scores ─────────────────────────────────────────────────
+    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/freeze', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const { seasonId, taskId } = request.params as { seasonId: string; taskId: string };
+      const league = (request as any).league;
+      
+      // Verify task belongs to this season/league
+      const task = db.prepare(
+        `SELECT t.id, t.scores_frozen_at
+         FROM tasks t
+         JOIN seasons s ON s.id = t.season_id
+         WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`
+      ).get(taskId, seasonId, league.id) as { id: string; scores_frozen_at: string | null } | undefined;
+      
+      if (!task) {
+        return reply.status(404).send({ error: 'Task not found' });
+      }
+      
+      if (task.scores_frozen_at) {
+        return reply.status(400).send({ error: 'Task scores are already frozen' });
+      }
+      
+      // Freeze the task
+      db.prepare(
+        `UPDATE tasks
+         SET scores_frozen_at = datetime('now'), updated_at = datetime('now')
+         WHERE id = ?`
+      ).run(taskId);
+      
+      request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task scores frozen');
+      return reply.send({ message: 'Task scores frozen' });
+    });
+
+    // ──────────────────────────────────────────────────────────────────────
+    // LEAGUE SETTINGS (League Admin Only)
+    // ──────────────────────────────────────────────────────────────────────
+
+    // ── Update league details ──────────────────────────────────────────────
+    leagueScope.put('/leagues/:leagueSlug', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+      
+      const league = (request as any).league;
+      const body = request.body as {
+        name?: string;
+        slug?: string;
+        description?: string;
+        logoUrl?: string;
+      };
+      
+      // Validate slug if provided
+      if (body.slug !== undefined) {
+        if (!/^[a-z0-9-]+$/.test(body.slug)) {
+          return reply.status(400).send({ 
+            error: 'Slug must be lowercase alphanumeric with hyphens only' 
+          });
+        }
+        
+        // Check slug uniqueness (excluding current league)
+        const existing = db.prepare(
+          `SELECT id FROM leagues WHERE slug = ? AND id != ? AND deleted_at IS NULL`
+        ).get(body.slug, league.id);
+        
+        if (existing) {
+          return reply.status(409).send({ error: 'League slug already exists' });
+        }
+      }
+      
+      // Build update query dynamically
+      const updates: string[] = [];
+      const params: any[] = [];
+      
+      if (body.name !== undefined) {
+        updates.push('name = ?');
+        params.push(body.name);
+      }
+      if (body.slug !== undefined) {
+        updates.push('slug = ?');
+        params.push(body.slug);
+      }
+      if (body.description !== undefined) {
+        updates.push('description = ?');
+        params.push(body.description);
+      }
+      if (body.logoUrl !== undefined) {
+        updates.push('logo_url = ?');
+        params.push(body.logoUrl);
+      }
+      
+      if (updates.length === 0) {
+        return reply.status(400).send({ error: 'No fields to update' });
+      }
+      
+      updates.push('updated_at = datetime(\'now\')');
+      params.push(league.id);
+      
+      db.prepare(
+        `UPDATE leagues SET ${updates.join(', ')} WHERE id = ?`
+      ).run(...params);
+      
+      const updatedLeague = db.prepare(
+        `SELECT 
+          id, name, slug, description,
+          logo_url as logoUrl,
+          updated_at as updatedAt
+        FROM leagues WHERE id = ?`
+      ).get(league.id);
+      
+      request.log.info({ leagueId: league.id }, 'League updated');
+      return reply.send({ league: updatedLeague });
+    });
   });
 }
