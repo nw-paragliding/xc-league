@@ -345,7 +345,7 @@ export function findOrCreateGoogleUser(
     if (!existingUser) {
       // New user
       db.prepare(
-        `INSERT INTO users (id, email, display_name, avatar_url, is_admin, token_version, created_at, updated_at)
+        `INSERT INTO users (id, email, display_name, avatar_url, is_super_admin, token_version, created_at, updated_at)
          VALUES (?, ?, ?, ?, 0, 1, datetime('now'), datetime('now'))`
       ).run(userId, googleUser.email, googleUser.name, googleUser.picture ?? null);
     }
@@ -436,15 +436,15 @@ export const authPlugin: FastifyPluginAsync<{ config: AuthConfig; db: Database }
 
     // Verify token_version — protects against revoked tokens
     const userRow = db.prepare(
-      `SELECT token_version, is_admin FROM users WHERE id = ? AND deleted_at IS NULL`
-    ).get(claims.sub) as { token_version: number; is_admin: number } | undefined;
+      `SELECT token_version, is_super_admin FROM users WHERE id = ? AND deleted_at IS NULL`
+    ).get(claims.sub) as { token_version: number; is_super_admin: number } | undefined;
     
     if (!userRow || userRow.token_version !== claims.tokenVersion) return;
 
     request.user = {
       ...claims,
       userId: claims.sub,
-      isAdmin: Boolean(userRow.is_admin),
+      isAdmin: Boolean(userRow.is_super_admin),
     };
   });
 };
@@ -674,7 +674,7 @@ export async function handleGetMe(
 ): Promise<void> {
   requireAuth(request, reply);
   const user = db.prepare(
-    `SELECT id, email, display_name as displayName, avatar_url as avatarUrl, is_admin as isAdmin
+    `SELECT id, email, display_name as displayName, avatar_url as avatarUrl, is_super_admin as isAdmin
      FROM users WHERE id = ?`
   ).get(request.user!.userId) as UserRecord | undefined;
   
