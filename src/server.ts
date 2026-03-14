@@ -122,19 +122,18 @@ async function main() {
   // Register all route modules under /api/v1
   // Each module is a Fastify plugin that receives db and queue as options
 
-  // TODO: Implement route handlers in src/routes/
-  // await app.register(
-  //   async (api) => {
-  //     // Auth routes
-  //     const { registerAuthRoutes } = await import('./routes/auth');
-  //     registerAuthRoutes(api, { config: authConfig, db });
-  //
-  //     // League routes
-  //     const { registerLeagueRoutes } = await import('./routes/leagues');
-  //     registerLeagueRoutes(api, { db, queue });
-  //   },
-  //   { prefix: '/api/v1' },
-  // );
+  await app.register(
+    async (api) => {
+      // Auth routes
+      const { registerAuthRoutes } = await import('./routes/auth');
+      await registerAuthRoutes(api, { config: authConfig, db });
+
+      // League routes
+      const { registerLeagueRoutes } = await import('./routes/leagues');
+      await registerLeagueRoutes(api, { db, queue });
+    },
+    { prefix: '/api/v1' },
+  );
 
   // ── SPA fallback ───────────────────────────────────────────────────────────
   // Any non-API GET request that didn't match a static file gets index.html.

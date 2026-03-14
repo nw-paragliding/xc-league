@@ -518,16 +518,16 @@ export interface MembershipRecord {
  * Returns 404 if league doesn't exist.
  * Attach to any route scope that contains :leagueSlug.
  */
-export function makeResolveLeagueHook(db: Database) {
+export function makeResolveLeagueHook(db: any) {
   return async function resolveLeague(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     const { leagueSlug } = request.params as { leagueSlug?: string };
     if (!leagueSlug) return;
 
-    const league = db.get<LeagueRecord>(
-      `SELECT id, slug, name, is_public as isPublic FROM leagues
-       WHERE slug = ? AND deleted_at IS NULL`,
-      [leagueSlug],
-    );
+    const league = db.prepare(
+      `SELECT id, slug, name FROM leagues
+       WHERE slug = ? AND deleted_at IS NULL`
+    ).get(leagueSlug) as LeagueRecord | undefined;
+    
     if (!league) {
       reply.status(404).send({ error: `League '${leagueSlug}' not found` });
       throw new Error('NotFound');
@@ -536,12 +536,12 @@ export function makeResolveLeagueHook(db: Database) {
 
     // Resolve membership if the user is authenticated
     if (request.user) {
-      const membership = db.get<MembershipRecord>(
+      const membership = db.prepare(
         `SELECT user_id as userId, league_id as leagueId, role, joined_at as joinedAt
          FROM league_memberships
-         WHERE league_id = ? AND user_id = ? AND left_at IS NULL`,
-        [league.id, request.user.userId],
-      );
+         WHERE league_id = ? AND user_id = ? AND left_at IS NULL`
+      ).get(league.id, request.user.userId) as MembershipRecord | undefined;
+      
       request.membership = membership ?? null;
     }
   };
