@@ -1,0 +1,12 @@
+# Copy to .npmrc and update the Python path for your system
+# 
+# For native module compilation (better-sqlite3), npm needs Python 3.8+
+#
+# If using uv (recommended):
+#   1. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh
+#   2. Install Python: uv python install 3.12
+#   3. Find path: uv python find 3.12
+#   4. Set below
+#
+# Example:
+# python=/Users/yourname/.local/share/uv/python/cpython-3.12-macos-aarch64-none/bin/python3.12
