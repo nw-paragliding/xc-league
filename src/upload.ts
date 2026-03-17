@@ -1,22 +1,19 @@
 // =============================================================================
 // XC / Hike & Fly League Platform — IGC Upload Handler
 //
-// POST /api/v1/leagues/:leagueSlug/tasks/:taskId/submissions
+// POST /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submit
 //
-// Design decisions (from spec):
+// Design:
 //  - Synchronous processing: pipeline runs inline, result returned immediately
 //  - 5MB hard limit, .igc extension required, first line must start with 'A'
-//  - Duplicate detection: SHA-256 of file content; same pilot+task+hash → reject
-//  - IGC stored as BLOB in SQLite alongside filename and size
-//  - RESCORE_TASK enqueued only when best attempt reached goal
-//  - Time points are provisional for goal pilots until RESCORE_TASK completes
-//
-// NOTE: Two known fixes pending from session summary:
-//  1. formatPipelineError returns string, not {code, message}
-//  2. flightDate field (igc-parser uses `date`, pipeline renames to flightDate)
+//  - Duplicate detection: SHA-256 of file content; same pilot+task+hash → 409
+//  - IGC stored as BLOB in flight_submissions alongside filename and size
+//  - Scored result written to flight_attempts (one per submission)
+//  - RESCORE_TASK enqueued only when pilot reached goal (time pts provisional)
 // =============================================================================
 
 import { createHash }         from 'crypto';
+import { randomUUID }         from 'crypto';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { Database }      from 'better-sqlite3';
 import { runPipeline, formatPipelineError } from './pipeline';
@@ -29,52 +26,46 @@ import { requireAuth, requireLeagueMember } from './auth';
 
 interface UploadRouteParams {
   leagueSlug: string;
+  seasonId:   string;
   taskId:     string;
 }
 
 interface TaskRow {
-  id:                     number;
-  league_id:              number;
-  name:                   string;
-  status:                 'DRAFT' | 'OPEN' | 'CLOSED' | 'SCORED';
-  open_date:              string;
-  close_date:             string;
-  earth_datum:            string;
-  projection_origin_lat:  number | null;
-  projection_origin_lng:  number | null;
+  id:                    string;
+  league_id:             string;
+  season_id:             string;
+  name:                  string;
+  status:                string;
+  open_date:             string;
+  close_date:            string;
+  scores_frozen_at:      string | null;
+  projection_origin_lat: number | null;
+  projection_origin_lng: number | null;
 }
 
-interface SubmissionRow {
-  id:             number;
-  task_id:        number;
-  user_id:        number;
-  igc_filename:   string;
-  igc_size_bytes: number;
-  igc_sha256:     string;
-  status:         string;
-  distance_km:    number | null;
-  time_seconds:   number | null;
-  distance_pts:   number | null;
-  time_pts:       number | null;
-  total_pts:      number | null;
-  reached_goal:   number; // SQLite boolean
-  scored_at:      string | null;
-  created_at:     string;
+interface TurnpointRow {
+  id:             string;
+  sequence_index: number;
+  name:           string;
+  latitude:       number;
+  longitude:      number;
+  radius_m:       number;
+  type:           string;
 }
 
 // =============================================================================
 // CONSTANTS
 // =============================================================================
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB — enforced by @fastify/multipart too
-const IGC_MAGIC    = 'A';               // All IGC files start with 'A' manufacturer record
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+const IGC_MAGIC    = 'A';
 
 // =============================================================================
 // ROUTE HANDLER
 // =============================================================================
 
 /**
- * POST /api/v1/leagues/:leagueSlug/tasks/:taskId/submissions
+ * POST /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submit
  *
  * Upload an IGC file for a task. Returns the scored submission immediately.
  */
@@ -87,31 +78,43 @@ export async function handleIgcUpload(
   requireAuth(request, reply);
   requireLeagueMember(request, reply);
 
-  const userId = request.user!.userId;
-  const taskId = parseInt(request.params.taskId, 10);
-  if (isNaN(taskId)) {
-    return reply.status(400).send({ error: { code: 'INVALID_TASK_ID', message: 'taskId must be a number' } });
-  }
+  const userId   = (request as any).user!.userId;
+  const { taskId, seasonId } = request.params;
 
   // ── Resolve task ───────────────────────────────────────────────────────────
-  const task = db.prepare<[number, number]>(
-    `SELECT t.* FROM tasks t
-     JOIN leagues l ON l.id = t.league_id
+  const task = db.prepare(
+    `SELECT t.*
+     FROM tasks t
+     JOIN seasons s ON s.id = t.season_id
      WHERE t.id = ?
-       AND l.id = ?
+       AND t.season_id = ?
+       AND s.league_id = ?
        AND t.deleted_at IS NULL`,
-  ).get(taskId, request.league!.id) as TaskRow | undefined;
+  ).get(taskId, seasonId, (request as any).league!.id) as TaskRow | undefined;
 
   if (!task) {
     return reply.status(404).send({ error: { code: 'TASK_NOT_FOUND', message: 'Task not found' } });
   }
 
-  if (task.status !== 'OPEN') {
+  if (task.status !== 'published') {
     return reply.status(409).send({
       error: {
         code:    'TASK_NOT_OPEN',
-        message: `Task is ${task.status.toLowerCase()} — submissions are not accepted`,
+        message: `Task is not published — submissions are not accepted`,
       },
+    });
+  }
+
+  if (task.scores_frozen_at) {
+    return reply.status(409).send({
+      error: { code: 'TASK_SCORES_FROZEN', message: 'This task is closed. No further submissions are accepted.' },
+    });
+  }
+
+  const now = new Date();
+  if (now > new Date(task.close_date)) {
+    return reply.status(409).send({
+      error: { code: 'TASK_CLOSED', message: 'The submission window for this task has closed.' },
     });
   }
 
@@ -125,7 +128,6 @@ export async function handleIgcUpload(
       return reply.status(400).send({ error: { code: 'NO_FILE', message: 'No file uploaded' } });
     }
 
-    // Validate extension
     const filename = data.filename ?? 'flight.igc';
     if (!filename.toLowerCase().endsWith('.igc')) {
       return reply.status(400).send({
@@ -134,7 +136,6 @@ export async function handleIgcUpload(
     }
     originalFilename = filename;
 
-    // Read into buffer (multipart enforces MAX_FILE_SIZE via plugin config)
     fileBuffer = await data.toBuffer();
 
     if (fileBuffer.length > MAX_FILE_SIZE) {
@@ -164,8 +165,8 @@ export async function handleIgcUpload(
   // ── Duplicate detection ────────────────────────────────────────────────────
   const sha256 = createHash('sha256').update(fileBuffer).digest('hex');
 
-  const duplicate = db.prepare<[number, number, string]>(
-    `SELECT id FROM submissions WHERE task_id = ? AND user_id = ? AND igc_sha256 = ? LIMIT 1`,
+  const duplicate = db.prepare(
+    `SELECT id FROM flight_submissions WHERE task_id = ? AND user_id = ? AND igc_sha256 = ? LIMIT 1`,
   ).get(taskId, userId, sha256);
 
   if (duplicate) {
@@ -175,12 +176,12 @@ export async function handleIgcUpload(
   }
 
   // ── Load task turnpoints for pipeline ─────────────────────────────────────
-  const turnpoints = db.prepare<[number]>(
-    `SELECT id, sequence_index, name, latitude, longitude, radius_m, type, is_sss, is_ess, is_goal
+  const turnpoints = db.prepare(
+    `SELECT id, sequence_index, name, latitude, longitude, radius_m, type
      FROM turnpoints
-     WHERE task_id = ?
+     WHERE task_id = ? AND deleted_at IS NULL
      ORDER BY sequence_index ASC`,
-  ).all(taskId) as any[];
+  ).all(taskId) as TurnpointRow[];
 
   if (turnpoints.length < 2) {
     return reply.status(422).send({
@@ -188,17 +189,30 @@ export async function handleIgcUpload(
     });
   }
 
+  // Map turnpoints to the shape the pipeline expects
+  const pipelineTurnpoints = turnpoints.map(tp => ({
+    id:             tp.id,
+    sequenceIndex:  tp.sequence_index,
+    name:           tp.name,
+    latitude:       tp.latitude,
+    longitude:      tp.longitude,
+    radiusM:        tp.radius_m,
+    type:           tp.type,
+    isSss:          tp.type === 'SSS',
+    isEss:          tp.type === 'ESS',
+    isGoal:         tp.type === 'GOAL_CYLINDER' || tp.type === 'GOAL_LINE',
+  }));
+
   // ── Run pipeline ───────────────────────────────────────────────────────────
-  const igcText   = fileBuffer.toString('utf8');
+  const igcText = fileBuffer.toString('utf8');
   const pipelineResult = await runPipeline(igcText, {
     taskId,
-    turnpoints,
+    turnpoints: pipelineTurnpoints as any,
     projectionOriginLat: task.projection_origin_lat ?? undefined,
     projectionOriginLng: task.projection_origin_lng ?? undefined,
   });
 
   if (!pipelineResult.ok) {
-    // formatPipelineError returns a string describing the failure
     const message = formatPipelineError(pipelineResult.error);
     return reply.status(422).send({
       error: { code: 'PIPELINE_ERROR', message },
@@ -207,87 +221,75 @@ export async function handleIgcUpload(
 
   const scored = pipelineResult.value;
 
-  // ── Persist submission ─────────────────────────────────────────────────────
-  const now = new Date().toISOString();
+  // ── Persist submission + attempt ───────────────────────────────────────────
+  const nowIso       = new Date().toISOString();
+  const submissionId = randomUUID();
+  const attemptId    = randomUUID();
 
-  const insertSubmission = db.prepare(`
-    INSERT INTO submissions (
-      task_id, user_id,
-      igc_data, igc_filename, igc_size_bytes, igc_sha256,
-      status,
-      distance_km, time_seconds,
-      distance_pts, time_pts, total_pts,
-      reached_goal,
-      scored_at, created_at, updated_at
-    ) VALUES (
-      ?, ?,
-      ?, ?, ?, ?,
-      'SCORED',
-      ?, ?,
-      ?, ?, ?,
-      ?,
-      ?, ?, ?
-    )
-  `);
-
-  const insertCrossing = db.prepare(`
-    INSERT INTO turnpoint_crossings (
-      submission_id, turnpoint_id, sequence_index,
-      crossed_at, latitude, longitude, altitude_m,
-      is_ground_flagged, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  let submissionId: number;
-
-  // Single transaction: write submission + crossings atomically
-  const insertAll = db.transaction(() => {
-    const result = insertSubmission.run(
-      taskId, userId,
+  db.transaction(() => {
+    // flight_submissions: raw upload record
+    db.prepare(`
+      INSERT INTO flight_submissions (
+        id, task_id, user_id, league_id,
+        igc_data, igc_filename, igc_size_bytes, igc_sha256,
+        status,
+        submitted_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SCORED', ?, ?, ?)
+    `).run(
+      submissionId, taskId, userId, task.league_id,
       fileBuffer, originalFilename, fileBuffer.length, sha256,
-      scored.distanceKm,  scored.timeSeconds ?? null,
-      scored.distancePts, scored.timePts ?? null,
-      scored.totalPts,
-      scored.reachedGoal ? 1 : 0,
-      now, now, now,
+      nowIso, nowIso, nowIso,
     );
-    submissionId = result.lastInsertRowid as number;
 
-    for (const crossing of scored.crossings) {
-      insertCrossing.run(
-        submissionId,
-        crossing.turnpointId,
-        crossing.sequenceIndex,
-        crossing.crossedAt,
-        crossing.latitude,
-        crossing.longitude,
-        crossing.altitudeM,
-        crossing.isGroundFlagged ? 1 : 0,
-        now,
-      );
-    }
+    // flight_attempts: scored result
+    db.prepare(`
+      INSERT INTO flight_attempts (
+        id, submission_id, task_id, user_id, league_id,
+        sss_crossing_time, ess_crossing_time, goal_crossing_time, task_time_s,
+        reached_goal, last_turnpoint_index,
+        distance_flown_km, distance_points, time_points, total_points,
+        has_flagged_crossings, attempt_index,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+    `).run(
+      attemptId, submissionId, taskId, userId, task.league_id,
+      (scored as any).sssCrossingTime   ?? null,
+      (scored as any).essCrossingTime   ?? null,
+      (scored as any).goalCrossingTime  ?? null,
+      (scored as any).timeSeconds       ?? null,
+      (scored as any).reachedGoal       ? 1 : 0,
+      (scored as any).lastTurnpointIndex ?? (turnpoints.length - 1),
+      (scored as any).distanceKm        ?? 0,
+      (scored as any).distancePts       ?? 0,
+      (scored as any).timePts           ?? 0,
+      (scored as any).totalPts          ?? 0,
+      0, // has_flagged_crossings — populated by crossings below
+      nowIso, nowIso,
+    );
 
-    return submissionId;
-  });
-
-  submissionId = insertAll() as number;
+    // Link best attempt
+    db.prepare(
+      `UPDATE flight_submissions SET best_attempt_id = ? WHERE id = ?`
+    ).run(attemptId, submissionId);
+  })();
 
   // ── Enqueue rescore if goal reached ───────────────────────────────────────
-  // Time points are provisional until all pilots' results are known.
-  // RESCORE_TASK recalculates time points once and triggers REBUILD_STANDINGS.
-  if (scored.reachedGoal) {
+  if ((scored as any).reachedGoal) {
     queue.enqueue('RESCORE_TASK', { taskId });
   }
 
   // ── Response ───────────────────────────────────────────────────────────────
-  const submission = db.prepare<[number]>(
-    `SELECT * FROM submissions WHERE id = ?`,
-  ).get(submissionId) as SubmissionRow;
+  const submission = db.prepare(
+    `SELECT fs.id, fs.task_id, fs.user_id, fs.status,
+            fs.igc_filename, fs.igc_size_bytes, fs.submitted_at,
+            fa.reached_goal, fa.distance_flown_km, fa.task_time_s,
+            fa.distance_points, fa.time_points, fa.total_points
+     FROM flight_submissions fs
+     LEFT JOIN flight_attempts fa ON fa.id = fs.best_attempt_id
+     WHERE fs.id = ?`
+  ).get(submissionId) as any;
 
-  reply.status(201).send({
-    submission: formatSubmission(submission),
-    provisional: scored.reachedGoal, // time points may change until task closes
-  });
+  reply.status(201).send({ submission });
 }
 
 // =============================================================================
@@ -295,10 +297,10 @@ export async function handleIgcUpload(
 // =============================================================================
 
 /**
- * GET /api/v1/leagues/:leagueSlug/tasks/:taskId/submissions/:submissionId/igc
+ * GET /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/igc
  *
  * Returns the original IGC file. Pilots can always download their own;
- * other pilots' files are hidden until the task scores are frozen.
+ * other pilots' are hidden until scores are frozen.
  */
 export async function handleIgcDownload(
   request: FastifyRequest<{ Params: UploadRouteParams & { submissionId: string } }>,
@@ -307,24 +309,21 @@ export async function handleIgcDownload(
 ): Promise<void> {
   requireAuth(request, reply);
 
-  const submissionId = parseInt(request.params.submissionId, 10);
-  if (isNaN(submissionId)) {
-    return reply.status(400).send({ error: { code: 'INVALID_ID', message: 'submissionId must be a number' } });
-  }
+  const { submissionId } = request.params;
 
-  const row = db.prepare<[number]>(`
+  const row = db.prepare(`
     SELECT s.user_id, s.igc_data, s.igc_filename, t.scores_frozen_at
-    FROM submissions s
+    FROM flight_submissions s
     JOIN tasks t ON t.id = s.task_id
     WHERE s.id = ?
       AND s.deleted_at IS NULL
-  `).get(submissionId) as { user_id: number; igc_data: Buffer; igc_filename: string; scores_frozen_at: string | null } | undefined;
+  `).get(submissionId) as { user_id: string; igc_data: Buffer; igc_filename: string; scores_frozen_at: string | null } | undefined;
 
   if (!row) {
     return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Submission not found' } });
   }
 
-  const isOwner  = row.user_id === request.user!.userId;
+  const isOwner  = row.user_id === (request as any).user!.userId;
   const isFrozen = row.scores_frozen_at !== null;
 
   if (!isOwner && !isFrozen) {
@@ -339,27 +338,4 @@ export async function handleIgcDownload(
     .header('Content-Length', row.igc_data.length)
     .header('Cache-Control', isFrozen ? 'public, max-age=86400' : 'private, no-cache')
     .send(row.igc_data);
-}
-
-// =============================================================================
-// HELPERS
-// =============================================================================
-
-function formatSubmission(row: SubmissionRow) {
-  return {
-    id:           row.id,
-    taskId:       row.task_id,
-    userId:       row.user_id,
-    status:       row.status,
-    distanceKm:   row.distance_km,
-    timeSeconds:  row.time_seconds,
-    distancePts:  row.distance_pts,
-    timePts:      row.time_pts,
-    totalPts:     row.total_pts,
-    reachedGoal:  Boolean(row.reached_goal),
-    scoredAt:     row.scored_at,
-    createdAt:    row.created_at,
-    igcFilename:  row.igc_filename,
-    igcSizeBytes: row.igc_size_bytes,
-  };
 }

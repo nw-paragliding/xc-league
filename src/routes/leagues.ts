@@ -9,6 +9,9 @@ import type Database from 'better-sqlite3';
 import type { SQLiteJobQueue } from '../job-queue';
 import { makeResolveLeagueHook, requireLeagueAdmin, requireLeagueMember, requireAuth } from '../auth';
 import { randomUUID } from 'crypto';
+import { parseTaskFile } from '../task-parsers';
+import { exportXctsk, exportCup, buildXctrackDeepLink, buildDownloadUrl, type ExportTask, type ExportTurnpoint } from '../task-exporters';
+import QRCode from 'qrcode';
 
 interface LeagueRouteOptions {
   db: Database.Database;
@@ -99,7 +102,12 @@ export async function registerLeagueRoutes(
         return reply.status(404).send({ error: 'League not found' });
       }
 
-      return reply.send({ league });
+      const fullLeague = db.prepare(
+        `SELECT id, slug, name, description, logo_url as logoUrl, created_at as createdAt
+         FROM leagues WHERE id = ? AND deleted_at IS NULL`
+      ).get(league.id);
+
+      return reply.send({ league: fullLeague });
     });
 
     // ── Get seasons for a league ───────────────────────────────────────────
@@ -109,11 +117,17 @@ export async function registerLeagueRoutes(
         `SELECT 
            s.id,
            s.name,
-           s.competition_type as competitionType,
-           s.start_date as startDate,
-           s.end_date as endDate,
+           s.competition_type    as competitionType,
+           s.start_date          as startDate,
+           s.end_date            as endDate,
+           s.status,
+           s.nominal_distance_km as nominalDistanceKm,
+           s.nominal_time_s      as nominalTimeS,
+           s.nominal_goal_ratio  as nominalGoalRatio,
+           s.created_at          as createdAt,
+           s.updated_at          as updatedAt,
            (SELECT COUNT(*) FROM tasks WHERE season_id = s.id AND deleted_at IS NULL) as taskCount,
-           (SELECT COUNT(DISTINCT user_id) FROM season_registrations WHERE season_id = s.id AND left_at IS NULL) as registeredPilotCount
+           (SELECT COUNT(DISTINCT user_id) FROM season_registrations WHERE season_id = s.id AND deleted_at IS NULL) as registeredPilotCount
          FROM seasons s
          WHERE s.league_id = ? AND s.deleted_at IS NULL
          ORDER BY s.start_date DESC`
@@ -136,24 +150,38 @@ export async function registerLeagueRoutes(
         return reply.status(404).send({ error: 'Season not found' });
       }
 
-      const tasks = db.prepare(
-        `SELECT 
+      const rows = db.prepare(
+        `SELECT
            t.id,
            t.name,
            t.task_type as taskType,
+           t.status,
            t.open_date as openDate,
            t.close_date as closeDate,
            t.optimised_distance_km as optimisedDistanceKm,
-           CASE WHEN t.frozen_at IS NOT NULL THEN 1 ELSE 0 END as isFrozen,
-           (SELECT COUNT(DISTINCT user_id) FROM submissions WHERE task_id = t.id AND deleted_at IS NULL) as pilotCount,
-           (SELECT COUNT(DISTINCT s.user_id) 
-            FROM submissions s 
-            JOIN attempts a ON a.submission_id = s.id 
-            WHERE s.task_id = t.id AND s.deleted_at IS NULL AND a.reached_goal = 1) as goalCount
+           CASE WHEN t.scores_frozen_at IS NOT NULL THEN 1 ELSE 0 END as isFrozen,
+           t.scores_frozen_at as scoresFrozenAt,
+           (SELECT COUNT(DISTINCT user_id) FROM flight_submissions WHERE task_id = t.id AND deleted_at IS NULL) as pilotCount,
+           (SELECT COUNT(DISTINCT fs.user_id)
+            FROM flight_submissions fs
+            JOIN flight_attempts fa ON fa.submission_id = fs.id
+            WHERE fs.task_id = t.id AND fs.deleted_at IS NULL AND fa.reached_goal = 1) as goalCount,
+           json_group_array(json_object(
+             'name', tp.name, 'latitude', tp.latitude, 'longitude', tp.longitude,
+             'radiusM', tp.radius_m, 'type', tp.type, 'sequenceIndex', tp.sequence_index
+           ) ORDER BY tp.sequence_index) FILTER (WHERE tp.id IS NOT NULL) as turnpointsJson
          FROM tasks t
+         LEFT JOIN turnpoints tp ON tp.task_id = t.id AND tp.deleted_at IS NULL
          WHERE t.season_id = ? AND t.deleted_at IS NULL
-         ORDER BY t.open_date DESC`
-      ).all(seasonId);
+         GROUP BY t.id
+         ORDER BY t.sort_order ASC, t.created_at ASC`
+      ).all(seasonId) as any[];
+
+      const tasks = rows.map(t => ({
+        ...t,
+        turnpoints: JSON.parse(t.turnpointsJson || '[]'),
+        turnpointsJson: undefined,
+      }));
 
       return reply.send({ tasks });
     });
@@ -173,7 +201,7 @@ export async function registerLeagueRoutes(
            t.open_date as openDate,
            t.close_date as closeDate,
            t.optimised_distance_km as optimisedDistanceKm,
-           t.frozen_at as frozenAt
+           t.scores_frozen_at as scoresFrozenAt
          FROM tasks t
          JOIN seasons s ON s.id = t.season_id
          WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`
@@ -239,7 +267,7 @@ export async function registerLeagueRoutes(
            s.user_id as userId,
            s.task_id as taskId,
            s.igc_data as igcData
-         FROM submissions s
+         FROM flight_submissions s
          JOIN tasks t ON t.id = s.task_id
          JOIN seasons se ON se.id = t.season_id
          WHERE s.id = ? AND se.league_id = ? AND s.deleted_at IS NULL`
@@ -880,12 +908,16 @@ export async function registerLeagueRoutes(
       }
       
       const taskId = randomUUID();
-      
+
+      const nextOrder = (db.prepare(
+        `SELECT COALESCE(MAX(sort_order), -1) + 1 as next FROM tasks WHERE season_id = ? AND deleted_at IS NULL`
+      ).get(seasonId) as any).next as number;
+
       db.prepare(
         `INSERT INTO tasks (
           id, season_id, league_id, name, description, task_type,
-          open_date, close_date, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+          open_date, close_date, sort_order, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
       ).run(
         taskId,
         seasonId,
@@ -894,7 +926,8 @@ export async function registerLeagueRoutes(
         body.description || null,
         body.taskType,
         body.openDate,
-        body.closeDate
+        body.closeDate,
+        nextOrder
       );
       
       const task = db.prepare(
@@ -909,6 +942,155 @@ export async function registerLeagueRoutes(
       
       request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task created');
       return reply.status(201).send({ task });
+    });
+
+    // ── Import task from file (.xctsk or .cup) ─────────────────────────────
+    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/tasks/import', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+
+      const { seasonId } = request.params as { seasonId: string };
+      const league = (request as any).league;
+      const query = request.query as {
+        name?: string;
+        openDate?: string;
+        closeDate?: string;
+      };
+
+      // Expect multipart: a single task file (.xctsk or .cup)
+      const data = await request.file();
+      if (!data) {
+        return reply.status(400).send({ error: 'No file uploaded' });
+      }
+
+      const filename: string = data.filename ?? 'task';
+      const ext = filename.split('.').pop()?.toLowerCase();
+      if (ext !== 'xctsk' && ext !== 'cup') {
+        return reply.status(400).send({ error: 'Unsupported file format. Use .xctsk or .cup' });
+      }
+
+      // Read file content
+      const fileBuffer = await data.toBuffer();
+      const content = fileBuffer.toString('utf8');
+
+      // Parse file
+      let parsed;
+      try {
+        parsed = parseTaskFile(content, filename);
+      } catch (err: any) {
+        return reply.status(400).send({ error: err.message || 'Failed to parse task file' });
+      }
+
+      if (parsed.turnpoints.length < 2) {
+        return reply.status(400).send({ error: 'Task must have at least 2 turnpoints (SSS + Goal)' });
+      }
+
+      // Verify season exists
+      const season = db.prepare(
+        `SELECT id FROM seasons WHERE id = ? AND league_id = ? AND deleted_at IS NULL`
+      ).get(seasonId, league.id);
+
+      if (!season) {
+        return reply.status(404).send({ error: 'Season not found' });
+      }
+
+      // Use provided name or parsed name or filename
+      const taskName = query.name ?? parsed.name ?? filename.replace(/\.[^.]+$/, '');
+      const openDate = query.openDate;
+      const closeDate = query.closeDate;
+
+      // Create task + turnpoints in a transaction
+      const taskId = randomUUID();
+
+      db.transaction(() => {
+        const nextOrderImport = (db.prepare(
+          `SELECT COALESCE(MAX(sort_order), -1) + 1 as next FROM tasks WHERE season_id = ? AND deleted_at IS NULL`
+        ).get(seasonId) as any).next as number;
+
+        // Create task
+        db.prepare(
+          `INSERT INTO tasks (
+            id, season_id, league_id, name, task_type,
+            open_date, close_date,
+            task_data_source, task_data_raw,
+            sort_order, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+        ).run(
+          taskId,
+          seasonId,
+          league.id,
+          taskName,
+          parsed.taskType ?? 'RACE_TO_GOAL',
+          openDate ?? new Date().toISOString(),
+          closeDate ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          parsed.format,
+          content,
+          nextOrderImport,
+        );
+
+        // Create turnpoints
+        let sssId: string | null = null;
+        let essId: string | null = null;
+        let goalId: string | null = null;
+
+        for (let i = 0; i < parsed.turnpoints.length; i++) {
+          const tp = parsed.turnpoints[i];
+          const tpId = randomUUID();
+
+          db.prepare(
+            `INSERT INTO turnpoints (
+              id, task_id, league_id, sequence_index,
+              name, latitude, longitude, radius_m, type,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+          ).run(
+            tpId,
+            taskId,
+            league.id,
+            i,
+            tp.name,
+            tp.latitude,
+            tp.longitude,
+            tp.radius_m,
+            tp.type,
+          );
+
+          if (tp.type === 'SSS') sssId = tpId;
+          if (tp.type === 'ESS') essId = tpId;
+          if (tp.type === 'GOAL_CYLINDER' || tp.type === 'GOAL_LINE') goalId = tpId;
+        }
+
+        // Update task FK references
+        if (sssId || essId || goalId) {
+          const setClauses: string[] = [];
+          const setParams: (string | null)[] = [];
+          if (sssId)  { setClauses.push('sss_turnpoint_id = ?');  setParams.push(sssId); }
+          if (essId)  { setClauses.push('ess_turnpoint_id = ?');  setParams.push(essId); }
+          if (goalId) { setClauses.push('goal_turnpoint_id = ?'); setParams.push(goalId); }
+
+          db.prepare(
+            `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = ?`
+          ).run(...setParams, taskId);
+        }
+      })();
+
+      const task = db.prepare(
+        `SELECT
+          id, name, description,
+          task_type as taskType,
+          open_date as openDate,
+          close_date as closeDate,
+          status,
+          created_at as createdAt
+        FROM tasks WHERE id = ?`
+      ).get(taskId);
+
+      const turnpoints = db.prepare(
+        `SELECT id, name, latitude, longitude, radius_m as radiusM, type, sequence_index as sequenceIndex
+         FROM turnpoints WHERE task_id = ? AND deleted_at IS NULL ORDER BY sequence_index`
+      ).all(taskId);
+
+      request.log.info({ leagueId: league.id, seasonId, taskId, format: parsed.format }, 'Task imported from file');
+      return reply.status(201).send({ task, turnpoints });
     });
 
     // ── Update a task ──────────────────────────────────────────────────────
@@ -1161,6 +1343,157 @@ export async function registerLeagueRoutes(
       
       request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task unpublished');
       return reply.send({ message: 'Task unpublished (returned to draft)' });
+    });
+
+    // ── Reorder tasks ──────────────────────────────────────────────────────
+    leagueScope.put('/leagues/:leagueSlug/seasons/:seasonId/tasks/reorder', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+
+      const { seasonId } = request.params as { seasonId: string };
+      const league = (request as any).league;
+      const { order } = request.body as { order: { id: string; sortOrder: number }[] };
+
+      if (!Array.isArray(order)) {
+        return reply.status(400).send({ error: 'order must be an array' });
+      }
+
+      // Validate all tasks belong to this season
+      const taskIds = order.map(o => o.id);
+      const placeholders = taskIds.map(() => '?').join(',');
+      const existing = db.prepare(
+        `SELECT id FROM tasks WHERE id IN (${placeholders}) AND season_id = ? AND deleted_at IS NULL`
+      ).all(...taskIds, seasonId) as { id: string }[];
+
+      if (existing.length !== taskIds.length) {
+        return reply.status(400).send({ error: 'One or more task IDs are invalid for this season' });
+      }
+
+      const update = db.prepare(`UPDATE tasks SET sort_order = ?, updated_at = datetime('now') WHERE id = ?`);
+      db.transaction(() => {
+        for (const { id, sortOrder } of order) {
+          update.run(sortOrder, id);
+        }
+      })();
+
+      request.log.info({ leagueId: league.id, seasonId }, 'Tasks reordered');
+      return reply.send({ message: 'Tasks reordered' });
+    });
+
+    // ── Download task file (.xctsk or .cup) ────────────────────────────────
+    leagueScope.get('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/download', async (request, reply) => {
+      requireLeagueMember(request, reply);
+
+      const { seasonId, taskId } = request.params as { seasonId: string; taskId: string };
+      const league = (request as any).league;
+      const query = request.query as { format?: string };
+      const format = (query.format ?? 'xctsk').toLowerCase();
+
+      if (format !== 'xctsk' && format !== 'cup') {
+        return reply.status(400).send({ error: 'Unsupported format. Use xctsk or cup' });
+      }
+
+      const taskRow = db.prepare(
+        `SELECT t.id, t.name, t.task_type as taskType,
+                t.task_data_source as dataSource, t.task_data_raw as rawContent
+         FROM tasks t
+         JOIN seasons s ON s.id = t.season_id
+         WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`
+      ).get(taskId, seasonId, league.id) as {
+        id: string; name: string; taskType: string;
+        dataSource: string | null; rawContent: string | null;
+      } | undefined;
+
+      if (!taskRow) {
+        return reply.status(404).send({ error: 'Task not found' });
+      }
+
+      const tpRows = db.prepare(
+        `SELECT name, latitude, longitude, radius_m, type, sequence_index as sequenceIndex
+         FROM turnpoints WHERE task_id = ? AND deleted_at IS NULL ORDER BY sequence_index`
+      ).all(taskId) as ExportTurnpoint[];
+
+      const exportTask: ExportTask = {
+        id: taskRow.id, name: taskRow.name, taskType: taskRow.taskType,
+        turnpoints: tpRows, rawContent: taskRow.rawContent, dataSource: taskRow.dataSource,
+      };
+
+      let fileContent: string;
+      let contentType: string;
+      let filename: string;
+
+      if (format === 'xctsk') {
+        fileContent = (taskRow.dataSource === 'xctsk' && taskRow.rawContent)
+          ? taskRow.rawContent : exportXctsk(exportTask);
+        contentType = 'application/octet-stream';
+        filename = `${taskRow.name.replace(/[^a-z0-9]/gi, '_')}.xctsk`;
+      } else {
+        fileContent = (taskRow.dataSource === 'cup' && taskRow.rawContent)
+          ? taskRow.rawContent : exportCup(exportTask);
+        contentType = 'text/csv';
+        filename = `${taskRow.name.replace(/[^a-z0-9]/gi, '_')}.cup`;
+      }
+
+      reply.header('Content-Type', contentType);
+      reply.header('Content-Disposition', `attachment; filename="${filename}"`);
+      return reply.send(fileContent);
+    });
+
+    // ── Generate QR code for task ──────────────────────────────────────────
+    leagueScope.get('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/qr', async (request, reply) => {
+      requireLeagueMember(request, reply);
+
+      const { leagueSlug, seasonId, taskId } = request.params as {
+        leagueSlug: string; seasonId: string; taskId: string;
+      };
+      const league = (request as any).league;
+      const query = request.query as { app?: string; format?: string };
+      const app = query.app ?? 'download';
+      const dlFormat = (query.format ?? 'xctsk') as 'xctsk' | 'cup';
+
+      const taskRow = db.prepare(
+        `SELECT t.id, t.name, t.task_type as taskType
+         FROM tasks t
+         JOIN seasons s ON s.id = t.season_id
+         WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`
+      ).get(taskId, seasonId, league.id) as { id: string; name: string; taskType: string } | undefined;
+
+      if (!taskRow) {
+        return reply.status(404).send({ error: 'Task not found' });
+      }
+
+      const tpRows = db.prepare(
+        `SELECT name, latitude, longitude, radius_m, type, sequence_index as sequenceIndex
+         FROM turnpoints WHERE task_id = ? AND deleted_at IS NULL ORDER BY sequence_index`
+      ).all(taskId) as ExportTurnpoint[];
+
+      const exportTask: ExportTask = {
+        id: taskRow.id, name: taskRow.name, taskType: taskRow.taskType, turnpoints: tpRows,
+      };
+
+      let qrContent: string;
+      if (app === 'xctrack') {
+        qrContent = buildXctrackDeepLink(exportTask);
+      } else {
+        const proto = (request.headers['x-forwarded-proto'] as string) ?? 'http';
+        const host  = request.headers.host ?? 'localhost:3000';
+        const baseUrl = `${proto}://${host}`;
+        qrContent = buildDownloadUrl(baseUrl, leagueSlug, seasonId, taskId, dlFormat);
+      }
+
+      try {
+        const pngBuffer = await QRCode.toBuffer(qrContent, {
+          type: 'png',
+          width: 600,
+          margin: 2,
+          errorCorrectionLevel: 'M',
+        });
+        reply.header('Content-Type', 'image/png');
+        reply.header('Cache-Control', 'public, max-age=3600');
+        return reply.send(pngBuffer);
+      } catch (err) {
+        request.log.error(err, 'Failed to generate QR code');
+        return reply.status(500).send({ error: 'Failed to generate QR code' });
+      }
     });
 
     // ──────────────────────────────────────────────────────────────────────

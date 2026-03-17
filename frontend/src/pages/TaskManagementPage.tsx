@@ -1,13 +1,16 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { leagueApi, type Season, type Task, type CreateTaskInput } from '../api/leagues';
+import { leagueApi, type Task, type CreateTaskInput } from '../api/leagues';
 import { useLeague } from '../hooks/useLeague';
+import TaskImportModal from '../components/TaskImportModal';
+import TaskExportModal from '../components/TaskExportModal';
 
 export default function TaskManagementPage() {
   const { leagueSlug } = useLeague();
   const queryClient = useQueryClient();
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [exportingTask, setExportingTask] = useState<Task | null>(null);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,18 +25,6 @@ export default function TaskManagementPage() {
     queryKey: ['leagues', leagueSlug, 'seasons', selectedSeasonId, 'tasks'],
     queryFn: () => leagueApi.listTasks(leagueSlug, selectedSeasonId!),
     enabled: !!selectedSeasonId,
-  });
-
-  const createMutation = useMutation({
-    mutationFn: (input: CreateTaskInput) => leagueApi.createTask(leagueSlug, selectedSeasonId!, input),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['leagues', leagueSlug, 'seasons', selectedSeasonId, 'tasks'] });
-      setIsCreating(false);
-      setError(null);
-    },
-    onError: (err: any) => {
-      setError(err.message || 'Failed to create task');
-    },
   });
 
   const updateMutation = useMutation({
@@ -68,6 +59,28 @@ export default function TaskManagementPage() {
     },
     onError: (err: any) => {
       setError(err.message || 'Failed to freeze task');
+    },
+  });
+
+  const publishMutation = useMutation({
+    mutationFn: (taskId: string) => leagueApi.publishTask(leagueSlug, selectedSeasonId!, taskId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leagues', leagueSlug, 'seasons', selectedSeasonId, 'tasks'] });
+      setError(null);
+    },
+    onError: (err: any) => {
+      setError(err.message || 'Failed to publish task');
+    },
+  });
+
+  const unpublishMutation = useMutation({
+    mutationFn: (taskId: string) => leagueApi.unpublishTask(leagueSlug, selectedSeasonId!, taskId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leagues', leagueSlug, 'seasons', selectedSeasonId, 'tasks'] });
+      setError(null);
+    },
+    onError: (err: any) => {
+      setError(err.message || 'Failed to unpublish task');
     },
   });
 
@@ -167,13 +180,13 @@ export default function TaskManagementPage() {
 
       {selectedSeasonId && (
         <>
-          {/* Create Task Button */}
+          {/* Create Task Buttons */}
           <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>
               Tasks for {selectedSeason?.name}
             </h2>
             <button
-              onClick={() => setIsCreating(true)}
+              onClick={() => setIsImporting(true)}
               style={{
                 padding: '0.5rem 1rem',
                 border: 'none',
@@ -182,19 +195,23 @@ export default function TaskManagementPage() {
                 color: 'white',
                 cursor: 'pointer',
                 fontSize: '0.875rem',
-                fontWeight: 500
+                fontWeight: 500,
               }}
             >
               + New Task
             </button>
           </div>
 
-          {/* Create Task Form */}
-          {isCreating && (
-            <TaskForm
-              onSubmit={(input) => createMutation.mutate(input)}
-              onCancel={() => setIsCreating(false)}
-              isSubmitting={createMutation.isPending}
+          {/* Import Modal */}
+          {isImporting && (
+            <TaskImportModal
+              leagueSlug={leagueSlug}
+              seasonId={selectedSeasonId}
+              onSuccess={() => {
+                setIsImporting(false);
+                queryClient.invalidateQueries({ queryKey: ['leagues', leagueSlug, 'seasons', selectedSeasonId, 'tasks'] });
+              }}
+              onClose={() => setIsImporting(false)}
             />
           )}
 
@@ -235,10 +252,36 @@ export default function TaskManagementPage() {
                     }}
                   >
                     <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                         <span style={{ fontWeight: 600, fontSize: '1.125rem' }}>
                           {task.name}
                         </span>
+                        {/* Status badge */}
+                        {task.status === 'published' ? (
+                          <span style={{
+                            padding: '0.125rem 0.5rem',
+                            background: '#dcfce7',
+                            color: '#166534',
+                            borderRadius: 4,
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            letterSpacing: '0.05em'
+                          }}>
+                            PUBLISHED
+                          </span>
+                        ) : (
+                          <span style={{
+                            padding: '0.125rem 0.5rem',
+                            background: '#f3f4f6',
+                            color: '#6b7280',
+                            borderRadius: 4,
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            letterSpacing: '0.05em'
+                          }}>
+                            DRAFT
+                          </span>
+                        )}
                         {task.scoresFrozenAt && (
                           <span style={{
                             padding: '0.125rem 0.5rem',
@@ -263,15 +306,63 @@ export default function TaskManagementPage() {
                       <div style={{ fontSize: '0.875rem', color: 'var(--text2)' }}>
                         {new Date(task.openDate).toLocaleString()} - {new Date(task.closeDate).toLocaleString()}
                       </div>
-                      {(task.pilotCount !== undefined || task.optimisedDistanceKm) && (
-                        <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginTop: '0.25rem' }}>
-                          {task.pilotCount || 0} submission{task.pilotCount !== 1 ? 's' : ''}
-                          {task.optimisedDistanceKm && ` • ${task.optimisedDistanceKm.toFixed(2)} km optimal`}
-                        </div>
-                      )}
+                      <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginTop: '0.25rem' }}>
+                        {(task.turnpointCount ?? 0) > 0
+                          ? `${task.turnpointCount} turnpoints`
+                          : <span style={{ color: '#c00' }}>No turnpoints — import a task file to enable publishing</span>
+                        }
+                        {task.optimisedDistanceKm && ` • ${task.optimisedDistanceKm.toFixed(2)} km optimal`}
+                        {(task.pilotCount ?? 0) > 0 && ` • ${task.pilotCount} submission${task.pilotCount !== 1 ? 's' : ''}`}
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      {!task.scoresFrozenAt && (
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      {/* Publish / Unpublish */}
+                      {!task.scoresFrozenAt && task.status !== 'published' && (
+                        <button
+                          onClick={() => {
+                            if (confirm(`Publish "${task.name}"? Pilots will be able to see this task.`)) {
+                              publishMutation.mutate(task.id);
+                            }
+                          }}
+                          disabled={publishMutation.isPending}
+                          style={{
+                            padding: '0.5rem 1rem',
+                            border: '1px solid #86efac',
+                            borderRadius: 4,
+                            background: '#dcfce7',
+                            color: '#166534',
+                            cursor: 'pointer',
+                            fontSize: '0.875rem',
+                            fontWeight: 500
+                          }}
+                        >
+                          Publish
+                        </button>
+                      )}
+                      {!task.scoresFrozenAt && task.status === 'published' && (task.pilotCount ?? 0) === 0 && (
+                        <button
+                          onClick={() => {
+                            if (confirm(`Unpublish "${task.name}"? It will revert to draft.`)) {
+                              unpublishMutation.mutate(task.id);
+                            }
+                          }}
+                          disabled={unpublishMutation.isPending}
+                          style={{
+                            padding: '0.5rem 1rem',
+                            border: '1px solid var(--border)',
+                            borderRadius: 4,
+                            background: 'var(--bg1)',
+                            color: 'var(--text2)',
+                            cursor: 'pointer',
+                            fontSize: '0.875rem'
+                          }}
+                        >
+                          Unpublish
+                        </button>
+                      )}
+
+                      {/* Edit & management buttons — only for draft tasks */}
+                      {!task.scoresFrozenAt && task.status !== 'published' && (
                         <>
                           <button
                             onClick={() => setEditingTask(task)}
@@ -287,25 +378,6 @@ export default function TaskManagementPage() {
                             }}
                           >
                             Edit
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (confirm(`Freeze scores for "${task.name}"? This cannot be undone.`)) {
-                                freezeMutation.mutate(task.id);
-                              }
-                            }}
-                            disabled={freezeMutation.isPending}
-                            style={{
-                              padding: '0.5rem 1rem',
-                              border: '1px solid #bae6fd',
-                              borderRadius: 4,
-                              background: '#e0f2fe',
-                              color: '#0369a1',
-                              cursor: 'pointer',
-                              fontSize: '0.875rem'
-                            }}
-                          >
-                            Freeze
                           </button>
                           <button
                             onClick={() => {
@@ -328,6 +400,30 @@ export default function TaskManagementPage() {
                           </button>
                         </>
                       )}
+
+                      {/* Freeze — available for published tasks that aren't already frozen */}
+                      {!task.scoresFrozenAt && task.status === 'published' && (
+                        <button
+                          onClick={() => {
+                            if (confirm(`Freeze scores for "${task.name}"? This cannot be undone.`)) {
+                              freezeMutation.mutate(task.id);
+                            }
+                          }}
+                          disabled={freezeMutation.isPending}
+                          style={{
+                            padding: '0.5rem 1rem',
+                            border: '1px solid #bae6fd',
+                            borderRadius: 4,
+                            background: '#e0f2fe',
+                            color: '#0369a1',
+                            cursor: 'pointer',
+                            fontSize: '0.875rem'
+                          }}
+                        >
+                          Freeze
+                        </button>
+                      )}
+
                       {task.scoresFrozenAt && (
                         <div style={{
                           padding: '0.5rem 1rem',
@@ -337,11 +433,39 @@ export default function TaskManagementPage() {
                           Frozen {new Date(task.scoresFrozenAt).toLocaleDateString()}
                         </div>
                       )}
+
+                      {/* Export — available for published tasks */}
+                      {task.status === 'published' && (
+                        <button
+                          onClick={() => setExportingTask(task)}
+                          style={{
+                            padding: '0.5rem 1rem',
+                            border: '1px solid var(--border)',
+                            borderRadius: 4,
+                            background: 'var(--bg2)',
+                            color: 'var(--text1)',
+                            cursor: 'pointer',
+                            fontSize: '0.875rem',
+                          }}
+                        >
+                          Export / QR
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))
               )}
             </div>
+          )}
+
+          {/* Export Modal */}
+          {exportingTask && selectedSeasonId && (
+            <TaskExportModal
+              task={exportingTask}
+              leagueSlug={leagueSlug}
+              seasonId={selectedSeasonId}
+              onClose={() => setExportingTask(null)}
+            />
           )}
         </>
       )}

@@ -1,31 +1,35 @@
 import Database from 'better-sqlite3';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 
 export function setupTestDatabase(db: Database.Database) {
-  // Load and execute schema
-  const schemaPath = join(__dirname, '../src/schema.sql');
-  const schema = readFileSync(schemaPath, 'utf-8');
-  db.exec(schema);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
 
-  // Load and execute migrations
-  const migration1 = readFileSync(join(__dirname, '../src/migrations/0001_initial_schema.sql'), 'utf-8');
-  const migration2 = readFileSync(join(__dirname, '../src/migrations/0002_admin_features.sql'), 'utf-8');
-  
-  // Mark migrations as applied
+  // Migration tracking table
   db.exec(`
     CREATE TABLE IF NOT EXISTS migrations (
-      id TEXT PRIMARY KEY,
-      applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL UNIQUE,
+      applied_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     )
   `);
-  
-  db.exec(migration1);
-  db.exec(migration2);
-  
-  db.prepare(`INSERT OR IGNORE INTO migrations (id) VALUES ('0001_initial_schema')`).run();
-  db.prepare(`INSERT OR IGNORE INTO migrations (id) VALUES ('0002_admin_features')`).run();
+
+  // 0001: initial schema (schema.sql acts as the baseline migration)
+  const schema = readFileSync(join(__dirname, '../src/schema.sql'), 'utf-8');
+  db.exec(schema);
+  db.prepare(`INSERT OR IGNORE INTO migrations (name) VALUES ('0001_initial_schema')`).run();
+
+  // 0002 and 0003: numbered migrations
+  const migrationsDir = join(__dirname, '../src/migrations');
+  const files = readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
+  for (const file of files) {
+    const name = file.replace('.sql', '');
+    const sql = readFileSync(join(migrationsDir, file), 'utf-8');
+    db.exec(sql);
+    db.prepare(`INSERT OR IGNORE INTO migrations (name) VALUES (?)`).run(name);
+  }
 }
 
 export function createTestUser(db: Database.Database, overrides: Partial<{

@@ -1,14 +1,14 @@
 /**
  * League context.
  *
- * At club scale there's typically one league and one active season.
- * These values come from the URL in a full router setup, but here we
- * expose them via a context so pages don't need to thread them as props.
+ * Reads leagueSlug from the URL via React Router's useParams().
+ * Falls back to the context value (set by LeagueProvider) when no URL
+ * param is available (e.g. during tests or non-routed renders).
  *
- * In production, replace the defaults with values parsed from the URL
- * using React Router's useParams(), or from a league-picker UI.
+ * URL structure: /leagues/:leagueSlug/...
  */
 import { createContext, useContext, type ReactNode } from 'react';
+import { useParams } from 'react-router-dom';
 
 interface LeagueContextValue {
   leagueSlug: string;
@@ -32,6 +32,17 @@ export function LeagueProvider({
   );
 }
 
-export function useLeague() {
-  return useContext(LeagueContext);
+/**
+ * Returns the current league slug and season ID.
+ * URL params take precedence over context values, allowing deep-links
+ * like /leagues/alps-xc-2025 to work correctly.
+ */
+export function useLeague(): LeagueContextValue {
+  const ctx = useContext(LeagueContext);
+  // useParams is safe to call here — BrowserRouter is mounted in main.tsx
+  const params = useParams<{ leagueSlug?: string; seasonId?: string }>();
+  return {
+    leagueSlug: params.leagueSlug ?? ctx.leagueSlug,
+    seasonId:   params.seasonId   ?? ctx.seasonId,
+  };
 }

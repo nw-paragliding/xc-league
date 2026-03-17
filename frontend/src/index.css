@@ -5,14 +5,17 @@
 :root {
   /* Colors */
   --bg:        #0a0a0a;
-  --bg2:       #151515;
-  --bg3:       #1f1f1f;
-  --border:    #2a2a2a;
-  --text:      #e0e0e0;
-  --text2:     #a0a0a0;
-  --text3:     #606060;
+  --bg1:       #0a0a0a;
+  --bg2:       #1a1a1a;
+  --bg3:       #242424;
+  --border:    #383838;
+  --text:      #e8e8e8;
+  --text1:     #e8e8e8;
+  --text2:     #b0b0b0;
+  --text3:     #808080;
   --accent:    #3b82f6;
   --accent-hover: #2563eb;
+  --primary:   #3b82f6;
   --success:   #10b981;
   --warning:   #f59e0b;
   --error:     #ef4444;
@@ -229,6 +232,17 @@ code {
 
 .btn-secondary:hover {
   background: var(--bg2);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text2);
+  border: 1px solid var(--border);
+}
+
+.btn-ghost:hover {
+  background: var(--bg3);
+  color: var(--text);
 }
 
 /* Tables */

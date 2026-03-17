@@ -16,6 +16,7 @@ import fastifyMultipart from '@fastify/multipart';
 import fastifyCors from '@fastify/cors';
 import Database from 'better-sqlite3';
 import { join } from 'path';
+import { readFileSync, readdirSync } from 'fs';
 import { loadAuthConfig, authPlugin } from './auth';
 import { SQLiteJobQueue, bootstrapWorker } from './job-queue';
 
@@ -36,6 +37,40 @@ const MAX_IGC_SIZE_BYTES = 5 * 1024 * 1024; // 5MB — matches upload handler
 // BOOTSTRAP
 // =============================================================================
 
+function runMigrations(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS migrations (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL UNIQUE,
+      applied_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  const applied = new Set(
+    db.prepare('SELECT name FROM migrations').all().map((r: any) => r.name as string),
+  );
+
+  const INITIAL = '0001_initial_schema';
+  if (!applied.has(INITIAL)) {
+    const schema = readFileSync(join(__dirname, 'schema.sql'), 'utf8');
+    db.exec(schema);
+    db.prepare('INSERT INTO migrations (name) VALUES (?)').run(INITIAL);
+    console.log(`[migrate] Applied ${INITIAL}`);
+  }
+
+  const migrationsDir = join(__dirname, 'migrations');
+  let files: string[] = [];
+  try { files = readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort(); } catch { /* no dir */ }
+
+  for (const file of files) {
+    const name = file.replace('.sql', '');
+    if (applied.has(name)) continue;
+    db.exec(readFileSync(join(migrationsDir, file), 'utf8'));
+    db.prepare('INSERT INTO migrations (name) VALUES (?)').run(name);
+    console.log(`[migrate] Applied ${name}`);
+  }
+}
+
 async function main() {
   // ── Database ───────────────────────────────────────────────────────────────
   const db = new Database(DB_PATH);
@@ -43,6 +78,9 @@ async function main() {
   db.pragma('foreign_keys = ON');
   // Busy timeout — prevents "database is locked" errors under concurrent writes
   db.pragma('busy_timeout = 5000');
+
+  // ── Migrations (run on every startup — idempotent) ──────────────────────
+  runMigrations(db);
 
   // ── Auth config ────────────────────────────────────────────────────────────
   const authConfig = loadAuthConfig();

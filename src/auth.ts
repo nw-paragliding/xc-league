@@ -437,6 +437,30 @@ const authPluginImpl: FastifyPluginAsync<{ config: AuthConfig; db: Database }> =
   fastify.decorateRequest('membership', null);
 
   fastify.addHook('preHandler', async (request: FastifyRequest, _reply: FastifyReply) => {
+    // ── Test-mode bypass ────────────────────────────────────────────────────
+    // When NODE_ENV=test, accept an x-test-user-id header to authenticate as
+    // any user in the DB without needing a real JWT. Never active in production.
+    if (process.env['NODE_ENV'] === 'test') {
+      const testUserId = (request.headers as Record<string, string>)['x-test-user-id'];
+      if (testUserId) {
+        const userRow = db.prepare(
+          `SELECT id, is_super_admin, token_version FROM users WHERE id = ? AND deleted_at IS NULL`
+        ).get(testUserId) as { id: string; is_super_admin: number; token_version: number } | undefined;
+        if (userRow) {
+          request.user = {
+            sub:          userRow.id,
+            userId:       userRow.id,
+            isAdmin:      Boolean(userRow.is_super_admin),
+            tokenVersion: userRow.token_version,
+            iat:          0,
+            exp:          Number.MAX_SAFE_INTEGER,
+          } as any;
+        }
+        return;
+      }
+    }
+
+    // ── Normal JWT path ─────────────────────────────────────────────────────
     const token = extractToken(request, config);
     if (!token) return; // unauthenticated — request.user stays null
 
@@ -498,11 +522,7 @@ export function requireLeagueMember(request: FastifyRequest, reply: FastifyReply
 /** Reject request if not a league admin or super-admin. Returns 403. */
 export function requireLeagueAdmin(request: FastifyRequest, reply: FastifyReply): void {
   requireAuth(request, reply);
-  
-  // Super admins have automatic admin access to all leagues
-  if (request.user!.isAdmin) return;
-  
-  // Regular users need explicit league admin membership
+  if (request.user!.isAdmin) return; // super admins have access to all leagues
   if (!request.membership || request.membership.role !== 'admin') {
     reply.status(403).send({ error: 'League admin access required' });
     throw new Error('Forbidden');
@@ -545,8 +565,8 @@ export function makeResolveLeagueHook(db: any) {
     ).get(leagueSlug) as LeagueRecord | undefined;
     
     if (!league) {
-      reply.status(404).send({ error: `League '${leagueSlug}' not found` });
-      throw new Error('NotFound');
+      void reply.status(404).send({ error: `League '${leagueSlug}' not found` });
+      return;
     }
     request.league = league;
 
@@ -704,7 +724,9 @@ export async function handleGetMe(
 ): Promise<void> {
   requireAuth(request, reply);
   const user = db.prepare(
-    `SELECT id, email, display_name as displayName, avatar_url as avatarUrl, is_super_admin as isAdmin
+    `SELECT id, email, display_name as displayName, avatar_url as avatarUrl, is_super_admin as isAdmin,
+            wind_rating as windRating, glider_manufacturer as gliderManufacturer, glider_model as gliderModel,
+            glider_weight_rating as gliderWeightRating
      FROM users WHERE id = ?`
   ).get(request.user!.userId) as UserRecord | undefined;
   
@@ -724,7 +746,16 @@ export async function handleUpdateMe(
   db: any,
 ): Promise<void> {
   requireAuth(request, reply);
-  const body = request.body as { displayName?: string; avatarUrl?: string | null };
+  const body = request.body as {
+    displayName?: string;
+    avatarUrl?: string | null;
+    windRating?: string | null;
+    gliderManufacturer?: string | null;
+    gliderModel?: string | null;
+    gliderWeightRating?: number | null;
+  };
+
+  const VALID_WIND_RATINGS = new Set(['A', 'B', 'C', 'D', 'CCC']);
 
   // Only update provided fields
   if (body.displayName !== undefined) {
@@ -737,11 +768,42 @@ export async function handleUpdateMe(
       `UPDATE users SET avatar_url = ?, updated_at = datetime('now') WHERE id = ?`
     ).run(body.avatarUrl, request.user!.userId);
   }
+  if (body.windRating !== undefined) {
+    if (body.windRating !== null && !VALID_WIND_RATINGS.has(body.windRating)) {
+      reply.status(400).send({ error: 'Invalid wind rating. Must be A, B, C, D, or CCC.' });
+      return;
+    }
+    db.prepare(
+      `UPDATE users SET wind_rating = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(body.windRating, request.user!.userId);
+  }
+  if (body.gliderManufacturer !== undefined) {
+    db.prepare(
+      `UPDATE users SET glider_manufacturer = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(body.gliderManufacturer, request.user!.userId);
+  }
+  if (body.gliderModel !== undefined) {
+    db.prepare(
+      `UPDATE users SET glider_model = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(body.gliderModel, request.user!.userId);
+  }
+  if (body.gliderWeightRating !== undefined) {
+    if (body.gliderWeightRating !== null && (typeof body.gliderWeightRating !== 'number' || body.gliderWeightRating <= 0)) {
+      reply.status(400).send({ error: 'Invalid weight rating. Must be a positive number (kg).' });
+      return;
+    }
+    db.prepare(
+      `UPDATE users SET glider_weight_rating = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(body.gliderWeightRating, request.user!.userId);
+  }
 
   const user = db.prepare(
-    `SELECT id, email, display_name as displayName, avatar_url as avatarUrl FROM users WHERE id = ?`
+    `SELECT id, email, display_name as displayName, avatar_url as avatarUrl, is_super_admin as isAdmin,
+            wind_rating as windRating, glider_manufacturer as gliderManufacturer, glider_model as gliderModel,
+            glider_weight_rating as gliderWeightRating
+     FROM users WHERE id = ?`
   ).get(request.user!.userId) as UserRecord | undefined;
-  
+
   reply.send({ user });
 }
 

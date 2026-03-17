@@ -193,6 +193,7 @@ export default function CreateLeaguePage({ onSuccess }: CreateLeaguePageProps) {
               border: '1px solid var(--border)',
               borderRadius: 4,
               background: 'var(--bg2)',
+              color: 'var(--text)',
               cursor: 'pointer',
               fontSize: '1rem'
             }}

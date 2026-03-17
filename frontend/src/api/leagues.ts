@@ -3,7 +3,7 @@
 // Functions for league creation and member management endpoints
 // =============================================================================
 
-import { api } from './client';
+import { api, apiFetch } from './client';
 
 export interface League {
   id: string;
@@ -89,6 +89,7 @@ export interface Task {
   updatedAt?: string;
   pilotCount?: number;
   goalCount?: number;
+  turnpointCount?: number;
 }
 
 export interface CreateTaskInput {
@@ -109,6 +110,10 @@ export interface UpdateTaskInput {
 
 export const leagueApi = {
   // ── League Management ──────────────────────────────────────────────────
+
+  /** List all public leagues */
+  list: () =>
+    api.get<{ leagues: League[] }>('/leagues'),
   
   /** Create a new league (any authenticated user) */
   create: (data: CreateLeagueInput) =>
@@ -207,4 +212,43 @@ export const leagueApi = {
   /** Unpublish task (league admin only) */
   unpublishTask: (leagueSlug: string, seasonId: string, taskId: string) =>
     api.post<{ message: string }>(`/leagues/${leagueSlug}/seasons/${seasonId}/tasks/${taskId}/unpublish`),
+
+  /** Reorder tasks (league admin only) */
+  reorderTasks: (leagueSlug: string, seasonId: string, order: { id: string; sortOrder: number }[]) =>
+    api.put<{ message: string }>(`/leagues/${leagueSlug}/seasons/${seasonId}/tasks/reorder`, { order }),
+
+  /** Download task file (.xctsk or .cup). Returns a Blob for client-side download. */
+  downloadTask: (leagueSlug: string, seasonId: string, taskId: string, format: 'xctsk' | 'cup'): Promise<Blob> =>
+    fetch(`/api/v1/leagues/${leagueSlug}/seasons/${seasonId}/tasks/${taskId}/download?format=${format}`, {
+      credentials: 'include',
+    }).then(res => {
+      if (!res.ok) throw new Error('Download failed');
+      return res.blob();
+    }),
+
+  /** Get QR code image URL for task (returns a URL string to use in <img src>) */
+  getTaskQrUrl: (leagueSlug: string, seasonId: string, taskId: string, app: 'xctrack' | 'download', format: 'xctsk' | 'cup' = 'xctsk'): string =>
+    `/api/v1/leagues/${leagueSlug}/seasons/${seasonId}/tasks/${taskId}/qr?app=${app}&format=${format}`,
+
+  /** Import task from a .xctsk or .cup file (league admin only) */
+  importTask: (
+    leagueSlug: string,
+    seasonId: string,
+    file: File,
+    options?: { name?: string; openDate?: string; closeDate?: string },
+  ): Promise<{ task: Task; turnpoints: Array<{ id: string; name: string; latitude: number; longitude: number; radiusM: number; type: string; sequenceIndex: number }> }> => {
+    const form = new FormData();
+    form.append('taskFile', file, file.name);
+
+    const params = new URLSearchParams();
+    if (options?.name)      params.set('name', options.name);
+    if (options?.openDate)  params.set('openDate', options.openDate);
+    if (options?.closeDate) params.set('closeDate', options.closeDate);
+    const qs = params.toString() ? `?${params}` : '';
+
+    return apiFetch(
+      `/leagues/${leagueSlug}/seasons/${seasonId}/tasks/import${qs}`,
+      { method: 'POST', body: form },
+    );
+  },
 };

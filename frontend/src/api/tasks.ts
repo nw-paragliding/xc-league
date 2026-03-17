@@ -4,16 +4,29 @@ import { api, apiFetch, API_BASE } from './client';
 // SHARED TYPES
 // =============================================================================
 
+export interface Turnpoint {
+  name:          string;
+  latitude:      number;
+  longitude:     number;
+  radiusM:       number;
+  type:          'SSS' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE' | 'CYLINDER';
+  sequenceIndex: number;
+}
+
 export interface Task {
   id:                  string;
   name:                string;
   description:         string | null;
+  taskType:            'RACE_TO_GOAL' | 'OPEN_DISTANCE';
+  status:              'draft' | 'published';
   openDate:            string;
   closeDate:           string;
   optimisedDistanceKm: number | null;
+  isFrozen:            boolean;
   scoresFrozenAt:      string | null;
   pilotCount:          number;
   goalCount:           number;
+  turnpoints:          Turnpoint[];
 }
 
 export interface AttemptResult {

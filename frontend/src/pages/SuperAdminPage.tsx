@@ -241,6 +241,7 @@ export default function SuperAdminPage() {
                   border: '1px solid var(--border)',
                   borderRadius: 4,
                   background: 'var(--bg2)',
+                  color: 'var(--text)',
                   cursor: 'pointer'
                 }}
               >

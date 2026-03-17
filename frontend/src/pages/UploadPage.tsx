@@ -1,7 +1,9 @@
 import { useState, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useUpload } from '../hooks/useSubmission';
-import { useTasks } from '../hooks/useTasks';
 import { useAuth } from '../hooks/useAuth';
+import { useLeague } from '../hooks/useLeague';
+import { leagueApi } from '../api/leagues';
 import type { SubmissionResponse } from '../api/tasks';
 
 function fmtFileSize(bytes: number) {
@@ -22,7 +24,7 @@ function fmtTime(seconds: number | null) {
 function fmtPts(n: number) { return Math.round(n).toString(); }
 
 function ScoreResult({ result }: { result: SubmissionResponse }) {
-  if (result.status === 'INVALID') {
+  if ('errorCode' in result) {
     return (
       <div className="result-panel fade-in">
         <div className="result-status">
@@ -111,13 +113,40 @@ function ScoreResult({ result }: { result: SubmissionResponse }) {
 
 export default function UploadPage() {
   const { user, login } = useAuth();
-  const { data: tasks, isLoading: tasksLoading } = useTasks();
+  const { leagueSlug } = useLeague();
   const { status, progress, result, error, upload, reset } = useUpload();
 
   const [file, setFile] = useState<File | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Fetch open seasons
+  const { data: seasonsData, isLoading: seasonsLoading } = useQuery({
+    queryKey: ['leagues', leagueSlug, 'seasons'],
+    queryFn: () => leagueApi.listSeasons(leagueSlug),
+    enabled: !!user,
+  });
+
+  const openSeasons = (seasonsData?.seasons ?? []).filter(s => s.status === 'open');
+
+  // Fetch tasks for the selected season
+  const { data: tasksData, isLoading: tasksLoading } = useQuery({
+    queryKey: ['leagues', leagueSlug, 'seasons', selectedSeasonId, 'tasks'],
+    queryFn: () => leagueApi.listTasks(leagueSlug, selectedSeasonId!),
+    enabled: !!selectedSeasonId,
+  });
+
+  // Check registration for the selected season
+  const { data: regData, isLoading: regLoading } = useQuery({
+    queryKey: ['leagues', leagueSlug, 'seasons', selectedSeasonId, 'registration'],
+    queryFn: () => leagueApi.getSeasonRegistration(leagueSlug, selectedSeasonId!),
+    enabled: !!selectedSeasonId && !!user,
+  });
+
+  const tasks = tasksData?.tasks ?? [];
+  const isRegistered = regData?.isRegistered ?? false;
 
   const handleFile = (f: File | null | undefined) => {
     if (!f) return;
@@ -134,13 +163,14 @@ export default function UploadPage() {
   };
 
   const handleSubmit = () => {
-    if (!file || !selectedTaskId) return;
+    if (!file || !selectedTaskId || !selectedSeasonId) return;
     upload(file, selectedTaskId);
   };
 
   const handleReset = () => {
     setFile(null);
     setSelectedTaskId(null);
+    setSelectedSeasonId(null);
     reset();
   };
 
@@ -232,48 +262,114 @@ export default function UploadPage() {
               </div>
             )}
 
-            {/* Task selection */}
+            {/* Season + Task selection */}
             {file && (
               <div className="fade-in" style={{ marginTop: 24 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: 10 }}>
-                  Select Task
-                </div>
-
-                {tasksLoading ? (
-                  <div style={{ height: 48, borderRadius: 'var(--r)' }} className="shimmer" />
-                ) : (
-                  <div className="task-select-list">
-                    {(tasks ?? [])
-                      .filter(t => !t.scoresFrozenAt && new Date(t.closeDate) > new Date())
-                      .map(t => (
+                {/* Season picker */}
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: 10 }}>
+                    Select Season
+                  </div>
+                  {seasonsLoading ? (
+                    <div style={{ height: 48, borderRadius: 'var(--r)' }} className="shimmer" />
+                  ) : openSeasons.length === 0 ? (
+                    <div style={{
+                      padding: '0.75rem 1rem',
+                      border: '1px solid var(--border)',
+                      borderRadius: 'var(--r)',
+                      fontSize: 13,
+                      color: 'var(--text2)',
+                    }}>
+                      No open seasons. Ask your league admin to open a season.
+                    </div>
+                  ) : (
+                    <div className="task-select-list">
+                      {openSeasons.map(s => (
                         <div
-                          key={t.id}
-                          className={`task-select-item${selectedTaskId === t.id ? ' sel' : ''}`}
-                          onClick={() => setSelectedTaskId(t.id)}
+                          key={s.id}
+                          className={`task-select-item${selectedSeasonId === s.id ? ' sel' : ''}`}
+                          onClick={() => {
+                            setSelectedSeasonId(s.id);
+                            setSelectedTaskId(null);
+                          }}
                         >
                           <div>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{t.name}</div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{s.name}</div>
                             <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text3)', marginTop: 2 }}>
-                              Closes {t.closeDate}
+                              {new Date(s.startDate).toLocaleDateString()} – {new Date(s.endDate).toLocaleDateString()}
                             </div>
                           </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                            {t.optimisedDistanceKm && (
-                              <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--gold)' }}>
-                                {t.optimisedDistanceKm} <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>km</span>
-                              </span>
-                            )}
-                            {selectedTaskId === t.id && <span style={{ color: 'var(--gold)' }}>✓</span>}
-                          </div>
+                          {selectedSeasonId === s.id && <span style={{ color: 'var(--gold)' }}>✓</span>}
                         </div>
                       ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Registration check */}
+                {selectedSeasonId && !regLoading && !isRegistered && (
+                  <div style={{
+                    padding: '10px 14px',
+                    marginBottom: 16,
+                    background: 'rgba(234,179,8,0.08)',
+                    border: '1px solid rgba(234,179,8,0.3)',
+                    borderRadius: 'var(--r)',
+                    fontSize: 13,
+                    color: '#92400e',
+                  }}>
+                    You are not registered for this season.{' '}
+                    <strong>Go to My Seasons to register before uploading.</strong>
                   </div>
+                )}
+
+                {/* Task picker — only when registered */}
+                {selectedSeasonId && isRegistered && (
+                  <>
+                    <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: 10 }}>
+                      Select Task
+                    </div>
+                    {tasksLoading ? (
+                      <div style={{ height: 48, borderRadius: 'var(--r)' }} className="shimmer" />
+                    ) : (
+                      <div className="task-select-list">
+                        {tasks
+                          .filter(t => !t.scoresFrozenAt && new Date(t.closeDate) > new Date())
+                          .map(t => (
+                            <div
+                              key={t.id}
+                              className={`task-select-item${selectedTaskId === t.id ? ' sel' : ''}`}
+                              onClick={() => setSelectedTaskId(t.id)}
+                            >
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{t.name}</div>
+                                <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text3)', marginTop: 2 }}>
+                                  Closes {new Date(t.closeDate).toLocaleString()}
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                {t.optimisedDistanceKm && (
+                                  <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--gold)' }}>
+                                    {t.optimisedDistanceKm} <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>km</span>
+                                  </span>
+                                )}
+                                {selectedTaskId === t.id && <span style={{ color: 'var(--gold)' }}>✓</span>}
+                              </div>
+                            </div>
+                          ))}
+                        {tasks.filter(t => !t.scoresFrozenAt && new Date(t.closeDate) > new Date()).length === 0 && (
+                          <div style={{ padding: '0.75rem 1rem', fontSize: 13, color: 'var(--text2)' }}>
+                            No open tasks in this season.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
 
             {/* Submit / progress */}
-            {file && selectedTaskId && (
+            {file && selectedTaskId && selectedSeasonId && isRegistered && (
               <div className="fade-in" style={{ marginTop: 8 }}>
                 {status === 'uploading' || status === 'processing' ? (
                   <div>
