@@ -162,3 +162,139 @@ export function createTestTask(
     closeDate,
   };
 }
+
+export function createTestSubmission(
+  db: Database.Database,
+  taskId: string,
+  userId: string,
+  leagueId: string,
+  overrides: Partial<{ id: string }> = {},
+) {
+  const id = overrides.id || randomUUID();
+  db.prepare(
+    `INSERT INTO flight_submissions (
+       id, task_id, user_id, league_id,
+       igc_data, igc_filename, igc_size_bytes, igc_sha256,
+       status, submitted_at, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, '', 'test.igc', 0, 'abc', 'PROCESSED',
+               datetime('now'), datetime('now'), datetime('now'))`,
+  ).run(id, taskId, userId, leagueId);
+  return id;
+}
+
+export function createTestAttempt(
+  db: Database.Database,
+  submissionId: string,
+  taskId: string,
+  userId: string,
+  leagueId: string,
+  opts: {
+    reachedGoal?:        boolean;
+    distanceFlownKm?:    number;
+    taskTimeS?:          number | null;
+    distancePoints?:     number;
+    timePoints?:         number;
+    totalPoints?:        number;
+    hasFlaggedCrossings?: boolean;
+    attemptIndex?:       number;
+  } = {},
+) {
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO flight_attempts (
+       id, submission_id, task_id, user_id, league_id,
+       sss_crossing_time, ess_crossing_time, goal_crossing_time, task_time_s,
+       reached_goal, last_turnpoint_index,
+       distance_flown_km, distance_points, time_points, total_points,
+       has_flagged_crossings, attempt_index,
+       created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id, submissionId, taskId, userId, leagueId,
+    now, opts.reachedGoal ? now : null, opts.reachedGoal ? now : null,
+    opts.taskTimeS ?? null,
+    opts.reachedGoal ? 1 : 0,
+    0,
+    opts.distanceFlownKm  ?? 10,
+    opts.distancePoints   ?? 100,
+    opts.timePoints       ?? 0,
+    opts.totalPoints      ?? 100,
+    opts.hasFlaggedCrossings ? 1 : 0,
+    opts.attemptIndex ?? 0,
+    now, now,
+  );
+  return id;
+}
+
+export function createTestTaskResult(
+  db: Database.Database,
+  taskId: string,
+  userId: string,
+  leagueId: string,
+  bestAttemptId: string,
+  opts: {
+    rank?:               number;
+    distanceFlownKm?:    number;
+    reachedGoal?:        boolean;
+    taskTimeS?:          number | null;
+    distancePoints?:     number;
+    timePoints?:         number;
+    totalPoints?:        number;
+    hasFlaggedCrossings?: boolean;
+  } = {},
+) {
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO task_results (
+       id, task_id, user_id, league_id, best_attempt_id,
+       distance_flown_km, reached_goal, task_time_s,
+       distance_points, time_points, total_points, has_flagged_crossings,
+       rank, last_computed_at, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id, taskId, userId, leagueId, bestAttemptId,
+    opts.distanceFlownKm  ?? 10,
+    opts.reachedGoal      ? 1 : 0,
+    opts.taskTimeS        ?? null,
+    opts.distancePoints   ?? 100,
+    opts.timePoints       ?? 0,
+    opts.totalPoints      ?? 100,
+    opts.hasFlaggedCrossings ? 1 : 0,
+    opts.rank ?? 1,
+    now, now, now,
+  );
+  return id;
+}
+
+export function createTestSeasonStanding(
+  db: Database.Database,
+  seasonId: string,
+  userId: string,
+  leagueId: string,
+  opts: {
+    rank?:          number;
+    totalPoints?:   number;
+    tasksFlown?:    number;
+    tasksWithGoal?: number;
+  } = {},
+) {
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO season_standings (
+       id, season_id, user_id, league_id,
+       total_points, tasks_flown, tasks_with_goal,
+       rank, last_computed_at, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id, seasonId, userId, leagueId,
+    opts.totalPoints   ?? 100,
+    opts.tasksFlown    ?? 1,
+    opts.tasksWithGoal ?? 0,
+    opts.rank          ?? 1,
+    now, now, now,
+  );
+  return id;
+}

@@ -663,10 +663,9 @@ function TasksTab() {
                       <div style={{ fontSize: '0.875rem', color: 'var(--text2)' }}>
                         {new Date(task.openDate).toLocaleString()} – {new Date(task.closeDate).toLocaleString()}
                       </div>
-                      {(task.pilotCount !== undefined || task.optimisedDistanceKm) && (
+                      {task.pilotCount !== undefined && (
                         <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginTop: '0.25rem' }}>
                           {task.pilotCount || 0} submission{task.pilotCount !== 1 ? 's' : ''}
-                          {task.optimisedDistanceKm && ` \u2022 ${task.optimisedDistanceKm.toFixed(2)} km optimal`}
                         </div>
                       )}
                     </div>

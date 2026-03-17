@@ -74,13 +74,7 @@ export default function LeaderboardPage() {
                     {t.scoresFrozenAt && <span style={{ marginLeft: 8, color: 'var(--text3)' }}>· Closed</span>}
                   </div>
                 </div>
-                <div className="task-pill-right">
-                  {t.optimisedDistanceKm && (
-                    <div className="task-dist">
-                      {t.optimisedDistanceKm} <span>km</span>
-                    </div>
-                  )}
-                </div>
+                <div className="task-pill-right" />
               </div>
             ))}
           </div>
@@ -97,15 +91,6 @@ export default function LeaderboardPage() {
               <div className="stat-chip-label">Goal</div>
               <div className="stat-chip-value sky">{task.goalCount}</div>
             </div>
-            {task.optimisedDistanceKm && (
-              <div className="stat-chip">
-                <div className="stat-chip-label">Distance</div>
-                <div className="stat-chip-value gold">
-                  {task.optimisedDistanceKm}
-                  <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--text3)' }}> km</span>
-                </div>
-              </div>
-            )}
             {lb?.entries[0]?.taskTimeS && (
               <div className="stat-chip">
                 <div className="stat-chip-label">Best Time</div>

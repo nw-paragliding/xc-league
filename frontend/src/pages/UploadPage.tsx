@@ -4,7 +4,9 @@ import { useUpload } from '../hooks/useSubmission';
 import { useAuth } from '../hooks/useAuth';
 import { useLeague } from '../hooks/useLeague';
 import { leagueApi } from '../api/leagues';
+import { tasksApi } from '../api/tasks';
 import type { SubmissionResponse } from '../api/tasks';
+import { TaskMap } from './TasksPage';
 
 function fmtFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -121,6 +123,7 @@ export default function UploadPage() {
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const dragDepthRef = useRef(0);
 
   // Fetch open seasons
   const { data: seasonsData, isLoading: seasonsLoading } = useQuery({
@@ -136,6 +139,14 @@ export default function UploadPage() {
     queryKey: ['leagues', leagueSlug, 'seasons', selectedSeasonId, 'tasks'],
     queryFn: () => leagueApi.listTasks(leagueSlug, selectedSeasonId!),
     enabled: !!selectedSeasonId,
+  });
+
+  // Fetch turnpoints for the selected task (to draw on map)
+  const { data: taskDetail } = useQuery({
+    queryKey: ['task', leagueSlug, selectedSeasonId, selectedTaskId],
+    queryFn: () => tasksApi.get(leagueSlug, selectedSeasonId!, selectedTaskId!),
+    enabled: !!selectedTaskId && !!selectedSeasonId,
+    staleTime: 5 * 60 * 1000,
   });
 
   // Check registration for the selected season
@@ -209,10 +220,11 @@ export default function UploadPage() {
             {/* Drop zone */}
             <div
               className={`upload-zone${drag ? ' drag-over' : ''}`}
-              onDragOver={e => { e.preventDefault(); setDrag(true); }}
-              onDragLeave={() => setDrag(false)}
-              onDrop={e => { e.preventDefault(); setDrag(false); handleFile(e.dataTransfer.files[0]); }}
-              onClick={() => !file && fileRef.current?.click()}
+              onDragEnter={() => { dragDepthRef.current++; setDrag(true); }}
+              onDragOver={e => e.preventDefault()}
+              onDragLeave={() => { dragDepthRef.current--; if (dragDepthRef.current === 0) setDrag(false); }}
+              onDrop={e => { e.preventDefault(); dragDepthRef.current = 0; setDrag(false); handleFile(e.dataTransfer.files[0]); }}
+              onClick={() => { if (fileRef.current) fileRef.current.value = ''; fileRef.current?.click(); }}
             >
               <input
                 ref={fileRef}
@@ -347,11 +359,6 @@ export default function UploadPage() {
                                 </div>
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                                {t.optimisedDistanceKm && (
-                                  <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--gold)' }}>
-                                    {t.optimisedDistanceKm} <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>km</span>
-                                  </span>
-                                )}
                                 {selectedTaskId === t.id && <span style={{ color: 'var(--gold)' }}>✓</span>}
                               </div>
                             </div>
@@ -367,6 +374,18 @@ export default function UploadPage() {
                 )}
               </div>
             )}
+
+            {/* Task map — shown when a task is selected */}
+            {selectedTaskId && taskDetail?.task?.turnpoints?.length ? (
+              <div className="fade-in" style={{ marginTop: 24 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: 10 }}>
+                  Task Map
+                </div>
+                <div style={{ height: 340, borderRadius: 'var(--r)', overflow: 'hidden', border: '1px solid var(--border)' }}>
+                  <TaskMap turnpoints={taskDetail.task.turnpoints} />
+                </div>
+              </div>
+            ) : null}
 
             {/* Submit / progress */}
             {file && selectedTaskId && selectedSeasonId && isRegistered && (

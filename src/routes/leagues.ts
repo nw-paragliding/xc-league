@@ -10,6 +10,8 @@ import type { SQLiteJobQueue } from '../job-queue';
 import { makeResolveLeagueHook, requireLeagueAdmin, requireLeagueMember, requireAuth } from '../auth';
 import { randomUUID } from 'crypto';
 import { parseTaskFile } from '../task-parsers';
+import { parseAndValidate } from '../pipeline';
+import { handleIgcUpload } from '../upload';
 import { exportXctsk, exportCup, buildXctrackDeepLink, buildDownloadUrl, type ExportTask, type ExportTurnpoint } from '../task-exporters';
 import QRCode from 'qrcode';
 
@@ -158,7 +160,6 @@ export async function registerLeagueRoutes(
            t.status,
            t.open_date as openDate,
            t.close_date as closeDate,
-           t.optimised_distance_km as optimisedDistanceKm,
            CASE WHEN t.scores_frozen_at IS NOT NULL THEN 1 ELSE 0 END as isFrozen,
            t.scores_frozen_at as scoresFrozenAt,
            (SELECT COUNT(DISTINCT user_id) FROM flight_submissions WHERE task_id = t.id AND deleted_at IS NULL) as pilotCount,
@@ -200,7 +201,6 @@ export async function registerLeagueRoutes(
            t.task_type as taskType,
            t.open_date as openDate,
            t.close_date as closeDate,
-           t.optimised_distance_km as optimisedDistanceKm,
            t.scores_frozen_at as scoresFrozenAt
          FROM tasks t
          JOIN seasons s ON s.id = t.season_id
@@ -250,41 +250,208 @@ export async function registerLeagueRoutes(
       return reply.send({ task, turnpoints, results });
     });
 
+    // ── Task leaderboard ───────────────────────────────────────────────────
+    leagueScope.get('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/leaderboard', async (request, reply) => {
+      const { seasonId, taskId } = request.params as { seasonId: string; taskId: string };
+      const league = (request as any).league;
+
+      const task = db.prepare(
+        `SELECT t.id, t.name, t.task_type as taskType, t.status,
+                t.open_date as openDate, t.close_date as closeDate,
+                CASE WHEN t.scores_frozen_at IS NOT NULL THEN 1 ELSE 0 END as isFrozen,
+                t.scores_frozen_at as scoresFrozenAt
+         FROM tasks t
+         JOIN seasons s ON s.id = t.season_id
+         WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`,
+      ).get(taskId, seasonId, league.id) as any;
+
+      if (!task) return reply.status(404).send({ error: 'Task not found' });
+
+      const entries = db.prepare(
+        `SELECT
+           tr.rank,
+           tr.user_id       AS pilotId,
+           u.display_name   AS pilotName,
+           tr.distance_flown_km AS distanceFlownKm,
+           tr.reached_goal  AS reachedGoal,
+           tr.task_time_s   AS taskTimeS,
+           tr.distance_points AS distancePoints,
+           tr.time_points   AS timePoints,
+           tr.total_points  AS totalPoints,
+           tr.has_flagged_crossings AS hasFlaggedCrossings
+         FROM task_results tr
+         JOIN users u ON u.id = tr.user_id
+         WHERE tr.task_id = ?
+         ORDER BY tr.rank ASC`,
+      ).all(taskId) as any[];
+
+      return reply.send({
+        task,
+        entries: entries.map(e => ({
+          ...e,
+          reachedGoal:         Boolean(e.reachedGoal),
+          hasFlaggedCrossings: Boolean(e.hasFlaggedCrossings),
+        })),
+      });
+    });
+
     // ── Upload IGC file (submission) ───────────────────────────────────────
-    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submit', async (request, reply) => {
-      // TODO: Implement IGC upload handler
-      // This will use the upload.ts module and pipeline.ts
-      return reply.status(501).send({ error: 'Upload endpoint not yet implemented' });
+    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions', async (request, reply) => {
+      return handleIgcUpload(request as any, reply, db, queue);
+    });
+
+    // ── List submissions for a task (authenticated pilot's own) ────────────
+    leagueScope.get('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions', async (request, reply) => {
+      requireAuth(request, reply);
+      requireLeagueMember(request, reply);
+
+      const { taskId, seasonId } = request.params as { taskId: string; seasonId: string };
+      const userId = (request as any).user!.userId;
+      const league = (request as any).league;
+
+      const rows = db.prepare(
+        `SELECT fs.id, fs.status, fs.igc_filename, fs.igc_size_bytes, fs.submitted_at, fs.igc_date,
+                fa.attempt_index, fa.reached_goal, fa.distance_flown_km, fa.task_time_s,
+                fa.distance_points, fa.time_points, fa.total_points,
+                fa.has_flagged_crossings, fa.last_turnpoint_index
+         FROM flight_submissions fs
+         LEFT JOIN flight_attempts fa ON fa.id = fs.best_attempt_id
+         JOIN tasks t ON t.id = fs.task_id
+         JOIN seasons s ON s.id = t.season_id
+         WHERE fs.task_id = ? AND s.id = ? AND s.league_id = ?
+           AND fs.user_id = ? AND fs.deleted_at IS NULL
+         ORDER BY fs.submitted_at DESC`,
+      ).all(taskId, seasonId, league.id, userId) as any[];
+
+      const submissions = rows.map(row => {
+        const bestAttempt = row.attempt_index != null ? {
+          attemptIndex:        row.attempt_index,
+          reachedGoal:         Boolean(row.reached_goal),
+          distanceFlownKm:     row.distance_flown_km ?? 0,
+          taskTimeS:           row.task_time_s ?? null,
+          distancePoints:      row.distance_points ?? 0,
+          timePoints:          row.time_points ?? 0,
+          totalPoints:         row.total_points ?? 0,
+          hasFlaggedCrossings: Boolean(row.has_flagged_crossings),
+          turnpointsCrossed:   row.last_turnpoint_index ?? 0,
+        } : null;
+
+        return {
+          id:                    row.id,
+          status:                row.status,
+          submittedAt:           row.submitted_at,
+          igcFilename:           row.igc_filename,
+          igcSizeBytes:          row.igc_size_bytes,
+          igcDate:               row.igc_date ?? null,
+          bestAttempt,
+          allAttempts:           bestAttempt ? [bestAttempt] : [],
+          timePointsProvisional: Boolean(row.reached_goal),
+        };
+      });
+
+      return reply.send({ submissions });
     });
 
     // ── Get submission track data ──────────────────────────────────────────
-    leagueScope.get('/leagues/:leagueSlug/submissions/:submissionId/track', async (request, reply) => {
-      const { submissionId } = request.params as { submissionId: string };
+    leagueScope.get('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/track', async (request, reply) => {
+      const { submissionId } = request.params as { submissionId: string; seasonId: string; taskId: string };
+      requireAuth(request, reply);
+      const userId = (request as any).user!.userId;
 
       const submission = db.prepare(
-        `SELECT 
+        `SELECT
            s.id,
            s.user_id as userId,
            s.task_id as taskId,
-           s.igc_data as igcData
+           s.igc_filename as igcFilename,
+           s.igc_date as igcDate,
+           s.igc_data as igcData,
+           u.display_name as pilotName
          FROM flight_submissions s
          JOIN tasks t ON t.id = s.task_id
          JOIN seasons se ON se.id = t.season_id
-         WHERE s.id = ? AND se.league_id = ? AND s.deleted_at IS NULL`
-      ).get(submissionId, (request as any).league.id);
+         JOIN users u ON u.id = s.user_id
+         WHERE s.id = ? AND se.league_id = ? AND s.user_id = ? AND s.deleted_at IS NULL`
+      ).get(submissionId, (request as any).league.id, userId) as any;
 
       if (!submission) {
         return reply.status(404).send({ error: 'Submission not found' });
       }
 
-      // TODO: Generate track replay data from IGC
-      // For now, return stub data
+      const igcText = submission.igcData instanceof Buffer
+        ? submission.igcData.toString('utf8')
+        : String(submission.igcData);
+
+      const parsed = parseAndValidate(igcText);
+      if (!parsed.ok) {
+        return reply.status(422).send({ error: 'Could not parse IGC data' });
+      }
+
+      const { fixes, flightDate } = parsed.value;
+      const lats = fixes.map((f: any) => f.lat);
+      const lngs = fixes.map((f: any) => f.lng);
+
+      // Best attempt for score/goal metadata
+      const bestAttempt = db.prepare(
+        `SELECT reached_goal, total_points
+         FROM flight_attempts
+         WHERE submission_id = ? AND deleted_at IS NULL
+         ORDER BY total_points DESC LIMIT 1`
+      ).get(submission.id) as { reached_goal: number; total_points: number } | undefined;
+
+      // Turnpoint crossings from best attempt
+      const crossings = bestAttempt ? (db.prepare(
+        `SELECT
+           tc.turnpoint_id    AS turnpointId,
+           tc.crossing_time   AS crossingTimeMs,
+           t.name             AS turnpointName,
+           t.sequence_index   AS sequenceIndex,
+           t.type,
+           t.radius_m         AS radiusM,
+           t.latitude,
+           t.longitude,
+           tc.ground_confirmed       AS groundConfirmed,
+           tc.ground_check_required  AS groundCheckRequired
+         FROM turnpoint_crossings tc
+         JOIN flight_attempts fa ON fa.id = tc.attempt_id
+         JOIN turnpoints t ON t.id = tc.turnpoint_id
+         WHERE fa.submission_id = ? AND fa.deleted_at IS NULL
+         ORDER BY t.sequence_index`
+      ).all(submission.id) as any[]) : [];
+
       return reply.send({
-        track: {
-          submissionId: submission.id,
-          fixes: [],
-          bounds: { north: 0, south: 0, east: 0, west: 0 },
-        }
+        submissionId: submission.id,
+        taskId:       submission.taskId,
+        pilotId:      submission.userId,
+        pilotName:    submission.pilotName,
+        flightDate,
+        fixes: fixes.map((f: any) => ({ t: f.timestamp, lat: f.lat, lng: f.lng, alt: f.gpsAlt })),
+        crossings: crossings.map((c: any) => ({
+          turnpointId:         c.turnpointId,
+          turnpointName:       c.turnpointName,
+          sequenceIndex:       c.sequenceIndex,
+          crossingTimeMs:      typeof c.crossingTimeMs === 'string' ? new Date(c.crossingTimeMs).getTime() : c.crossingTimeMs,
+          type:                c.type,
+          radiusM:             c.radiusM,
+          latitude:            c.latitude,
+          longitude:           c.longitude,
+          groundConfirmed:     !!c.groundConfirmed,
+          groundCheckRequired: !!c.groundCheckRequired,
+        })),
+        bounds: {
+          north: Math.max(...lats),
+          south: Math.min(...lats),
+          east:  Math.max(...lngs),
+          west:  Math.min(...lngs),
+        },
+        meta: {
+          fixCount:    fixes.length,
+          durationS:   fixes.length >= 2
+            ? Math.round((fixes[fixes.length - 1].timestamp - fixes[0].timestamp) / 1000)
+            : null,
+          reachedGoal: !!bestAttempt?.reached_goal,
+          totalPoints: bestAttempt?.total_points ?? 0,
+        },
       });
     });
 
@@ -293,22 +460,35 @@ export async function registerLeagueRoutes(
       const { seasonId } = request.params as { seasonId: string };
       const league = (request as any).league;
 
+      const season = db.prepare(
+        `SELECT s.id, s.name,
+                s.competition_type   AS competitionType,
+                s.start_date         AS startDate,
+                s.end_date           AS endDate,
+                COUNT(t.id)          AS taskCount
+         FROM seasons s
+         LEFT JOIN tasks t ON t.season_id = s.id AND t.deleted_at IS NULL
+         WHERE s.id = ? AND s.league_id = ?
+         GROUP BY s.id`
+      ).get(seasonId, league.id) as { id: string; name: string; competitionType: string; startDate: string; endDate: string; taskCount: number } | undefined;
+
+      if (!season) return reply.status(404).send({ error: 'Season not found' });
+
       const standings = db.prepare(
-        `SELECT 
+        `SELECT
            ss.rank,
-           ss.user_id as userId,
-           u.display_name as pilotName,
-           ss.total_points as totalPoints,
-           ss.tasks_counted as tasksCounted,
-           ss.best_distance_km as bestDistanceKm
+           ss.user_id        AS pilotId,
+           u.display_name    AS pilotName,
+           ss.total_points   AS totalPoints,
+           ss.tasks_flown    AS tasksFlown,
+           ss.tasks_with_goal AS tasksWithGoal
          FROM season_standings ss
          JOIN users u ON u.id = ss.user_id
-         JOIN seasons s ON s.id = ss.season_id
-         WHERE ss.season_id = ? AND s.league_id = ? AND s.deleted_at IS NULL
+         WHERE ss.season_id = ?
          ORDER BY ss.rank`
-      ).all(seasonId, league.id);
+      ).all(seasonId) as any[];
 
-      return reply.send({ standings });
+      return reply.send({ season, standings });
     });
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1478,6 +1658,11 @@ export async function registerLeagueRoutes(
         const host  = request.headers.host ?? 'localhost:3000';
         const baseUrl = `${proto}://${host}`;
         qrContent = buildDownloadUrl(baseUrl, leagueSlug, seasonId, taskId, dlFormat);
+      }
+
+      // QR version 40 with error correction M holds at most 2331 bytes in binary mode
+      if (Buffer.byteLength(qrContent, 'utf8') > 2331) {
+        return reply.status(422).send({ error: 'qr_too_large' });
       }
 
       try {

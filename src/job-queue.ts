@@ -1,24 +1,25 @@
 // =============================================================================
-// XC / Hike & Fly League Platform — Job Queue Architecture
+// XC / Hike & Fly League Platform — Job Queue
 //
-// Design:
-//   - Single Node.js process: Fastify API + worker loop run together
-//   - Jobs stored in SQLite `jobs` table (already in schema)
-//   - Worker wakes immediately on job enqueue via EventEmitter
-//   - Polling fallback every 30s to catch missed events (e.g. after restart)
-//   - Concurrency: one job at a time (SQLite single-writer constraint)
-//   - Retry: up to 3 attempts with exponential backoff (30s, 5min, 30min)
-//   - SQLite write pattern: read → compute (outside tx) → short write tx
+// Infrastructure: SQLiteJobQueue + JobWorker (better-sqlite3 native API).
+// Handlers: RESCORE_TASK, FREEZE_TASK_SCORES, REBUILD_STANDINGS, NOTIFY_PILOTS.
+//
+// Single-process design: Fastify API + worker loop share one SQLite connection.
+// Worker wakes immediately on job enqueue via EventEmitter; polling fallback
+// every 30 s catches jobs missed during restart.
 // =============================================================================
 
-import type { ScoredAttempt, PipelineError } from './pipeline';
+import type { Database } from 'better-sqlite3';
+import { randomUUID } from 'crypto';
+import { computeTimePoints } from './shared/task-engine';
 
-// Minimal EventEmitter inline — avoids @types/node dependency
+// ── Minimal typed EventEmitter (no @types/node dependency) ───────────────────
+
 class TypedEmitter {
   private listeners = new Map<string, Array<(...args: any[]) => void>>();
-  on(event: string, listener: (...args: any[]) => void): this {
+  on(event: string, fn: (...args: any[]) => void): this {
     if (!this.listeners.has(event)) this.listeners.set(event, []);
-    this.listeners.get(event)!.push(listener);
+    this.listeners.get(event)!.push(fn);
     return this;
   }
   emit(event: string, ...args: any[]): void {
@@ -29,7 +30,6 @@ class TypedEmitter {
 
 // =============================================================================
 // JOB PAYLOAD TYPES
-// Each job type has a typed payload. The `jobs.payload` column stores JSON.
 // =============================================================================
 
 export type JobType =
@@ -39,59 +39,38 @@ export type JobType =
   | 'REPROCESS_ALL_SUBMISSIONS'
   | 'NOTIFY_PILOTS';
 
-// Recalculate time points for all goal attempts on a task.
-// Enqueued by: API after a new goal submission is processed.
-// Also enqueued by: REPROCESS_ALL_SUBMISSIONS after all IGC files re-scored.
+/** Recalculate time points for all goal attempts on a task. */
 export interface RescoreTaskPayload {
-  taskId: string;
-  leagueId: string;
+  taskId:                  string;
+  leagueId:                string;
   triggeredBySubmissionId: string;
 }
 
-// Lock task scores at close_date. Scheduled at task creation.
-// Re-scheduled if close_date is edited.
+/** Lock task scores at close_date. */
 export interface FreezeTaskScoresPayload {
-  taskId: string;
+  taskId:   string;
   leagueId: string;
 }
 
-// Recompute season_standings and task_results rank for a season.
-// Enqueued by: RESCORE_TASK on completion.
+/** Recompute season_standings from task_results. */
 export interface RebuildStandingsPayload {
   seasonId: string;
   leagueId: string;
 }
 
-// Re-parse and re-score all IGC files for a task after turnpoints change.
-// Enqueued by: PATCH /tasks/:taskId?force=true.
-// Spawns one synchronous pipeline call per submission, then enqueues RESCORE_TASK.
+/** Re-parse and re-score all IGC files for a task after turnpoints change. */
 export interface ReprocessAllSubmissionsPayload {
-  taskId: string;
-  leagueId: string;
-  submissionIds: string[];  // all submission IDs for this task at enqueue time
+  taskId:        string;
+  leagueId:      string;
+  submissionIds: string[];
 }
 
-// Fan-out notifications to affected pilots after a rescore.
-// Enqueued by: RESCORE_TASK on completion.
+/** Fan-out notifications to pilots whose score changed. */
 export interface NotifyPilotsPayload {
-  taskId: string;
-  leagueId: string;
-  taskName: string;
-  // Map of userId → { oldTotalPoints, newTotalPoints }
-  // Only pilots whose score changed are included.
+  taskId:       string;
+  leagueId:     string;
+  taskName:     string;
   scoreChanges: Record<string, { oldTotalPoints: number; newTotalPoints: number }>;
-}
-
-// Extended ScoredAttempt with DB-level fields (added when written to DB)
-interface StoredAttempt extends ScoredAttempt {
-  id: string;
-  userId: string;
-}
-
-// Helper to extract a human-readable message from any pipeline error variant
-function pipelineErrorMessage(err: PipelineError): string {
-  const e = err.error as any;
-  return e.message ?? `Pipeline error: ${e.code}`;
 }
 
 export type JobPayload =
@@ -101,63 +80,53 @@ export type JobPayload =
   | ReprocessAllSubmissionsPayload
   | NotifyPilotsPayload;
 
-// =============================================================================
-// JOB RECORD (mirrors the `jobs` table)
-// =============================================================================
-
 export interface JobRecord {
-  id: string;
-  type: JobType;
-  payload: JobPayload;
-  status: 'PENDING' | 'RUNNING' | 'COMPLETE' | 'FAILED';
-  attempts: number;
+  id:          string;
+  type:        JobType;
+  payload:     JobPayload;
+  status:      'PENDING' | 'RUNNING' | 'COMPLETE' | 'FAILED';
+  attempts:    number;
   maxAttempts: number;
-  lastError: string | null;
-  scheduledAt: string;   // ISO 8601 — worker ignores jobs with scheduledAt in the future
-  startedAt: string | null;
+  lastError:   string | null;
+  scheduledAt: string;
+  startedAt:   string | null;
   completedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
+  createdAt:   string;
+  updatedAt:   string;
 }
-
-// =============================================================================
-// RETRY SCHEDULE
-// Delay before next attempt: 30s, 5min, 30min
-// =============================================================================
-
-const RETRY_DELAYS_MS = [
-  30 * 1000,        // attempt 2: 30 seconds
-  5 * 60 * 1000,    // attempt 3: 5 minutes
-  30 * 60 * 1000,   // attempt 4: 30 minutes (final — then FAILED)
-];
-
-function nextScheduledAt(attemptNumber: number): string {
-  const delayMs = RETRY_DELAYS_MS[attemptNumber - 1] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1];
-  return new Date(Date.now() + delayMs).toISOString();
-}
-
-// =============================================================================
-// JOB QUEUE — enqueueing interface
-// Used by the API layer to insert jobs.
-// =============================================================================
 
 export interface EnqueueOptions {
-  scheduledAt?: Date;   // defaults to now; use future date for FREEZE_TASK_SCORES
-  maxAttempts?: number; // defaults to 3
+  scheduledAt?: Date;
+  maxAttempts?: number;
 }
 
 export interface JobQueue {
   enqueue<T extends JobPayload>(type: JobType, payload: T, options?: EnqueueOptions): Promise<string>;
 }
 
-/**
- * SQLiteJobQueue
- *
- * Implements JobQueue against the `jobs` table.
- * Emits 'job:enqueued' after inserting so the worker wakes immediately.
- */
+
+// =============================================================================
+// RETRY SCHEDULE
+// =============================================================================
+
+const RETRY_DELAYS_MS = [
+  30 * 1000,
+  5  * 60 * 1000,
+  30 * 60 * 1000,
+];
+
+function nextScheduledAt(attemptNumber: number): string {
+  const delay = RETRY_DELAYS_MS[attemptNumber - 1] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1];
+  return new Date(Date.now() + delay).toISOString();
+}
+
+
+// =============================================================================
+// JOB QUEUE
+// =============================================================================
+
 export class SQLiteJobQueue extends TypedEmitter implements JobQueue {
-  constructor(private db: Database) {
+  constructor(private readonly db: Database) {
     super();
   }
 
@@ -166,58 +135,46 @@ export class SQLiteJobQueue extends TypedEmitter implements JobQueue {
     payload: T,
     options: EnqueueOptions = {},
   ): Promise<string> {
-    const id = crypto.randomUUID();
+    const id          = randomUUID();
     const scheduledAt = (options.scheduledAt ?? new Date()).toISOString();
     const maxAttempts = options.maxAttempts ?? 3;
 
-    this.db.run(
+    this.db.prepare(
       `INSERT INTO jobs (id, type, payload, status, attempts, max_attempts, scheduled_at, created_at, updated_at)
        VALUES (?, ?, ?, 'PENDING', 0, ?, ?, datetime('now'), datetime('now'))`,
-      [id, type, JSON.stringify(payload), maxAttempts, scheduledAt],
-    );
+    ).run(id, type, JSON.stringify(payload), maxAttempts, scheduledAt);
 
     this.emit('job:enqueued', { id, type });
     return id;
   }
 }
 
+
 // =============================================================================
-// WORKER LOOP
-// Polls for pending jobs and processes them one at a time.
+// WORKER
 // =============================================================================
 
-// Handler function type — each job type maps to one of these
 type JobHandler<T extends JobPayload> = (payload: T, jobId: string) => Promise<void>;
 
 export class JobWorker {
-  private running = false;
+  private running    = false;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
-  private handlers = new Map<JobType, JobHandler<any>>();
+  private handlers   = new Map<JobType, JobHandler<any>>();
 
   constructor(
-    private db: Database,
-    private queue: SQLiteJobQueue,
+    private readonly db:    Database,
+    private readonly queue: SQLiteJobQueue,
   ) {
-    // Wake immediately when a job is enqueued
     (queue as TypedEmitter).on('job:enqueued', () => this.processNext());
   }
 
-  /**
-   * Register a handler for a job type.
-   * Called during application startup before start() is called.
-   */
   register<T extends JobPayload>(type: JobType, handler: JobHandler<T>): void {
     this.handlers.set(type, handler);
   }
 
-  /**
-   * Start the worker. Sets up the polling fallback.
-   */
   start(): void {
-    this.running = true;
-    // Fallback poll every 30s — catches jobs missed during startup or crash recovery
+    this.running   = true;
     this.pollTimer = setInterval(() => this.processNext(), 30_000);
-    // Process any jobs pending from before startup
     this.processNext();
   }
 
@@ -226,16 +183,9 @@ export class JobWorker {
     if (this.pollTimer) clearInterval(this.pollTimer);
   }
 
-  /**
-   * Claim and process the next available job.
-   * Uses a UPDATE...WHERE to atomically claim a job (SQLite single-writer makes this safe).
-   * Processes one job then checks if another is waiting.
-   */
   private async processNext(): Promise<void> {
     if (!this.running) return;
 
-    // Claim the next PENDING job whose scheduledAt is in the past
-    // Using a transaction to atomically find-and-claim
     const job = this.claimNextJob();
     if (!job) return;
 
@@ -249,534 +199,307 @@ export class JobWorker {
       await handler(job.payload, job.id);
       this.completeJob(job.id);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      this.handleJobError(job, errorMessage);
+      this.handleJobError(job, err instanceof Error ? err.message : String(err));
     }
 
-    // Immediately check for another pending job
     setTimeout(() => this.processNext(), 0);
   }
 
   private claimNextJob(): JobRecord | null {
-    // Single transaction: find next due job and mark it RUNNING
-    // SQLite's single-writer guarantee makes this race-free in a single process
-    const row = this.db.get<any>(
+    const row = this.db.prepare(
       `SELECT * FROM jobs
-       WHERE status = 'PENDING'
-         AND scheduled_at <= datetime('now')
-       ORDER BY scheduled_at ASC
-       LIMIT 1`,
-    );
+       WHERE status = 'PENDING' AND datetime(scheduled_at) <= datetime('now')
+       ORDER BY datetime(scheduled_at) ASC LIMIT 1`,
+    ).get() as any;
+
     if (!row) return null;
 
-    this.db.run(
+    this.db.prepare(
       `UPDATE jobs SET status = 'RUNNING', started_at = datetime('now'),
-        attempts = attempts + 1, updated_at = datetime('now')
+         attempts = attempts + 1, updated_at = datetime('now')
        WHERE id = ? AND status = 'PENDING'`,
-      [row.id],
-    );
+    ).run(row.id);
 
-    return {
-      ...row,
-      payload: JSON.parse(row.payload),
-    };
+    return { ...row, payload: JSON.parse(row.payload) };
   }
 
   private completeJob(jobId: string): void {
-    this.db.run(
+    this.db.prepare(
       `UPDATE jobs SET status = 'COMPLETE', completed_at = datetime('now'),
-        updated_at = datetime('now') WHERE id = ?`,
-      [jobId],
-    );
+         updated_at = datetime('now') WHERE id = ?`,
+    ).run(jobId);
   }
 
-  private handleJobError(job: JobRecord, errorMessage: string): void {
-    const attemptsUsed = job.attempts; // already incremented in claimNextJob
-    if (attemptsUsed >= job.maxAttempts) {
-      this.failJob(job.id, errorMessage);
+  private handleJobError(job: JobRecord, message: string): void {
+    if (job.attempts >= job.maxAttempts) {
+      this.failJob(job.id, message);
     } else {
-      // Schedule retry with backoff
-      const retryAt = nextScheduledAt(attemptsUsed);
-      this.db.run(
+      this.db.prepare(
         `UPDATE jobs SET status = 'PENDING', scheduled_at = ?, last_error = ?,
-          updated_at = datetime('now') WHERE id = ?`,
-        [retryAt, errorMessage, job.id],
-      );
+           updated_at = datetime('now') WHERE id = ?`,
+      ).run(nextScheduledAt(job.attempts), message, job.id);
     }
   }
 
-  private failJob(jobId: string, errorMessage: string): void {
-    this.db.run(
+  private failJob(jobId: string, message: string): void {
+    this.db.prepare(
       `UPDATE jobs SET status = 'FAILED', last_error = ?,
-        updated_at = datetime('now') WHERE id = ?`,
-      [errorMessage, jobId],
-    );
-    // TODO: notify super-admin of FAILED job
+         updated_at = datetime('now') WHERE id = ?`,
+    ).run(message, jobId);
   }
 }
 
+
 // =============================================================================
-// JOB HANDLERS
-// One function per job type. Each follows the pattern:
-//   1. Read all needed data (outside any transaction)
-//   2. Compute (pure — no DB writes)
-//   3. Write results in a single short transaction
+// SHARED UTILITY: rebuild task_results
+//
+// Materialised best-attempt-per-pilot cache for a task.
+// Called from: upload handler (immediate) + RESCORE_TASK (after rescore).
+// Must be called inside an existing transaction or starts its own.
 // =============================================================================
 
-/**
- * RESCORE_TASK
- *
- * Recalculates time points for all goal attempts on a task.
- * Triggered after any new goal submission is processed.
- *
- * Steps:
- *   1. Check task is not frozen — if frozen, no-op and complete
- *   2. Load all flight_attempts for the task (reached_goal = true) with current scores
- *   3. Call rescoreTimePoints() from pipeline — pure function, no DB
- *   4. Diff old vs new scores — build scoreChanges map
- *   5. Write updated time_points + total_points in a single transaction
- *   6. Rebuild task_results (best attempt per pilot) in same transaction
- *   7. Enqueue REBUILD_STANDINGS
- *   8. Enqueue NOTIFY_PILOTS with scoreChanges (only if any scores changed)
- */
-export async function handleRescoreTask(
-  payload: RescoreTaskPayload,
-  _jobId: string,
-  db: Database,
-  queue: JobQueue,
-  taskRepo: TaskRepository,
-  attemptRepo: AttemptRepository,
-): Promise<void> {
-  // Step 1: Check freeze
-  const task = await taskRepo.findById(payload.taskId);
-  if (!task || task.scoresFrozenAt) return; // frozen or deleted — no-op
+export function rebuildTaskResults(db: Database, taskId: string): void {
+  // Full rebuild: delete old rows, recompute from flight_attempts.
+  db.prepare('DELETE FROM task_results WHERE task_id = ?').run(taskId);
 
-  // Step 2: Load all attempts for the task
-  const allAttempts = await attemptRepo.findAllForTask(payload.taskId) as StoredAttempt[];
-  const oldScores = new Map(allAttempts.map(a => [a.id, a.totalPoints]));
+  // Best attempt per pilot: goal first, then highest points, then fastest time.
+  // Then rank all pilots by total_points DESC.
+  const rows = db.prepare(`
+    WITH ranked AS (
+      SELECT
+        id, user_id, league_id,
+        distance_flown_km, reached_goal, task_time_s,
+        distance_points, time_points, total_points, has_flagged_crossings,
+        ROW_NUMBER() OVER (
+          PARTITION BY user_id
+          ORDER BY reached_goal DESC, total_points DESC,
+                   CASE WHEN task_time_s IS NULL THEN 1 ELSE 0 END,
+                   task_time_s ASC
+        ) AS rn
+      FROM flight_attempts
+      WHERE task_id = ? AND deleted_at IS NULL
+    )
+    SELECT
+      id, user_id, league_id, distance_flown_km, reached_goal, task_time_s,
+      distance_points, time_points, total_points, has_flagged_crossings,
+      RANK() OVER (
+        ORDER BY total_points DESC,
+                 CASE WHEN task_time_s IS NULL THEN 1 ELSE 0 END,
+                 task_time_s ASC
+      ) AS pilot_rank
+    FROM ranked WHERE rn = 1
+  `).all(taskId) as Array<{
+    id: string; user_id: string; league_id: string;
+    distance_flown_km: number; reached_goal: number; task_time_s: number | null;
+    distance_points: number; time_points: number; total_points: number;
+    has_flagged_crossings: number; pilot_rank: number;
+  }>;
 
-  // Step 3: Rescore (pure computation, no DB)
-  const { rescoreTimePoints } = await import('./pipeline');
-  const updatedAttempts = rescoreTimePoints(allAttempts) as StoredAttempt[];
+  const now = new Date().toISOString();
+  const ins = db.prepare(`
+    INSERT INTO task_results (
+      id, task_id, user_id, league_id, best_attempt_id,
+      distance_flown_km, reached_goal, task_time_s,
+      distance_points, time_points, total_points, has_flagged_crossings,
+      rank, last_computed_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
 
-  // Step 4: Build score change map
-  const scoreChanges: Record<string, { oldTotalPoints: number; newTotalPoints: number }> = {};
-  for (const attempt of updatedAttempts) {
-    const old = oldScores.get(attempt.id) ?? 0;
-    if (Math.abs(attempt.totalPoints - old) > 0.001) {
-      scoreChanges[attempt.userId] = {
-        oldTotalPoints: old,
-        newTotalPoints: attempt.totalPoints,
-      };
-    }
+  for (const r of rows) {
+    ins.run(
+      randomUUID(), taskId, r.user_id, r.league_id, r.id,
+      r.distance_flown_km, r.reached_goal, r.task_time_s,
+      r.distance_points, r.time_points, r.total_points, r.has_flagged_crossings,
+      r.pilot_rank, now, now, now,
+    );
   }
+}
 
-  // Step 5 + 6: Write in single transaction
+
+// =============================================================================
+// HANDLER: RESCORE_TASK
+//
+// 1. Bail if task is frozen or deleted.
+// 2. Load all goal attempts for the task.
+// 3. Recompute time_points using the full set of goal times.
+// 4. Write updated scores + rebuild task_results in one transaction.
+// 5. Enqueue REBUILD_STANDINGS.
+// =============================================================================
+
+async function handleRescoreTask(
+  payload: RescoreTaskPayload,
+  db:      Database,
+  queue:   SQLiteJobQueue,
+): Promise<void> {
+  const task = db.prepare(
+    `SELECT id, season_id, scores_frozen_at FROM tasks WHERE id = ? AND deleted_at IS NULL`,
+  ).get(payload.taskId) as { id: string; season_id: string; scores_frozen_at: string | null } | undefined;
+
+  if (!task || task.scores_frozen_at !== null) return;
+
+  // Load all goal attempts (reached_goal = 1) with their current scores
+  const goalAttempts = db.prepare(
+    `SELECT id, task_time_s, distance_points, total_points
+     FROM flight_attempts
+     WHERE task_id = ? AND reached_goal = 1 AND deleted_at IS NULL`,
+  ).all(payload.taskId) as Array<{
+    id: string; task_time_s: number | null; distance_points: number; total_points: number;
+  }>;
+
+  const goalTimes = goalAttempts
+    .filter(a => a.task_time_s != null)
+    .map(a => a.task_time_s!);
+
   db.transaction(() => {
-    for (const attempt of updatedAttempts) {
-      db.run(
-        `UPDATE flight_attempts
-         SET time_points = ?, total_points = ?, updated_at = datetime('now')
-         WHERE id = ?`,
-        [attempt.timePoints, attempt.totalPoints, attempt.id],
-      );
+    const update = db.prepare(
+      `UPDATE flight_attempts
+       SET time_points = ?, total_points = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+    );
+
+    for (const attempt of goalAttempts) {
+      const tp = computeTimePoints(attempt.task_time_s ?? 0, goalTimes);
+      update.run(tp, attempt.distance_points + tp, attempt.id);
     }
-    // Rebuild task_results (best attempt per pilot)
+
     rebuildTaskResults(db, payload.taskId);
   })();
 
-  // Step 7: Enqueue downstream jobs
   await queue.enqueue<RebuildStandingsPayload>('REBUILD_STANDINGS', {
-    seasonId: task.seasonId,
+    seasonId: task.season_id,
     leagueId: payload.leagueId,
   });
-
-  // Step 8: Notify only if scores changed
-  if (Object.keys(scoreChanges).length > 0) {
-    await queue.enqueue<NotifyPilotsPayload>('NOTIFY_PILOTS', {
-      taskId: payload.taskId,
-      leagueId: payload.leagueId,
-      taskName: task.name,
-      scoreChanges,
-    });
-  }
 }
 
-/**
- * FREEZE_TASK_SCORES
- *
- * Scheduled at task creation for the task's close_date.
- * Sets scores_frozen_at, preventing further rescoring.
- *
- * Steps:
- *   1. Check task exists and is not already frozen
- *   2. Set scores_frozen_at = now in a single write
- *   3. Enqueue a final RESCORE_TASK to lock in current time points
- *      (in case any submissions came in between the last rescore and now)
- */
-export async function handleFreezeTaskScores(
-  payload: FreezeTaskScoresPayload,
-  _jobId: string,
-  db: Database,
-  queue: JobQueue,
-): Promise<void> {
-  const now = new Date().toISOString();
 
-  const result = db.run(
-    `UPDATE tasks
-     SET scores_frozen_at = ?, updated_at = datetime('now')
+// =============================================================================
+// HANDLER: FREEZE_TASK_SCORES
+//
+// Sets scores_frozen_at on the task, then enqueues a final RESCORE_TASK to
+// lock in time points at the exact moment of close.
+// =============================================================================
+
+async function handleFreezeTaskScores(
+  payload: FreezeTaskScoresPayload,
+  db:      Database,
+  queue:   SQLiteJobQueue,
+): Promise<void> {
+  const result = db.prepare(
+    `UPDATE tasks SET scores_frozen_at = datetime('now'), updated_at = datetime('now')
      WHERE id = ? AND scores_frozen_at IS NULL AND deleted_at IS NULL`,
-    [now, payload.taskId],
-  );
+  ).run(payload.taskId);
 
   if (result.changes === 0) return; // already frozen or deleted
 
-  // Final rescore to lock in time points at the moment of freeze
   await queue.enqueue<RescoreTaskPayload>('RESCORE_TASK', {
-    taskId: payload.taskId,
-    leagueId: payload.leagueId,
+    taskId:                  payload.taskId,
+    leagueId:                payload.leagueId,
     triggeredBySubmissionId: 'FREEZE',
   });
 }
 
-/**
- * REBUILD_STANDINGS
- *
- * Recomputes season_standings from task_results.
- * Pure aggregation — sum of best task scores per pilot, then rank.
- *
- * Steps:
- *   1. Load all task_results for all tasks in the season
- *   2. Group by userId — sum total_points across tasks
- *   3. Rank by total_points descending
- *   4. Upsert season_standings in a single transaction
- */
-export async function handleRebuildStandings(
+
+// =============================================================================
+// HANDLER: REBUILD_STANDINGS
+//
+// Aggregates task_results per pilot across all tasks in a season, then
+// upserts season_standings with updated totals and ranks.
+// =============================================================================
+
+async function handleRebuildStandings(
   payload: RebuildStandingsPayload,
-  _jobId: string,
-  db: Database,
+  db:      Database,
 ): Promise<void> {
-  // Aggregate in SQL for efficiency — avoids loading every row into JS
-  const standings = db.all<any>(
-    `SELECT
-       tr.user_id,
-       SUM(tr.total_points)    AS total_points,
-       COUNT(tr.task_id)       AS tasks_flown,
-       SUM(tr.reached_goal)    AS tasks_with_goal
-     FROM task_results tr
-     JOIN tasks t ON t.id = tr.task_id
-     WHERE t.season_id = ?
-       AND t.deleted_at IS NULL
-       AND tr.deleted_at IS NULL  -- task_results don't have deleted_at but guard anyway
-     GROUP BY tr.user_id
-     ORDER BY total_points DESC`,
-    [payload.seasonId],
-  );
+  const rows = db.prepare(`
+    SELECT
+      tr.user_id,
+      SUM(tr.total_points)  AS total_points,
+      COUNT(tr.task_id)     AS tasks_flown,
+      SUM(tr.reached_goal)  AS tasks_with_goal
+    FROM task_results tr
+    JOIN tasks t ON t.id = tr.task_id
+    WHERE t.season_id = ? AND t.deleted_at IS NULL
+    GROUP BY tr.user_id
+    ORDER BY total_points DESC
+  `).all(payload.seasonId) as Array<{
+    user_id: string; total_points: number; tasks_flown: number; tasks_with_goal: number;
+  }>;
+
+  const now = new Date().toISOString();
 
   db.transaction(() => {
-    standings.forEach((row: any, index: number) => {
-      db.run(
-        `INSERT INTO season_standings
-           (id, season_id, user_id, league_id, total_points, tasks_flown,
-            tasks_with_goal, rank, last_computed_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
-         ON CONFLICT (season_id, user_id) DO UPDATE SET
-           total_points     = excluded.total_points,
-           tasks_flown      = excluded.tasks_flown,
-           tasks_with_goal  = excluded.tasks_with_goal,
-           rank             = excluded.rank,
-           last_computed_at = excluded.last_computed_at,
-           updated_at       = excluded.updated_at`,
-        [
-          crypto.randomUUID(),
-          payload.seasonId,
-          row.user_id,
-          payload.leagueId,
-          row.total_points,
-          row.tasks_flown,
-          row.tasks_with_goal,
-          index + 1, // rank is 1-based
-        ],
+    const upsert = db.prepare(`
+      INSERT INTO season_standings
+        (id, season_id, user_id, league_id, total_points, tasks_flown, tasks_with_goal,
+         rank, last_computed_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (season_id, user_id) DO UPDATE SET
+        total_points     = excluded.total_points,
+        tasks_flown      = excluded.tasks_flown,
+        tasks_with_goal  = excluded.tasks_with_goal,
+        rank             = excluded.rank,
+        last_computed_at = excluded.last_computed_at,
+        updated_at       = excluded.updated_at
+    `);
+
+    rows.forEach((row, i) => {
+      upsert.run(
+        randomUUID(), payload.seasonId, row.user_id, payload.leagueId,
+        row.total_points, row.tasks_flown, row.tasks_with_goal,
+        i + 1,
+        now, now, now,
       );
     });
   })();
 }
 
-/**
- * REPROCESS_ALL_SUBMISSIONS
- *
- * Re-parses and re-scores all IGC files for a task after turnpoints change.
- * This is the most expensive job — runs the full pipeline per submission.
- *
- * Steps:
- *   1. Load updated task definition (new turnpoints, new optimised distances)
- *   2. For each submissionId:
- *      a. Load raw IGC from object storage
- *      b. Run full pipeline (parseAndValidate → detectAttempts → score)
- *      c. Delete old flight_attempts and turnpoint_crossings for this submission
- *      d. Write new results in a single transaction
- *   3. After all submissions processed, enqueue RESCORE_TASK
- *      (time points need recalculation with the new field)
- *
- * Important: processes submissions sequentially, not in parallel.
- * Each pipeline run + write transaction must complete before the next starts.
- * This keeps SQLite write contention minimal.
- *
- * If any single submission fails, it logs the error and continues with the rest.
- * The job itself succeeds even if some submissions failed — individual
- * submission errors are recorded on the flight_submission.status_message.
- */
-export async function handleReprocessAllSubmissions(
-  payload: ReprocessAllSubmissionsPayload,
-  _jobId: string,
-  db: Database,
-  queue: JobQueue,
-  taskRepo: TaskRepository,
-  storageClient: StorageClient,
+
+// =============================================================================
+// HANDLER: NOTIFY_PILOTS
+// Placeholder — notification delivery not yet implemented.
+// =============================================================================
+
+async function handleNotifyPilots(
+  _payload: NotifyPilotsPayload,
+  _db:      Database,
 ): Promise<void> {
-  const task = await taskRepo.findByIdWithTurnpoints(payload.taskId);
-  if (!task) throw new Error(`Task ${payload.taskId} not found`);
-
-  const { runPipeline } = await import('./pipeline');
-
-  for (const submissionId of payload.submissionIds) {
-    try {
-      const submission = db.get<any>(
-        `SELECT * FROM flight_submissions WHERE id = ? AND deleted_at IS NULL`,
-        [submissionId],
-      );
-      if (!submission) continue;
-
-      // Fetch raw IGC from object storage
-      const igcText = await storageClient.get(submission.igc_storage_key);
-
-      // Load current goal times excluding this pilot (for fair time point recalc)
-      // These will be recalculated properly by the subsequent RESCORE_TASK job
-      const existingGoalTimes: number[] = [];
-
-      const result = await runPipeline(
-        {
-          igcText,
-          task: taskDefinitionFromRecord(task),
-          existingGoalTimes,
-          competitionType: task.competitionType,
-        },
-        task.openDate,
-        task.closeDate,
-        task.scoresFrozenAt,
-        0, // bestDistanceKm — will be corrected by RESCORE_TASK
-      );
-
-      // Write results in a single transaction
-      db.transaction(() => {
-        // Clear old attempts for this submission
-        db.run(
-          `DELETE FROM turnpoint_crossings
-           WHERE attempt_id IN (
-             SELECT id FROM flight_attempts WHERE submission_id = ?
-           )`,
-          [submissionId],
-        );
-        db.run(
-          `DELETE FROM flight_attempts WHERE submission_id = ?`,
-          [submissionId],
-        );
-
-        if (!result.ok) {
-          db.run(
-            `UPDATE flight_submissions
-             SET status = 'INVALID', status_message = ?, updated_at = datetime('now')
-             WHERE id = ?`,
-            [pipelineErrorMessage(result.error), submissionId],
-          );
-          return;
-        }
-
-        // Write new attempts
-        writeAttemptsToDB(db, submissionId, task.id, result.value);
-
-        const bestAttempt = result.value.scoredAttempts[result.value.bestAttemptIndex] as StoredAttempt | undefined;
-        db.run(
-          `UPDATE flight_submissions
-           SET status = 'PROCESSED', best_attempt_id = ?, updated_at = datetime('now')
-           WHERE id = ?`,
-          [bestAttempt?.id ?? null, submissionId],
-        );
-      })();
-
-    } catch (err) {
-      // Log and continue — don't let one bad submission abort the whole job
-      console.error(`Failed to reprocess submission ${submissionId}:`, err);
-      db.run(
-        `UPDATE flight_submissions
-         SET status = 'ERROR', status_message = ?, updated_at = datetime('now')
-         WHERE id = ?`,
-        [String(err), submissionId],
-      );
-    }
-  }
-
-  // Final rescore to recalculate time points across the new field
-  await queue.enqueue<RescoreTaskPayload>('RESCORE_TASK', {
-    taskId: payload.taskId,
-    leagueId: payload.leagueId,
-    triggeredBySubmissionId: 'REPROCESS',
-  });
+  // TODO: implement push / email notifications
 }
 
-/**
- * NOTIFY_PILOTS
- *
- * Fan-out: insert a notification row per affected pilot.
- * Deliberately runs after standings are rebuilt so score values are current.
- *
- * Simple bulk insert — no complex logic.
- */
-export async function handleNotifyPilots(
-  payload: NotifyPilotsPayload,
-  _jobId: string,
-  db: Database,
-): Promise<void> {
-  db.transaction(() => {
-    for (const [userId, change] of Object.entries(payload.scoreChanges)) {
-      db.run(
-        `INSERT INTO notifications (id, user_id, type, payload, created_at)
-         VALUES (?, ?, 'SCORE_UPDATED', ?, datetime('now'))`,
-        [
-          crypto.randomUUID(),
-          userId,
-          JSON.stringify({
-            taskId: payload.taskId,
-            taskName: payload.taskName,
-            leagueName: payload.leagueId, // resolved to name by notification renderer
-            oldTotalPoints: change.oldTotalPoints,
-            newTotalPoints: change.newTotalPoints,
-            reason: 'RESCORE',
-          }),
-        ],
-      );
-    }
-  })();
-}
 
 // =============================================================================
-// JOB DEPENDENCY GRAPH
-// Shows which jobs enqueue other jobs.
-// =============================================================================
-
-/**
- *
- *  API: new goal submission processed
- *       │
- *       ▼
- *  RESCORE_TASK ──────────────────────────────────────────┐
- *       │                                                  │
- *       ├──► REBUILD_STANDINGS                            │
- *       │                                                  │
- *       └──► NOTIFY_PILOTS (if any scores changed)        │
- *                                                          │
- *  API: task created                                       │
- *       │                                                  │
- *       └──► FREEZE_TASK_SCORES (scheduled at close_date) │
- *                 │                                        │
- *                 └──────────────────────────────────────►┘
- *                    (triggers final RESCORE_TASK)
- *
- *  API: admin edits turnpoints (?force=true)
- *       │
- *       ▼
- *  REPROCESS_ALL_SUBMISSIONS
- *       │
- *       └──► RESCORE_TASK (after all files reprocessed)
- *                 │
- *                 ├──► REBUILD_STANDINGS
- *                 └──► NOTIFY_PILOTS
- */
-
-// =============================================================================
-// APPLICATION BOOTSTRAP
-// Wires everything together at startup.
+// BOOTSTRAP
+// Wires all handlers into the worker and returns it ready to start().
 // =============================================================================
 
 export function bootstrapWorker(db: Database, queue: SQLiteJobQueue): JobWorker {
   const worker = new JobWorker(db, queue);
 
-  // Repositories and clients injected here (omitted for brevity)
-  const taskRepo = new TaskRepository(db);
-  const attemptRepo = new AttemptRepository(db);
-  const storageClient = new StorageClient();
+  worker.register<RescoreTaskPayload>(
+    'RESCORE_TASK',
+    (payload) => handleRescoreTask(payload, db, queue),
+  );
 
-  worker.register<RescoreTaskPayload>('RESCORE_TASK', (payload, jobId) =>
-    handleRescoreTask(payload, jobId, db, queue, taskRepo, attemptRepo));
+  worker.register<FreezeTaskScoresPayload>(
+    'FREEZE_TASK_SCORES',
+    (payload) => handleFreezeTaskScores(payload, db, queue),
+  );
 
-  worker.register<FreezeTaskScoresPayload>('FREEZE_TASK_SCORES', (payload, jobId) =>
-    handleFreezeTaskScores(payload, jobId, db, queue));
+  worker.register<RebuildStandingsPayload>(
+    'REBUILD_STANDINGS',
+    (payload) => handleRebuildStandings(payload, db),
+  );
 
-  worker.register<RebuildStandingsPayload>('REBUILD_STANDINGS', (payload, jobId) =>
-    handleRebuildStandings(payload, jobId, db));
+  worker.register<NotifyPilotsPayload>(
+    'NOTIFY_PILOTS',
+    (payload) => handleNotifyPilots(payload, db),
+  );
 
-  worker.register<ReprocessAllSubmissionsPayload>('REPROCESS_ALL_SUBMISSIONS', (payload, jobId) =>
-    handleReprocessAllSubmissions(payload, jobId, db, queue, taskRepo, storageClient));
-
-  worker.register<NotifyPilotsPayload>('NOTIFY_PILOTS', (payload, jobId) =>
-    handleNotifyPilots(payload, jobId, db));
+  // REPROCESS_ALL_SUBMISSIONS is not yet triggered by any API endpoint
+  worker.register<ReprocessAllSubmissionsPayload>(
+    'REPROCESS_ALL_SUBMISSIONS',
+    async () => { /* not yet implemented */ },
+  );
 
   return worker;
 }
-
-// =============================================================================
-// STARTUP SEQUENCE (in server entry point)
-// =============================================================================
-
-/**
- * async function main() {
- *   const db = openDatabase('./league.db');
- *   const queue = new SQLiteJobQueue(db);
- *   const worker = bootstrapWorker(db, queue);
- *
- *   const app = buildFastifyApp(db, queue);
- *
- *   worker.start();
- *   await app.listen({ port: 3000 });
- *
- *   // Reschedule any FREEZE_TASK_SCORES jobs whose scheduled_at
- *   // passed while the server was down — mark them PENDING so
- *   // the worker picks them up immediately
- *   db.run(
- *     `UPDATE jobs SET status = 'PENDING', updated_at = datetime('now')
- *      WHERE type = 'FREEZE_TASK_SCORES'
- *        AND status = 'PENDING'
- *        AND scheduled_at <= datetime('now')`,
- *   );
- * }
- */
-
-// =============================================================================
-// PLACEHOLDER TYPES (implemented elsewhere in the codebase)
-// =============================================================================
-
-declare class Database {
-  run(sql: string, params?: any[]): { changes: number };
-  get<T>(sql: string, params?: any[]): T | null;
-  all<T>(sql: string, params?: any[]): T[];
-  transaction(fn: () => void): () => void;
-}
-
-declare class TaskRepository {
-  constructor(db: Database);
-  findById(id: string): Promise<any>;
-  findByIdWithTurnpoints(id: string): Promise<any>;
-}
-
-declare class AttemptRepository {
-  constructor(db: Database);
-  findAllForTask(taskId: string): Promise<any[]>;
-}
-
-declare class StorageClient {
-  get(key: string): Promise<string>;
-}
-
-declare function rebuildTaskResults(db: Database, taskId: string): void;
-declare function writeAttemptsToDB(db: Database, submissionId: string, taskId: string, result: any): void;
-declare function taskDefinitionFromRecord(task: any): any;

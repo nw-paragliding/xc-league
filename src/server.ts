@@ -18,7 +18,7 @@ import Database from 'better-sqlite3';
 import { join } from 'path';
 import { readFileSync, readdirSync } from 'fs';
 import { loadAuthConfig, authPlugin } from './auth';
-import { SQLiteJobQueue, bootstrapWorker } from './job-queue';
+import { SQLiteJobQueue, bootstrapWorker, rebuildTaskResults } from './job-queue';
 
 // =============================================================================
 // CONSTANTS
@@ -87,9 +87,28 @@ async function main() {
 
   // ── Job queue + worker ─────────────────────────────────────────────────────
   const queue  = new SQLiteJobQueue(db);
-  // TODO: Implement TaskRepository before enabling worker
-  // const worker = bootstrapWorker(db, queue);
-  // worker.start();
+  const worker = bootstrapWorker(db, queue);
+  worker.start();
+
+  // ── Backfill task_results for any tasks that have attempts but no results ──
+  // Handles uploads that happened before the materialised-view logic was added.
+  const orphanedTasks = db.prepare(
+    `SELECT DISTINCT fa.task_id
+     FROM flight_attempts fa
+     LEFT JOIN task_results tr ON tr.task_id = fa.task_id
+     WHERE tr.id IS NULL AND fa.deleted_at IS NULL`,
+  ).all() as Array<{ task_id: string }>;
+
+  for (const { task_id } of orphanedTasks) {
+    rebuildTaskResults(db, task_id);
+    // Enqueue standings rebuild for the season this task belongs to
+    const row = db.prepare(
+      `SELECT t.season_id, t.league_id FROM tasks t WHERE t.id = ?`,
+    ).get(task_id) as { season_id: string; league_id: string } | undefined;
+    if (row) {
+      queue.enqueue('REBUILD_STANDINGS', { seasonId: row.season_id, leagueId: row.league_id });
+    }
+  }
 
   // ── Fastify ────────────────────────────────────────────────────────────────
   const app = Fastify({
@@ -198,7 +217,7 @@ async function main() {
   // ── Graceful shutdown ──────────────────────────────────────────────────────
   const shutdown = async (signal: string) => {
     app.log.info(`Received ${signal}, shutting down`);
-    // worker.stop(); // TODO: uncomment when worker is enabled
+    worker.stop();
     await app.close();
     db.close();
     process.exit(0);

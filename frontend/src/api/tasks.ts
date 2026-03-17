@@ -17,12 +17,11 @@ export interface Task {
   id:                  string;
   name:                string;
   description:         string | null;
-  taskType:            'RACE_TO_GOAL' | 'OPEN_DISTANCE';
-  status:              'draft' | 'published';
-  openDate:            string;
-  closeDate:           string;
-  optimisedDistanceKm: number | null;
-  isFrozen:            boolean;
+  taskType:       'RACE_TO_GOAL' | 'OPEN_DISTANCE';
+  status:         'draft' | 'published';
+  openDate:       string;
+  closeDate:      string;
+  isFrozen:       boolean;
   scoresFrozenAt:      string | null;
   pilotCount:          number;
   goalCount:           number;

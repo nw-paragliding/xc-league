@@ -8,7 +8,7 @@
 //  - 5MB hard limit, .igc extension required, first line must start with 'A'
 //  - Duplicate detection: SHA-256 of file content; same pilot+task+hash → 409
 //  - IGC stored as BLOB in flight_submissions alongside filename and size
-//  - Scored result written to flight_attempts (one per submission)
+//  - Scored result written to flight_attempts (one per attempt detected)
 //  - RESCORE_TASK enqueued only when pilot reached goal (time pts provisional)
 // =============================================================================
 
@@ -16,9 +16,14 @@ import { createHash }         from 'crypto';
 import { randomUUID }         from 'crypto';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { Database }      from 'better-sqlite3';
-import { runPipeline, formatPipelineError } from './pipeline';
-import type { SQLiteJobQueue }              from './job-queue';
-import { requireAuth, requireLeagueMember } from './auth';
+import {
+  runPipeline,
+  formatPipelineError,
+  type PipelineInput,
+  type TurnpointDef,
+} from './pipeline';
+import { rebuildTaskResults, type SQLiteJobQueue, type RescoreTaskPayload } from './job-queue';
+import { requireAuth, requireLeagueMember }    from './auth';
 
 // =============================================================================
 // TYPES
@@ -31,26 +36,26 @@ interface UploadRouteParams {
 }
 
 interface TaskRow {
-  id:                    string;
-  league_id:             string;
-  season_id:             string;
-  name:                  string;
-  status:                string;
-  open_date:             string;
-  close_date:            string;
-  scores_frozen_at:      string | null;
-  projection_origin_lat: number | null;
-  projection_origin_lng: number | null;
+  id:               string;
+  league_id:        string;
+  season_id:        string;
+  name:             string;
+  status:           string;
+  open_date:        string;
+  close_date:       string;
+  scores_frozen_at: string | null;
+  task_type:        string | null;
 }
 
 interface TurnpointRow {
-  id:             string;
-  sequence_index: number;
-  name:           string;
-  latitude:       number;
-  longitude:      number;
-  radius_m:       number;
-  type:           string;
+  id:                   string;
+  sequence_index:       number;
+  name:                 string;
+  latitude:             number;
+  longitude:            number;
+  radius_m:             number;
+  type:                 string;
+  goal_line_bearing_deg: number | null;
 }
 
 // =============================================================================
@@ -105,16 +110,16 @@ export async function handleIgcUpload(
     });
   }
 
-  if (task.scores_frozen_at) {
-    return reply.status(409).send({
-      error: { code: 'TASK_SCORES_FROZEN', message: 'This task is closed. No further submissions are accepted.' },
-    });
-  }
-
   const now = new Date();
   if (now > new Date(task.close_date)) {
     return reply.status(409).send({
       error: { code: 'TASK_CLOSED', message: 'The submission window for this task has closed.' },
+    });
+  }
+
+  if (task.scores_frozen_at) {
+    return reply.status(409).send({
+      error: { code: 'TASK_SCORES_FROZEN', message: 'This task is closed. No further submissions are accepted.' },
     });
   }
 
@@ -175,42 +180,69 @@ export async function handleIgcUpload(
     });
   }
 
-  // ── Load task turnpoints for pipeline ─────────────────────────────────────
-  const turnpoints = db.prepare(
-    `SELECT id, sequence_index, name, latitude, longitude, radius_m, type
+  // ── Load task turnpoints ───────────────────────────────────────────────────
+  const turnpointRows = db.prepare(
+    `SELECT id, sequence_index, name, latitude, longitude, radius_m, type, goal_line_bearing_deg
      FROM turnpoints
      WHERE task_id = ? AND deleted_at IS NULL
      ORDER BY sequence_index ASC`,
   ).all(taskId) as TurnpointRow[];
 
-  if (turnpoints.length < 2) {
+  if (turnpointRows.length < 2) {
     return reply.status(422).send({
       error: { code: 'TASK_NOT_CONFIGURED', message: 'Task has no turnpoints configured' },
     });
   }
 
-  // Map turnpoints to the shape the pipeline expects
-  const pipelineTurnpoints = turnpoints.map(tp => ({
-    id:             tp.id,
-    sequenceIndex:  tp.sequence_index,
-    name:           tp.name,
-    latitude:       tp.latitude,
-    longitude:      tp.longitude,
-    radiusM:        tp.radius_m,
-    type:           tp.type,
-    isSss:          tp.type === 'SSS',
-    isEss:          tp.type === 'ESS',
-    isGoal:         tp.type === 'GOAL_CYLINDER' || tp.type === 'GOAL_LINE',
+  const turnpointDefs: TurnpointDef[] = turnpointRows.map(tp => ({
+    id:                tp.id,
+    sequenceIndex:     tp.sequence_index,
+    lat:               tp.latitude,
+    lng:               tp.longitude,
+    radiusM:           tp.radius_m,
+    type:              tp.type as TurnpointDef['type'],
+    goalLineBearingDeg: tp.goal_line_bearing_deg ?? undefined,
   }));
 
+  // ── Load existing goal times and best distance ─────────────────────────────
+  const goalTimeRows = db.prepare(
+    `SELECT task_time_s FROM flight_attempts
+     WHERE task_id = ? AND reached_goal = 1 AND deleted_at IS NULL`,
+  ).all(taskId) as Array<{ task_time_s: number }>;
+  const existingGoalTimesS = goalTimeRows
+    .filter(r => r.task_time_s != null)
+    .map(r => r.task_time_s);
+
+  const bestDistRow = db.prepare(
+    `SELECT MAX(distance_flown_km) AS best FROM flight_attempts
+     WHERE task_id = ? AND deleted_at IS NULL`,
+  ).get(taskId) as { best: number | null };
+  const taskBestDistanceKm = bestDistRow.best ?? 0;
+
+  // ── Build pipeline input ───────────────────────────────────────────────────
+  const pipelineInput: PipelineInput = {
+    igcText: fileBuffer.toString('utf8'),
+    task: {
+      id: taskId,
+      turnpoints: turnpointDefs,
+      closeDate: new Date(task.close_date).getTime(),
+    },
+    existingGoalTimes: existingGoalTimesS,
+    competitionType: 'XC',
+  };
+
   // ── Run pipeline ───────────────────────────────────────────────────────────
-  const igcText = fileBuffer.toString('utf8');
-  const pipelineResult = await runPipeline(igcText, {
-    taskId,
-    turnpoints: pipelineTurnpoints as any,
-    projectionOriginLat: task.projection_origin_lat ?? undefined,
-    projectionOriginLng: task.projection_origin_lng ?? undefined,
-  });
+  const scoresFrozenAt = task.scores_frozen_at
+    ? new Date(task.scores_frozen_at).getTime()
+    : null;
+
+  const pipelineResult = await runPipeline(
+    pipelineInput,
+    task.open_date.slice(0, 10),   // YYYY-MM-DD
+    task.close_date.slice(0, 10),  // YYYY-MM-DD
+    scoresFrozenAt,
+    taskBestDistanceKm,
+  );
 
   if (!pipelineResult.ok) {
     const message = formatPipelineError(pipelineResult.error);
@@ -219,12 +251,16 @@ export async function handleIgcUpload(
     });
   }
 
-  const scored = pipelineResult.value;
+  const { scoredAttempts, bestAttemptIndex } = pipelineResult.value;
+  const best = scoredAttempts[bestAttemptIndex];
 
-  // ── Persist submission + attempt ───────────────────────────────────────────
+  // ── Persist submission + attempts ──────────────────────────────────────────
   const nowIso       = new Date().toISOString();
   const submissionId = randomUUID();
-  const attemptId    = randomUUID();
+
+  // Pre-generate attempt IDs
+  const attemptIds = scoredAttempts.map(() => randomUUID());
+  const bestAttemptId = attemptIds[bestAttemptIndex];
 
   db.transaction(() => {
     // flight_submissions: raw upload record
@@ -234,62 +270,123 @@ export async function handleIgcUpload(
         igc_data, igc_filename, igc_size_bytes, igc_sha256,
         status,
         submitted_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SCORED', ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PROCESSED', ?, ?, ?)
     `).run(
       submissionId, taskId, userId, task.league_id,
       fileBuffer, originalFilename, fileBuffer.length, sha256,
       nowIso, nowIso, nowIso,
     );
 
-    // flight_attempts: scored result
-    db.prepare(`
-      INSERT INTO flight_attempts (
-        id, submission_id, task_id, user_id, league_id,
-        sss_crossing_time, ess_crossing_time, goal_crossing_time, task_time_s,
-        reached_goal, last_turnpoint_index,
-        distance_flown_km, distance_points, time_points, total_points,
-        has_flagged_crossings, attempt_index,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-    `).run(
-      attemptId, submissionId, taskId, userId, task.league_id,
-      (scored as any).sssCrossingTime   ?? null,
-      (scored as any).essCrossingTime   ?? null,
-      (scored as any).goalCrossingTime  ?? null,
-      (scored as any).timeSeconds       ?? null,
-      (scored as any).reachedGoal       ? 1 : 0,
-      (scored as any).lastTurnpointIndex ?? (turnpoints.length - 1),
-      (scored as any).distanceKm        ?? 0,
-      (scored as any).distancePts       ?? 0,
-      (scored as any).timePts           ?? 0,
-      (scored as any).totalPts          ?? 0,
-      0, // has_flagged_crossings — populated by crossings below
-      nowIso, nowIso,
-    );
+    // Insert all scored attempts
+    for (let i = 0; i < scoredAttempts.length; i++) {
+      const attempt = scoredAttempts[i];
+      const attemptId = attemptIds[i];
 
-    // Link best attempt
+      const sssCrossingTime  = new Date(attempt.sssCrossing.crossingTime).toISOString();
+      const essCrossingTime  = attempt.essCrossing
+        ? new Date(attempt.essCrossing.crossingTime).toISOString()
+        : null;
+      const goalCrossingTime = attempt.goalCrossing
+        ? new Date(attempt.goalCrossing.crossingTime).toISOString()
+        : null;
+
+      db.prepare(`
+        INSERT INTO flight_attempts (
+          id, submission_id, task_id, user_id, league_id,
+          sss_crossing_time, ess_crossing_time, goal_crossing_time, task_time_s,
+          reached_goal, last_turnpoint_index,
+          distance_flown_km, distance_points, time_points, total_points,
+          has_flagged_crossings, attempt_index,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        attemptId, submissionId, taskId, userId, task.league_id,
+        sssCrossingTime, essCrossingTime, goalCrossingTime,
+        attempt.taskTimeS !== null ? Math.round(attempt.taskTimeS) : null,
+        attempt.reachedGoal ? 1 : 0,
+        attempt.lastTurnpointIndex,
+        attempt.distanceFlownKm,
+        attempt.distancePoints,
+        attempt.timePoints,
+        attempt.totalPoints,
+        attempt.hasFlaggedCrossings ? 1 : 0,
+        attempt.attemptIndex,
+        nowIso, nowIso,
+      );
+
+      // Insert individual TP crossings
+      for (const crossing of attempt.turnpointCrossings) {
+        db.prepare(`
+          INSERT INTO turnpoint_crossings (
+            id, attempt_id, turnpoint_id, sequence_index, crossing_time,
+            ground_check_required, ground_confirmed, detected_max_speed_kmh,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          randomUUID(), attemptId, crossing.turnpointId, crossing.sequenceIndex,
+          new Date(crossing.crossingTime).toISOString(),
+          crossing.groundCheckRequired ? 1 : 0,
+          crossing.groundConfirmed ? 1 : 0,
+          crossing.detectedMaxSpeedKmh,
+          nowIso, nowIso,
+        );
+      }
+    }
+
+    // Link best attempt to submission
     db.prepare(
-      `UPDATE flight_submissions SET best_attempt_id = ? WHERE id = ?`
-    ).run(attemptId, submissionId);
+      `UPDATE flight_submissions SET best_attempt_id = ? WHERE id = ?`,
+    ).run(bestAttemptId, submissionId);
+
+    // Immediately materialise task_results for this task so leaderboard is live
+    rebuildTaskResults(db, taskId);
   })();
 
   // ── Enqueue rescore if goal reached ───────────────────────────────────────
-  if ((scored as any).reachedGoal) {
-    queue.enqueue('RESCORE_TASK', { taskId });
+  if (best.reachedGoal) {
+    queue.enqueue<RescoreTaskPayload>('RESCORE_TASK', {
+      taskId,
+      leagueId: task.league_id,
+      triggeredBySubmissionId: submissionId,
+    });
   }
 
   // ── Response ───────────────────────────────────────────────────────────────
-  const submission = db.prepare(
-    `SELECT fs.id, fs.task_id, fs.user_id, fs.status,
-            fs.igc_filename, fs.igc_size_bytes, fs.submitted_at,
-            fa.reached_goal, fa.distance_flown_km, fa.task_time_s,
-            fa.distance_points, fa.time_points, fa.total_points
+  const row = db.prepare(
+    `SELECT fs.id, fs.status, fs.igc_filename, fs.igc_size_bytes, fs.submitted_at, fs.igc_date,
+            fa.attempt_index, fa.reached_goal, fa.distance_flown_km, fa.task_time_s,
+            fa.distance_points, fa.time_points, fa.total_points,
+            fa.has_flagged_crossings, fa.last_turnpoint_index
      FROM flight_submissions fs
      LEFT JOIN flight_attempts fa ON fa.id = fs.best_attempt_id
-     WHERE fs.id = ?`
+     WHERE fs.id = ?`,
   ).get(submissionId) as any;
 
-  reply.status(201).send({ submission });
+  const bestAttempt = {
+    attemptIndex:        row.attempt_index ?? 0,
+    reachedGoal:         Boolean(row.reached_goal),
+    distanceFlownKm:     row.distance_flown_km ?? 0,
+    taskTimeS:           row.task_time_s ?? null,
+    distancePoints:      row.distance_points ?? 0,
+    timePoints:          row.time_points ?? 0,
+    totalPoints:         row.total_points ?? 0,
+    hasFlaggedCrossings: Boolean(row.has_flagged_crossings),
+    turnpointsCrossed:   row.last_turnpoint_index ?? 0,
+  };
+
+  reply.status(201).send({
+    submission: {
+      id:                    row.id,
+      status:                row.status,
+      submittedAt:           row.submitted_at,
+      igcFilename:           row.igc_filename,
+      igcSizeBytes:          row.igc_size_bytes,
+      igcDate:               row.igc_date ?? null,
+      bestAttempt,
+      allAttempts:           [bestAttempt],
+      timePointsProvisional: best.reachedGoal,
+    },
+  });
 }
 
 // =============================================================================

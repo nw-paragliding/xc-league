@@ -45,7 +45,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { id: 'tasks',  icon: '◈', label: 'Tasks'  },
-  { id: 'season', icon: '≡', label: 'Season' },
+  { id: 'season', icon: '≡', label: 'Results' },
 ];
 
 const ACCOUNT_NAV: NavItem[] = [

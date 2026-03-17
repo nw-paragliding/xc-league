@@ -311,7 +311,6 @@ export default function TaskManagementPage() {
                           ? `${task.turnpointCount} turnpoints`
                           : <span style={{ color: '#c00' }}>No turnpoints — import a task file to enable publishing</span>
                         }
-                        {task.optimisedDistanceKm && ` • ${task.optimisedDistanceKm.toFixed(2)} km optimal`}
                         {(task.pilotCount ?? 0) > 0 && ` • ${task.pilotCount} submission${task.pilotCount !== 1 ? 's' : ''}`}
                       </div>
                     </div>
