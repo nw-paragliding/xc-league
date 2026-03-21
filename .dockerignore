@@ -1,0 +1,11 @@
+.git
+.github
+node_modules
+frontend/node_modules
+dist
+*.db
+*.db-shm
+*.db-wal
+.env
+*.pem
+*.log
