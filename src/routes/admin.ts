@@ -74,9 +74,9 @@ export async function registerAdminRoutes(
     db.prepare(
       `INSERT INTO admin_audit_log (id, actor_user_id, target_user_id, action, created_at)
        VALUES (?, ?, ?, 'PROMOTE_SUPER_ADMIN', datetime('now'))`
-    ).run(randomUUID(), request.user!.userId, userId);
-    
-    request.log.info({ actorId: request.user!.userId, targetId: userId }, 'User promoted to super admin');
+    ).run(randomUUID(), (request as any).user!.userId, userId);
+
+    request.log.info({ actorId: (request as any).user!.userId, targetId: userId }, 'User promoted to super admin');
     reply.send({ message: 'User promoted to super admin' });
   });
 
@@ -120,9 +120,9 @@ export async function registerAdminRoutes(
     db.prepare(
       `INSERT INTO admin_audit_log (id, actor_user_id, target_user_id, action, created_at)
        VALUES (?, ?, ?, 'DEMOTE_SUPER_ADMIN', datetime('now'))`
-    ).run(randomUUID(), request.user!.userId, userId);
-    
-    request.log.info({ actorId: request.user!.userId, targetId: userId }, 'User demoted from super admin');
+    ).run(randomUUID(), (request as any).user!.userId, userId);
+
+    request.log.info({ actorId: (request as any).user!.userId, targetId: userId }, 'User demoted from super admin');
     reply.send({ message: 'User demoted from super admin' });
   });
 

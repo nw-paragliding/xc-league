@@ -172,8 +172,8 @@ function SettingsTab() {
           <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '1.5rem', background: 'var(--bg2)' }}>
             <DetailRow label="League Name" value={leagueData?.league?.name || leagueSlug} />
             <DetailRow label="URL Slug" value={leagueData?.league?.slug || leagueSlug} mono />
-            {leagueData?.league?.description && (
-              <DetailRow label="Description" value={leagueData.league.description} />
+            {leagueData?.league?.shortDescription && (
+              <DetailRow label="Short Description" value={leagueData.league.shortDescription} />
             )}
             {leagueData?.league?.logoUrl && (
               <DetailRow label="Logo URL" value={leagueData.league.logoUrl} mono />
@@ -838,10 +838,21 @@ function TaskForm({ task, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
   const fmt = (iso?: string) => iso ? iso.slice(0, 16) : '';
   const [openDate, setOpenDate] = useState(fmt(task?.openDate));
   const [closeDate, setCloseDate] = useState(fmt(task?.closeDate));
+  const [normalizedScore, setNormalizedScore] = useState(
+    task?.normalizedScore != null ? String(task.normalizedScore) : ''
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit({ name, description: description || undefined, taskType, openDate: openDate + ':00Z', closeDate: closeDate + ':00Z' });
+    const ns = normalizedScore !== '' ? parseInt(normalizedScore, 10) : null;
+    onSubmit({
+      name,
+      description: description || undefined,
+      taskType,
+      openDate: openDate + ':00Z',
+      closeDate: closeDate + ':00Z',
+      normalizedScore: ns,
+    } as any);
   };
 
   return (
@@ -875,6 +886,20 @@ function TaskForm({ task, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
             <input type="datetime-local" value={closeDate} onChange={(e) => setCloseDate(e.target.value)} required style={inputStyle} />
           </div>
         </div>
+        <div>
+          <label style={labelStyle}>Normalized Score (optional)</label>
+          <input
+            type="number"
+            min="1"
+            value={normalizedScore}
+            onChange={(e) => setNormalizedScore(e.target.value)}
+            placeholder="e.g. 1000 — winner gets this score, others scaled proportionally"
+            style={{ ...inputStyle, fontFamily: 'monospace' }}
+          />
+          <div style={{ fontSize: '0.75rem', color: 'var(--text2)', marginTop: '0.25rem' }}>
+            Leave blank to use raw GAP scores (~938 max). Set to e.g. 1000 to normalize the winner's score to that value.
+          </div>
+        </div>
         <FormActions
           onCancel={onCancel}
           isSubmitting={isSubmitting}
@@ -896,16 +921,18 @@ interface LeagueDetailsFormProps {
 function LeagueDetailsForm({ league, onSubmit, onCancel, isSubmitting }: LeagueDetailsFormProps) {
   const [name, setName] = useState(league?.name || '');
   const [slug, setSlug] = useState(league?.slug || '');
-  const [description, setDescription] = useState(league?.description || '');
+  const [shortDescription, setShortDescription] = useState(league?.shortDescription || '');
+  const [fullDescription, setFullDescription] = useState(league?.fullDescription || '');
   const [logoUrl, setLogoUrl] = useState(league?.logoUrl || '');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const input: UpdateLeagueInput = {};
-    if (name !== league?.name)                        input.name = name;
-    if (slug !== league?.slug)                        input.slug = slug;
-    if (description !== (league?.description ?? ''))  input.description = description;
-    if (logoUrl !== (league?.logoUrl ?? ''))          input.logoUrl = logoUrl;
+    if (name !== league?.name)                                      input.name = name;
+    if (slug !== league?.slug)                                      input.slug = slug;
+    if (shortDescription !== (league?.shortDescription ?? ''))      input.shortDescription = shortDescription;
+    if (fullDescription !== (league?.fullDescription ?? ''))        input.fullDescription = fullDescription;
+    if (logoUrl !== (league?.logoUrl ?? ''))                        input.logoUrl = logoUrl;
     onSubmit(input);
   };
 
@@ -922,8 +949,12 @@ function LeagueDetailsForm({ league, onSubmit, onCancel, isSubmitting }: LeagueD
           <div style={{ fontSize: '0.75rem', color: 'var(--text2)', marginTop: '0.25rem' }}>Lowercase letters, numbers, and hyphens only</div>
         </div>
         <div>
-          <label style={labelStyle}>Description</label>
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
+          <label style={labelStyle}>Short Description (1-2 sentences, plain text)</label>
+          <textarea value={shortDescription} onChange={(e) => setShortDescription(e.target.value)} rows={2} style={{ ...inputStyle, resize: 'vertical' }} />
+        </div>
+        <div>
+          <label style={labelStyle}>Full Description (Markdown supported)</label>
+          <textarea value={fullDescription} onChange={(e) => setFullDescription(e.target.value)} rows={10} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace' }} placeholder="# About this league&#10;&#10;Describe your league in detail..." />
         </div>
         <div>
           <label style={labelStyle}>Logo URL</label>

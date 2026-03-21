@@ -49,121 +49,9 @@ code {
   min-height: 100vh;
 }
 
-/* Sidebar */
-.sidebar {
-  width: 240px;
-  background: var(--bg2);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  padding: 1.5rem 1rem;
-}
-
-.sidebar-logo {
-  margin-bottom: 2rem;
-}
-
-.logo-mark {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: var(--accent);
-  margin-bottom: 0.25rem;
-}
-
-.logo-league {
-  font-size: 0.75rem;
-  color: var(--text2);
-  line-height: 1.4;
-}
-
-.sidebar-nav {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.nav-section-label {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text3);
-  margin: 1rem 0 0.5rem;
-  font-weight: 600;
-}
-
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.625rem 0.75rem;
-  border-radius: 0.5rem;
-  background: transparent;
-  border: none;
-  color: var(--text2);
-  font-size: 0.875rem;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  text-align: left;
-  width: 100%;
-}
-
-.nav-item:hover {
-  background: var(--bg3);
-  color: var(--text);
-}
-
-.nav-item.active {
-  background: var(--bg3);
-  color: var(--accent);
-  font-weight: 500;
-}
-
-.sidebar-user {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem;
-  border-radius: 0.5rem;
-  border: 1px solid var(--border);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  margin-top: auto;
-}
-
-.sidebar-user:hover {
-  background: var(--bg3);
-}
-
-.avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--bg3);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text);
-  flex-shrink: 0;
-}
-
-.user-name {
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--text);
-}
-
-.user-role {
-  font-size: 0.75rem;
-  color: var(--text3);
-}
-
 /* Main content */
 .main {
   flex: 1;
-  padding: 2rem;
   overflow-y: auto;
 }
 
@@ -246,12 +134,13 @@ code {
 }
 
 /* Tables */
-table {
+/* Component tables use inline styles — global rules only apply to generic tables */
+.generic-table {
   width: 100%;
   border-collapse: collapse;
 }
 
-th {
+.generic-table th {
   text-align: left;
   padding: 0.75rem;
   font-size: 0.75rem;
@@ -262,12 +151,12 @@ th {
   border-bottom: 1px solid var(--border);
 }
 
-td {
+.generic-table td {
   padding: 1rem 0.75rem;
   border-bottom: 1px solid var(--border);
 }
 
-tr:last-child td {
+.generic-table tr:last-child td {
   border-bottom: none;
 }
 
@@ -295,3 +184,11 @@ label {
   margin-bottom: 0.5rem;
   color: var(--text2);
 }
+
+/* Markdown prose — restores browser list defaults stripped by the * reset */
+.prose p + p  { margin-top: 0.75em; }
+.prose ul,
+.prose ol     { padding-left: 1.5em; margin: 0.5em 0; }
+.prose li + li { margin-top: 0.25em; }
+.prose h1, .prose h2, .prose h3 { font-weight: 600; margin: 1em 0 0.4em; }
+.prose a      { color: var(--accent); }

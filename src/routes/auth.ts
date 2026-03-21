@@ -35,7 +35,7 @@ export async function registerAuthRoutes(
 
   // OAuth callback — Google redirects here after consent
   fastify.get('/auth/oauth/google/callback', async (request, reply) => {
-    return handleGoogleAuthCallback(request, reply, config, db);
+    return handleGoogleAuthCallback(request, reply, config, db as any);
   });
 
   // Get current user profile

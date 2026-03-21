@@ -99,8 +99,8 @@ interface TrackReplayResponse {
 // =============================================================================
 
 export async function handleTrackReplay(
-  request: FastifyRequest,
-  reply:   FastifyReply,
+  request: any,
+  reply:   any,
   db:      Database,
 ): Promise<void> {
   const { submissionId } = request.params as { submissionId: string };

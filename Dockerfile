@@ -31,6 +31,8 @@ COPY frontend/package*.json ./
 RUN npm ci
 
 COPY frontend/ ./
+# Shared code imported by frontend components via relative path
+COPY src/shared/ ../src/shared/
 
 RUN npm run build
 # Output: /build/frontend/dist/  (index.html + assets/)
@@ -51,6 +53,7 @@ RUN npm ci --omit=dev
 COPY --from=server-builder /build/dist         ./dist
 COPY --from=client-builder /build/frontend/dist ./dist/client
 COPY src/schema.sql                             ./dist/schema.sql
+COPY src/migrations/                            ./dist/migrations/
 
 RUN mkdir -p /data
 

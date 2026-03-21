@@ -9,7 +9,8 @@ export interface League {
   id: string;
   name: string;
   slug: string;
-  description?: string;
+  shortDescription?: string;
+  fullDescription?: string | null;
   logoUrl?: string;
   createdAt: string;
 }
@@ -25,16 +26,18 @@ export interface LeagueMember {
 }
 
 export interface CreateLeagueInput {
-  name: string;
-  slug: string;
-  description?: string;
-  logo_url?: string;
+  name:              string;
+  slug:              string;
+  shortDescription?: string;
+  fullDescription?:  string;
+  logo_url?:         string;
 }
 
 export interface UpdateLeagueInput {
   name?: string;
   slug?: string;
-  description?: string;
+  shortDescription?: string;
+  fullDescription?: string;
   logoUrl?: string;
 }
 
@@ -83,6 +86,7 @@ export interface Task {
   closeDate: string;
   isFrozen?: boolean;
   scoresFrozenAt?: string;
+  normalizedScore?: number | null;
   status?: 'draft' | 'published';
   createdAt: string;
   updatedAt?: string;
@@ -105,6 +109,7 @@ export interface UpdateTaskInput {
   taskType?: 'RACE_TO_GOAL' | 'OPEN_DISTANCE';
   openDate?: string;
   closeDate?: string;
+  normalizedScore?: number | null;
 }
 
 export const leagueApi = {

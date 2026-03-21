@@ -1,64 +1,36 @@
-# =============================================================================
-# XC / Hike & Fly League Platform — Fly.io Configuration
+# fly.toml app configuration file generated for xc-league on 2026-03-20T22:25:53-07:00
 #
-# Single machine deployment. SQLite database on a persistent volume.
-# Free tier covers this workload entirely at club scale.
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
-# First-time setup:
-#   fly launch --no-deploy   (generates app name, skip the deploy prompt)
-#   fly volumes create league_data --size 1 --region <your-region>
-#   fly secrets set JWT_PRIVATE_KEY_PEM="$(cat private.pem)" \
-#                   JWT_PUBLIC_KEY_PEM="$(cat public.pem)"  \
-#                   JWT_ISSUER="https://<your-app>.fly.dev" \
-#                   GOOGLE_CLIENT_ID="..." \
-#                   GOOGLE_CLIENT_SECRET="..." \
-#                   GOOGLE_REDIRECT_URI="https://<your-app>.fly.dev/api/v1/auth/oauth/google/callback" \
-#                   OAUTH_STATE_SECRET="$(openssl rand -hex 32)"
-#   fly deploy
-#
-# Subsequent deploys:
-#   fly deploy
-# =============================================================================
 
-app = 'xc-league'        # change to your chosen app name
-primary_region = 'lhr'   # London — change to nearest Fly region
+app = 'xc-league'
+primary_region = 'sjc'
 
 [build]
-  # Dockerfile in project root — see Dockerfile below
 
 [env]
-  NODE_ENV       = 'production'
-  PORT           = '8080'
-  DB_PATH        = '/data/league.db'   # persistent volume mount path
-
-# Secrets (never put actual values here — use `fly secrets set`):
-#   JWT_PRIVATE_KEY_PEM
-#   JWT_PUBLIC_KEY_PEM
-#   JWT_ISSUER
-#   GOOGLE_CLIENT_ID
-#   GOOGLE_CLIENT_SECRET
-#   GOOGLE_REDIRECT_URI
-#   OAUTH_STATE_SECRET
+  DB_PATH = '/data/league.db'
+  NODE_ENV = 'production'
+  PORT = '8080'
 
 [[mounts]]
-  source      = 'league_data'   # volume name (created via `fly volumes create`)
-  destination = '/data'         # mounted inside the container
-  # The SQLite database lives at /data/league.db
-  # Fly.io takes daily volume snapshots automatically (retained for 5 days)
+  source = 'league_data'
+  destination = '/data'
 
 [http_service]
-  internal_port        = 8080
-  force_https          = true    # Fly handles SSL termination and redirect
-  auto_stop_machines   = false   # keep running — we have a job worker loop
-  auto_start_machines  = true
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
   min_machines_running = 1
 
   [http_service.concurrency]
-    type       = 'requests'
-    soft_limit = 100
+    type = 'requests'
     hard_limit = 150
+    soft_limit = 100
 
 [[vm]]
-  size   = 'shared-cpu-1x'   # free tier — 256MB RAM, 1 shared vCPU
-  # Upgrade to 'shared-cpu-1x' with 512MB if memory pressure appears
-  # (Node.js + SQLite at club scale is well within 256MB)
+  size = 'shared-cpu-1x'
+  memory = '256mb'
+  cpus = 1
+  memory_mb = 256

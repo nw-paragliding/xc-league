@@ -295,6 +295,25 @@ export function rebuildTaskResults(db: Database, taskId: string): void {
     has_flagged_crossings: number; pilot_rank: number;
   }>;
 
+  // Apply score normalization if configured on this task.
+  const taskRow = db.prepare(
+    `SELECT normalized_score FROM tasks WHERE id = ?`
+  ).get(taskId) as { normalized_score: number | null } | undefined;
+  const normalized = taskRow?.normalized_score ?? null;
+
+  let finalRows = rows;
+  if (normalized !== null && rows.length > 0) {
+    const winnerTotal = Math.max(...rows.map(r => r.total_points));
+    if (winnerTotal > 0) {
+      finalRows = rows.map(r => {
+        const scale = normalized / winnerTotal;
+        const dp = Math.round(r.distance_points * scale);
+        const tp = Math.round(r.time_points * scale);
+        return { ...r, distance_points: dp, time_points: tp, total_points: dp + tp };
+      });
+    }
+  }
+
   const now = new Date().toISOString();
   const ins = db.prepare(`
     INSERT INTO task_results (
@@ -305,7 +324,7 @@ export function rebuildTaskResults(db: Database, taskId: string): void {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  for (const r of rows) {
+  for (const r of finalRows) {
     ins.run(
       randomUUID(), taskId, r.user_id, r.league_id, r.id,
       r.distance_flown_km, r.reached_goal, r.task_time_s,

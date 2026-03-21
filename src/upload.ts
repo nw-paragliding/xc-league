@@ -14,7 +14,7 @@
 
 import { createHash }         from 'crypto';
 import { randomUUID }         from 'crypto';
-import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyRequest as FastifyRequestBase, FastifyReply } from 'fastify';
 import type { Database }      from 'better-sqlite3';
 import {
   runPipeline,
@@ -75,13 +75,13 @@ const IGC_MAGIC    = 'A';
  * Upload an IGC file for a task. Returns the scored submission immediately.
  */
 export async function handleIgcUpload(
-  request: FastifyRequest<{ Params: UploadRouteParams }>,
+  request: FastifyRequestBase<{ Params: UploadRouteParams }>,
   reply:   FastifyReply,
   db:      Database,
   queue:   SQLiteJobQueue,
 ): Promise<void> {
-  requireAuth(request, reply);
-  requireLeagueMember(request, reply);
+  requireAuth(request as any, reply);
+  requireLeagueMember(request as any, reply);
 
   const userId   = (request as any).user!.userId;
   const { taskId, seasonId } = request.params;
@@ -400,11 +400,11 @@ export async function handleIgcUpload(
  * other pilots' are hidden until scores are frozen.
  */
 export async function handleIgcDownload(
-  request: FastifyRequest<{ Params: UploadRouteParams & { submissionId: string } }>,
+  request: FastifyRequestBase<{ Params: UploadRouteParams & { submissionId: string } }>,
   reply:   FastifyReply,
   db:      Database,
 ): Promise<void> {
-  requireAuth(request, reply);
+  requireAuth(request as any, reply);
 
   const { submissionId } = request.params;
 

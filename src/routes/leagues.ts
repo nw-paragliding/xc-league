@@ -29,7 +29,7 @@ export async function registerLeagueRoutes(
   // ── Public league list ─────────────────────────────────────────────────────
   fastify.get('/leagues', async (request, reply) => {
     const leagues = db.prepare(
-      `SELECT id, slug, name, description, logo_url as logoUrl
+      `SELECT id, slug, name, description as shortDescription, logo_url as logoUrl
        FROM leagues
        WHERE deleted_at IS NULL
        ORDER BY name`
@@ -44,10 +44,11 @@ export async function registerLeagueRoutes(
     requireAuth(request, reply);
     
     const body = request.body as {
-      name: string;
-      slug: string;
-      description?: string;
-      logo_url?: string;
+      name:              string;
+      slug:              string;
+      shortDescription?: string;
+      fullDescription?:  string;
+      logo_url?:         string;
     };
     
     // Validate slug format (alphanumeric + hyphens only)
@@ -72,9 +73,9 @@ export async function registerLeagueRoutes(
     // Create league and make creator the first admin in a transaction
     db.transaction(() => {
       db.prepare(
-        `INSERT INTO leagues (id, name, slug, description, logo_url, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
-      ).run(leagueId, body.name, body.slug, body.description || null, body.logo_url || null);
+        `INSERT INTO leagues (id, name, slug, description, full_description, logo_url, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+      ).run(leagueId, body.name, body.slug, body.shortDescription || null, body.fullDescription || null, body.logo_url || null);
       
       db.prepare(
         `INSERT INTO league_memberships (id, league_id, user_id, role, joined_at, created_at, updated_at)
@@ -83,7 +84,7 @@ export async function registerLeagueRoutes(
     })();
     
     const league = db.prepare(
-      `SELECT id, name, slug, description, logo_url as logoUrl, created_at as createdAt
+      `SELECT id, name, slug, description as shortDescription, full_description as fullDescription, logo_url as logoUrl, created_at as createdAt
        FROM leagues WHERE id = ?`
     ).get(leagueId);
     
@@ -105,7 +106,7 @@ export async function registerLeagueRoutes(
       }
 
       const fullLeague = db.prepare(
-        `SELECT id, slug, name, description, logo_url as logoUrl, created_at as createdAt
+        `SELECT id, slug, name, description as shortDescription, full_description as fullDescription, logo_url as logoUrl, created_at as createdAt
          FROM leagues WHERE id = ? AND deleted_at IS NULL`
       ).get(league.id);
 
@@ -162,6 +163,7 @@ export async function registerLeagueRoutes(
            t.close_date as closeDate,
            CASE WHEN t.scores_frozen_at IS NOT NULL THEN 1 ELSE 0 END as isFrozen,
            t.scores_frozen_at as scoresFrozenAt,
+           t.normalized_score as normalizedScore,
            (SELECT COUNT(DISTINCT user_id) FROM flight_submissions WHERE task_id = t.id AND deleted_at IS NULL) as pilotCount,
            (SELECT COUNT(DISTINCT fs.user_id)
             FROM flight_submissions fs
@@ -278,9 +280,11 @@ export async function registerLeagueRoutes(
            tr.distance_points AS distancePoints,
            tr.time_points   AS timePoints,
            tr.total_points  AS totalPoints,
-           tr.has_flagged_crossings AS hasFlaggedCrossings
+           tr.has_flagged_crossings AS hasFlaggedCrossings,
+           fa.submission_id AS submissionId
          FROM task_results tr
          JOIN users u ON u.id = tr.user_id
+         LEFT JOIN flight_attempts fa ON fa.id = tr.best_attempt_id
          WHERE tr.task_id = ?
          ORDER BY tr.rank ASC`,
       ).all(taskId) as any[];
@@ -750,8 +754,8 @@ export async function registerLeagueRoutes(
       
       // Validate dates if provided
       if (body.startDate || body.endDate) {
-        const startDate = body.startDate || existingSeason.start_date;
-        const endDate = body.endDate || existingSeason.end_date;
+        const startDate = body.startDate || (existingSeason as any).start_date;
+        const endDate = body.endDate || (existingSeason as any).end_date;
         const start = new Date(startDate);
         const end = new Date(endDate);
         
@@ -1285,6 +1289,7 @@ export async function registerLeagueRoutes(
         taskType?: 'RACE_TO_GOAL' | 'OPEN_DISTANCE';
         openDate?: string;
         closeDate?: string;
+        normalizedScore?: number | null;
       };
       
       // Verify task belongs to this season/league
@@ -1344,7 +1349,11 @@ export async function registerLeagueRoutes(
         updates.push('close_date = ?');
         params.push(body.closeDate);
       }
-      
+      if (body.normalizedScore !== undefined) {
+        updates.push('normalized_score = ?');
+        params.push(body.normalizedScore ?? null);
+      }
+
       if (updates.length === 0) {
         return reply.status(400).send({ error: 'No fields to update' });
       }
@@ -1357,15 +1366,16 @@ export async function registerLeagueRoutes(
       ).run(...params);
       
       const task = db.prepare(
-        `SELECT 
+        `SELECT
           id, name, description,
           task_type as taskType,
           open_date as openDate,
           close_date as closeDate,
+          normalized_score as normalizedScore,
           updated_at as updatedAt
         FROM tasks WHERE id = ?`
       ).get(taskId);
-      
+
       request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task updated');
       return reply.send({ task });
     });
@@ -1693,7 +1703,8 @@ export async function registerLeagueRoutes(
       const body = request.body as {
         name?: string;
         slug?: string;
-        description?: string;
+        shortDescription?: string;
+        fullDescription?: string;
         logoUrl?: string;
       };
       
@@ -1727,9 +1738,13 @@ export async function registerLeagueRoutes(
         updates.push('slug = ?');
         params.push(body.slug);
       }
-      if (body.description !== undefined) {
+      if (body.shortDescription !== undefined) {
         updates.push('description = ?');
-        params.push(body.description);
+        params.push(body.shortDescription);
+      }
+      if (body.fullDescription !== undefined) {
+        updates.push('full_description = ?');
+        params.push(body.fullDescription);
       }
       if (body.logoUrl !== undefined) {
         updates.push('logo_url = ?');
@@ -1748,8 +1763,10 @@ export async function registerLeagueRoutes(
       ).run(...params);
       
       const updatedLeague = db.prepare(
-        `SELECT 
-          id, name, slug, description,
+        `SELECT
+          id, name, slug,
+          description as shortDescription,
+          full_description as fullDescription,
           logo_url as logoUrl,
           updated_at as updatedAt
         FROM leagues WHERE id = ?`

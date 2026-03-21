@@ -50,7 +50,7 @@ interface CookieOptions {
 }
 type FastifyPluginAsync<O = unknown> = (app: {
   decorateRequest(key: string, val: unknown): void;
-  addHook(name: string, fn: (req: FastifyRequest, reply: FastifyReply) => Promise<void>): void;
+  addHook(name: string, fn: (req: FastifyRequest, reply: any) => Promise<void>): void;
 }, opts: O) => Promise<void>;
 
 // =============================================================================
@@ -375,7 +375,7 @@ export function findOrCreateGoogleUser(
 
 const COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60; // 7 days, matches JWT expiry
 
-export function setAuthCookie(reply: FastifyReply, jwt: string, config: AuthConfig): void {
+export function setAuthCookie(reply: any, jwt: string, config: AuthConfig): void {
   reply.setCookie(config.cookieName, jwt, {
     httpOnly: true,
     secure:   config.secureCookies,
@@ -386,7 +386,7 @@ export function setAuthCookie(reply: FastifyReply, jwt: string, config: AuthConf
   });
 }
 
-export function clearAuthCookie(reply: FastifyReply, config: AuthConfig): void {
+export function clearAuthCookie(reply: any, config: AuthConfig): void {
   reply.setCookie(config.cookieName, '', {
     httpOnly: true,
     secure:   config.secureCookies,
@@ -398,7 +398,7 @@ export function clearAuthCookie(reply: FastifyReply, config: AuthConfig): void {
 }
 
 /** Extract JWT string from request — cookie takes precedence over Bearer header. */
-export function extractToken(request: FastifyRequest, config: AuthConfig): string | null {
+export function extractToken(request: any, config: AuthConfig): string | null {
   // Cookie (web browser)
   const cookieToken = (request.cookies as Record<string, string>)[config.cookieName];
   if (cookieToken) return cookieToken;
@@ -428,7 +428,7 @@ export function extractToken(request: FastifyRequest, config: AuthConfig): strin
  * authenticated request but is the only way to support immediate revocation
  * with stateless JWTs.
  */
-const authPluginImpl: FastifyPluginAsync<{ config: AuthConfig; db: Database }> = async (
+const authPluginImpl: any = async (
   fastify: any,
   { config, db }: { config: AuthConfig; db: Database },
 ) => {
@@ -436,7 +436,7 @@ const authPluginImpl: FastifyPluginAsync<{ config: AuthConfig; db: Database }> =
   fastify.decorateRequest('league', null);
   fastify.decorateRequest('membership', null);
 
-  fastify.addHook('preHandler', async (request: FastifyRequest, _reply: FastifyReply) => {
+  fastify.addHook('preHandler', async (request: any, _reply: any) => {
     // ── Test-mode bypass ────────────────────────────────────────────────────
     // When NODE_ENV=test, accept an x-test-user-id header to authenticate as
     // any user in the DB without needing a real JWT. Never active in production.
@@ -494,7 +494,7 @@ export const authPlugin = fp(authPluginImpl, {
 // =============================================================================
 
 /** Reject request if not authenticated. Returns 401. */
-export function requireAuth(request: FastifyRequest, reply: FastifyReply): void {
+export function requireAuth(request: any, reply: any): void {
   if (!request.user) {
     reply.status(401).send({ error: 'Authentication required' });
     throw new Error('Unauthorized'); // stops handler execution in Fastify
@@ -502,7 +502,7 @@ export function requireAuth(request: FastifyRequest, reply: FastifyReply): void 
 }
 
 /** Reject request if not a super-admin. Returns 403. */
-export function requireSuperAdmin(request: FastifyRequest, reply: FastifyReply): void {
+export function requireSuperAdmin(request: any, reply: any): void {
   requireAuth(request, reply);
   if (!request.user!.isAdmin) {
     reply.status(403).send({ error: 'Super-admin access required' });
@@ -511,7 +511,7 @@ export function requireSuperAdmin(request: FastifyRequest, reply: FastifyReply):
 }
 
 /** Reject request if not a member of the resolved league. Returns 403. */
-export function requireLeagueMember(request: FastifyRequest, reply: FastifyReply): void {
+export function requireLeagueMember(request: any, reply: any): void {
   requireAuth(request, reply);
   if (!request.membership) {
     reply.status(403).send({ error: 'League membership required' });
@@ -520,7 +520,7 @@ export function requireLeagueMember(request: FastifyRequest, reply: FastifyReply
 }
 
 /** Reject request if not a league admin or super-admin. Returns 403. */
-export function requireLeagueAdmin(request: FastifyRequest, reply: FastifyReply): void {
+export function requireLeagueAdmin(request: any, reply: any): void {
   requireAuth(request, reply);
   if (request.user!.isAdmin) return; // super admins have access to all leagues
   if (!request.membership || request.membership.role !== 'admin') {
@@ -545,7 +545,7 @@ export interface LeagueRecord {
 export interface MembershipRecord {
   userId: string;
   leagueId: string;
-  role: 'ADMIN' | 'PILOT' | 'SPECTATOR';
+  role: 'admin' | 'pilot' | 'spectator';
   joinedAt: string;
 }
 
@@ -555,7 +555,7 @@ export interface MembershipRecord {
  * Attach to any route scope that contains :leagueSlug.
  */
 export function makeResolveLeagueHook(db: any) {
-  return async function resolveLeague(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  return async function resolveLeague(request: any, reply: any): Promise<void> {
     const { leagueSlug } = request.params as { leagueSlug?: string };
     if (!leagueSlug) return;
 
@@ -596,8 +596,8 @@ export function makeResolveLeagueHook(db: any) {
  * then redirects to Google's consent screen.
  */
 export async function handleGoogleAuthInitiate(
-  request: FastifyRequest,
-  reply: FastifyReply,
+  request: any,
+  reply: any,
   config: AuthConfig,
 ): Promise<void> {
   const { state } = await generateOAuthState(config.oauthStateSecret);
@@ -626,8 +626,8 @@ export async function handleGoogleAuthInitiate(
  * On failure: redirects to /login?error=auth_failed (frontend handles display).
  */
 export async function handleGoogleAuthCallback(
-  request: FastifyRequest,
-  reply: FastifyReply,
+  request: any,
+  reply: any,
   config: AuthConfig,
   db: Database,
 ): Promise<void> {
@@ -663,9 +663,9 @@ export async function handleGoogleAuthCallback(
     const claims: JwtClaims = {
       sub:          user.id,
       email:        user.email,
-      displayName:  user.display_name,
-      isAdmin:      Boolean(user.is_super_admin),
-      tokenVersion: user.token_version,
+      displayName:  (user as any).display_name ?? user.displayName,
+      isAdmin:      Boolean((user as any).is_super_admin ?? user.isAdmin),
+      tokenVersion: (user as any).token_version ?? user.tokenVersion,
     };
 
     const jwt = await signJwt(claims, config);
@@ -718,8 +718,8 @@ export async function handleGoogleAuthCallback(
  * Requires authentication.
  */
 export async function handleGetMe(
-  request: FastifyRequest,
-  reply: FastifyReply,
+  request: any,
+  reply: any,
   db: any,
 ): Promise<void> {
   requireAuth(request, reply);
@@ -729,9 +729,9 @@ export async function handleGetMe(
             glider_weight_rating as gliderWeightRating
      FROM users WHERE id = ?`
   ).get(request.user!.userId) as UserRecord | undefined;
-  
+
   if (!user) { reply.status(404).send({ error: 'User not found' }); return; }
-  reply.send({ user });
+  reply.send({ user: { ...user, isAdmin: Boolean((user as any).isAdmin) } });
 }
 
 /**
@@ -741,8 +741,8 @@ export async function handleGetMe(
  * Does NOT allow changing email (that goes through Google).
  */
 export async function handleUpdateMe(
-  request: FastifyRequest,
-  reply: FastifyReply,
+  request: any,
+  reply: any,
   db: any,
 ): Promise<void> {
   requireAuth(request, reply);
@@ -815,8 +815,8 @@ export async function handleUpdateMe(
  * For immediate revocation, use POST /auth/revoke instead.
  */
 export async function handleLogout(
-  request: FastifyRequest,
-  reply: FastifyReply,
+  request: any,
+  reply: any,
   config: AuthConfig,
 ): Promise<void> {
   clearAuthCookie(reply, config);
@@ -833,8 +833,8 @@ export async function handleLogout(
  * Regular users can only revoke their own tokens.
  */
 export async function handleRevokeTokens(
-  request: FastifyRequest,
-  reply: FastifyReply,
+  request: any,
+  reply: any,
   db: any,
 ): Promise<void> {
   requireAuth(request, reply);
@@ -920,4 +920,5 @@ declare class Database {
   run(sql: string, params?: any[]): { changes: number };
   get<T>(sql: string, params?: any[]): T | null;
   transaction<T>(fn: () => T): () => T;
+  prepare(sql: string): { run(...args: any[]): any; get(...args: any[]): any; all(...args: any[]): any[] };
 }

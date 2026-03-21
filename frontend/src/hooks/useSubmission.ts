@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useState, useCallback } from 'react';
 import { submissionsApi, type SubmissionResponse } from '../api/tasks';
 import { useLeague } from './useLeague';

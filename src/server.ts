@@ -158,7 +158,7 @@ async function main() {
   //   the wildcard route is skipped so Vite handles the frontend.
   if (IS_PROD) {
     await app.register(fastifyStatic, {
-      root:       join(__dirname, '../client'),
+      root:       join(__dirname, 'client'),
       prefix:     '/',
       // Don't serve index.html automatically for unknown paths —
       // we handle that in the wildcard route below so we can
@@ -205,7 +205,7 @@ async function main() {
       if (request.method === 'GET' && !request.url.startsWith('/api/')) {
         return reply
           .header('Cache-Control', 'no-cache')
-          .sendFile('index.html', join(__dirname, '../client'));
+          .sendFile('index.html', join(__dirname, 'client'));
       }
       // Real API 404
       reply.status(404).send({

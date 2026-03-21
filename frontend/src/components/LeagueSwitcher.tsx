@@ -47,26 +47,20 @@ export default function LeagueSwitcher() {
       <button
         onClick={() => setOpen(o => !o)}
         style={{
-          width: '100%',
-          padding: '0.5rem 0.75rem',
-          background: 'var(--bg2)',
-          border: '1px solid var(--border)',
-          borderRadius: 6,
+          background: 'none',
+          border: 'none',
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '0.5rem',
+          gap: '0.4rem',
+          padding: 0,
           textAlign: 'left',
         }}
       >
-        <div style={{ overflow: 'hidden' }}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {currentLeague?.name ?? leagueSlug}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: 'var(--text3)' }}>Switch league</div>
-        </div>
-        <span style={{ fontSize: '0.7rem', color: 'var(--text3)', flexShrink: 0 }}>
+        <span style={{ fontSize: '1.75rem', fontWeight: 700, lineHeight: 1.2, color: 'var(--text1)' }}>
+          {currentLeague?.name ?? leagueSlug ?? 'Select league'}
+        </span>
+        <span style={{ fontSize: '1rem', color: 'var(--text3)', marginTop: 4 }}>
           {open ? '▲' : '▼'}
         </span>
       </button>
@@ -108,9 +102,9 @@ export default function LeagueSwitcher() {
                 <div style={{ fontSize: '0.8rem', fontWeight: league.slug === leagueSlug ? 600 : 400, color: 'var(--text1)' }}>
                   {league.name}
                 </div>
-                {league.description && (
+                {league.shortDescription && (
                   <div style={{ fontSize: '0.7rem', color: 'var(--text3)', marginTop: 1 }}>
-                    {league.description}
+                    {league.shortDescription}
                   </div>
                 )}
               </div>
