@@ -1571,7 +1571,6 @@ export async function registerLeagueRoutes(
 
     // ── Download task file (.xctsk or .cup) ────────────────────────────────
     leagueScope.get('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/download', async (request, reply) => {
-      requireLeagueMember(request, reply);
 
       const { seasonId, taskId } = request.params as { seasonId: string; taskId: string };
       const league = (request as any).league;
@@ -1630,7 +1629,6 @@ export async function registerLeagueRoutes(
 
     // ── Generate QR code for task ──────────────────────────────────────────
     leagueScope.get('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/qr', async (request, reply) => {
-      requireLeagueMember(request, reply);
 
       const { leagueSlug, seasonId, taskId } = request.params as {
         leagueSlug: string; seasonId: string; taskId: string;

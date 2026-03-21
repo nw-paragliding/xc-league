@@ -30,6 +30,8 @@ export default function TaskExportModal({ task, leagueSlug, seasonId, onClose }:
 
   useEffect(() => { setQrTooLarge(false); }, [qrSrc]);
 
+  const handleQrError = () => setQrTooLarge(true);
+
   const handleDownload = async (format: 'xctsk' | 'cup') => {
     setDownloading(format);
     setDownloadError(null);
@@ -126,7 +128,7 @@ export default function TaskExportModal({ task, leagueSlug, seasonId, onClose }:
                 key={qrSrc}
                 src={qrSrc}
                 alt="Task QR code"
-                onError={() => setQrTooLarge(true)}
+                onError={handleQrError}
                 style={{ display: 'block', width: '100%', height: 'auto', imageRendering: 'pixelated' }}
               />
             </div>
