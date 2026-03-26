@@ -69,12 +69,12 @@ export default function TaskImportModal({ leagueSlug, seasonId, onSuccess, onClo
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.5)',
+        background: 'rgba(0,0,0,0.6)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 1000,
-        padding: '1rem',
+        padding: '1.5rem',
       }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
@@ -185,13 +185,14 @@ export default function TaskImportModal({ leagueSlug, seasonId, onSuccess, onClo
                 fontSize: '0.875rem',
                 background: 'var(--bg1)',
                 color: 'var(--text1)',
+                boxSizing: 'border-box',
               }}
             />
           </div>
 
           {/* Dates */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div>
+            <div style={{ minWidth: 0 }}>
               <label style={{ display: 'block', fontWeight: 500, fontSize: '0.875rem', marginBottom: '0.375rem' }}>
                 Open Date & Time
               </label>
@@ -205,12 +206,14 @@ export default function TaskImportModal({ leagueSlug, seasonId, onSuccess, onClo
                   border: '1px solid var(--border)',
                   borderRadius: 4,
                   fontSize: '0.875rem',
-                  background: 'var(--bg1)',
+                  background: 'var(--bg2)',
                   color: 'var(--text1)',
+                  colorScheme: 'dark',
+                  boxSizing: 'border-box',
                 }}
               />
             </div>
-            <div>
+            <div style={{ minWidth: 0 }}>
               <label style={{ display: 'block', fontWeight: 500, fontSize: '0.875rem', marginBottom: '0.375rem' }}>
                 Close Date & Time
               </label>
@@ -224,8 +227,10 @@ export default function TaskImportModal({ leagueSlug, seasonId, onSuccess, onClo
                   border: '1px solid var(--border)',
                   borderRadius: 4,
                   fontSize: '0.875rem',
-                  background: 'var(--bg1)',
+                  background: 'var(--bg2)',
                   color: 'var(--text1)',
+                  colorScheme: 'dark',
+                  boxSizing: 'border-box',
                 }}
               />
             </div>
@@ -245,7 +250,8 @@ export default function TaskImportModal({ leagueSlug, seasonId, onSuccess, onClo
                 padding: '0.5rem 1rem',
                 border: '1px solid var(--border)',
                 borderRadius: 4,
-                background: 'var(--bg1)',
+                background: 'var(--bg2)',
+                color: 'var(--text1)',
                 cursor: 'pointer',
                 fontSize: '0.875rem',
               }}

@@ -9,7 +9,7 @@ import type Database from 'better-sqlite3';
 import type { SQLiteJobQueue } from '../job-queue';
 import { makeResolveLeagueHook, requireLeagueAdmin, requireLeagueMember, requireAuth } from '../auth';
 import { randomUUID } from 'crypto';
-import { parseTaskFile } from '../task-parsers';
+import { parseTaskFile, parseCupAll } from '../task-parsers';
 import { parseAndValidate } from '../pipeline';
 import { handleIgcUpload } from '../upload';
 import { exportXctsk, exportCup, buildXctrackDeepLink, buildDownloadUrl, type ExportTask, type ExportTurnpoint } from '../task-exporters';
@@ -359,8 +359,6 @@ export async function registerLeagueRoutes(
     // ── Get submission track data ──────────────────────────────────────────
     leagueScope.get('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/track', async (request, reply) => {
       const { submissionId } = request.params as { submissionId: string; seasonId: string; taskId: string };
-      requireAuth(request, reply);
-      const userId = (request as any).user!.userId;
 
       const submission = db.prepare(
         `SELECT
@@ -375,8 +373,8 @@ export async function registerLeagueRoutes(
          JOIN tasks t ON t.id = s.task_id
          JOIN seasons se ON se.id = t.season_id
          JOIN users u ON u.id = s.user_id
-         WHERE s.id = ? AND se.league_id = ? AND s.user_id = ? AND s.deleted_at IS NULL`
-      ).get(submissionId, (request as any).league.id, userId) as any;
+         WHERE s.id = ? AND se.league_id = ? AND s.deleted_at IS NULL`
+      ).get(submissionId, (request as any).league.id) as any;
 
       if (!submission) {
         return reply.status(404).send({ error: 'Submission not found' });
@@ -1277,6 +1275,146 @@ export async function registerLeagueRoutes(
       return reply.status(201).send({ task, turnpoints });
     });
 
+    // ── Preview all tasks in a .cup file (no DB writes) ────────────────────
+    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/tasks/cup-preview', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+
+      const data = await request.file();
+      if (!data) return reply.status(400).send({ error: 'No file uploaded' });
+
+      const filename = data.filename ?? 'task.cup';
+      if (!filename.toLowerCase().endsWith('.cup')) {
+        return reply.status(400).send({ error: 'Only .cup files are supported for bulk preview' });
+      }
+
+      const content = (await data.toBuffer()).toString('utf8');
+      let tasks;
+      try {
+        tasks = parseCupAll(content);
+      } catch (err: any) {
+        return reply.status(400).send({ error: err.message || 'Failed to parse CUP file' });
+      }
+
+      return reply.send({
+        tasks: tasks.map((t, i) => ({
+          index:          i,
+          name:           t.name ?? `Task ${i + 1}`,
+          turnpointCount: t.turnpoints.length,
+          turnpoints:     t.turnpoints.map(tp => ({
+            name:      tp.name,
+            latitude:  tp.latitude,
+            longitude: tp.longitude,
+            radius_m:  tp.radius_m,
+            type:      tp.type,
+          })),
+        })),
+      });
+    });
+
+    // ── Bulk import multiple tasks from a .cup file ────────────────────────
+    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/tasks/bulk-import', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+
+      const { seasonId } = request.params as { seasonId: string };
+      const league = (request as any).league;
+
+      // Expect multipart: 'file' (CUP) + 'tasks' (JSON string)
+      let fileBuffer: Buffer | null = null;
+      let filename = 'tasks.cup';
+      let tasksConfig: Array<{ index: number; name?: string; openDate?: string; closeDate?: string }> = [];
+
+      for await (const part of request.parts()) {
+        if (part.type === 'file' && part.fieldname === 'file') {
+          fileBuffer = await part.toBuffer();
+          filename = part.filename ?? filename;
+        } else if (part.type === 'field' && part.fieldname === 'tasks') {
+          try { tasksConfig = JSON.parse(part.value as string); } catch {}
+        }
+      }
+
+      if (!fileBuffer) return reply.status(400).send({ error: 'No file uploaded' });
+
+      const content = fileBuffer.toString('utf8');
+      let parsedTasks;
+      try {
+        parsedTasks = parseCupAll(content);
+      } catch (err: any) {
+        return reply.status(400).send({ error: err.message || 'Failed to parse CUP file' });
+      }
+
+      // Verify season
+      const season = db.prepare(
+        `SELECT id FROM seasons WHERE id = ? AND league_id = ? AND deleted_at IS NULL`
+      ).get(seasonId, league.id);
+      if (!season) return reply.status(404).send({ error: 'Season not found' });
+
+      const created: string[] = [];
+
+      db.transaction(() => {
+        for (const cfg of tasksConfig) {
+          const parsed = parsedTasks[cfg.index];
+          if (!parsed || parsed.turnpoints.length < 2) continue;
+
+          const taskId = randomUUID();
+          const taskName = cfg.name ?? parsed.name ?? `Task ${cfg.index + 1}`;
+
+          const nextOrder = (db.prepare(
+            `SELECT COALESCE(MAX(sort_order), -1) + 1 as next FROM tasks WHERE season_id = ? AND deleted_at IS NULL`
+          ).get(seasonId) as any).next as number;
+
+          db.prepare(
+            `INSERT INTO tasks (
+              id, season_id, league_id, name, task_type,
+              open_date, close_date,
+              task_data_source, task_data_raw,
+              sort_order, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+          ).run(
+            taskId, seasonId, league.id, taskName,
+            parsed.taskType ?? 'RACE_TO_GOAL',
+            cfg.openDate  ?? new Date().toISOString(),
+            cfg.closeDate ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+            'cup', content,
+            nextOrder,
+          );
+
+          let sssId: string | null = null;
+          let essId: string | null = null;
+          let goalId: string | null = null;
+
+          for (let i = 0; i < parsed.turnpoints.length; i++) {
+            const tp = parsed.turnpoints[i];
+            const tpId = randomUUID();
+            db.prepare(
+              `INSERT INTO turnpoints (
+                id, task_id, league_id, sequence_index,
+                name, latitude, longitude, radius_m, type,
+                created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+            ).run(tpId, taskId, league.id, i, tp.name, tp.latitude, tp.longitude, tp.radius_m, tp.type);
+
+            if (tp.type === 'SSS') sssId = tpId;
+            if (tp.type === 'ESS') essId = tpId;
+            if (tp.type === 'GOAL_CYLINDER' || tp.type === 'GOAL_LINE') goalId = tpId;
+          }
+
+          if (sssId || essId || goalId) {
+            const sets: string[] = [];
+            const vals: (string | null)[] = [];
+            if (sssId)  { sets.push('sss_turnpoint_id = ?');  vals.push(sssId); }
+            if (essId)  { sets.push('ess_turnpoint_id = ?');  vals.push(essId); }
+            if (goalId) { sets.push('goal_turnpoint_id = ?'); vals.push(goalId); }
+            db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).run(...vals, taskId);
+          }
+
+          created.push(taskId);
+        }
+      })();
+
+      request.log.info({ leagueId: league.id, seasonId, count: created.length }, 'Bulk import from CUP');
+      return reply.status(201).send({ created: created.length, taskIds: created });
+    });
+
     // ── Update a task ──────────────────────────────────────────────────────
     leagueScope.put('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId', async (request, reply) => {
       requireLeagueAdmin(request, reply);
@@ -1413,40 +1551,6 @@ export async function registerLeagueRoutes(
       
       request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task deleted');
       return reply.send({ message: 'Task deleted' });
-    });
-
-    // ── Freeze task scores ─────────────────────────────────────────────────
-    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/freeze', async (request, reply) => {
-      requireLeagueAdmin(request, reply);
-      
-      const { seasonId, taskId } = request.params as { seasonId: string; taskId: string };
-      const league = (request as any).league;
-      
-      // Verify task belongs to this season/league
-      const task = db.prepare(
-        `SELECT t.id, t.scores_frozen_at
-         FROM tasks t
-         JOIN seasons s ON s.id = t.season_id
-         WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`
-      ).get(taskId, seasonId, league.id) as { id: string; scores_frozen_at: string | null } | undefined;
-      
-      if (!task) {
-        return reply.status(404).send({ error: 'Task not found' });
-      }
-      
-      if (task.scores_frozen_at) {
-        return reply.status(400).send({ error: 'Task scores are already frozen' });
-      }
-      
-      // Freeze the task
-      db.prepare(
-        `UPDATE tasks
-         SET scores_frozen_at = datetime('now'), updated_at = datetime('now')
-         WHERE id = ?`
-      ).run(taskId);
-      
-      request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task scores frozen');
-      return reply.send({ message: 'Task scores frozen' });
     });
 
     // ── Publish task ───────────────────────────────────────────────────────

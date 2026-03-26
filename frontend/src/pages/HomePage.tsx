@@ -247,7 +247,7 @@ export default function HomePage() {
   const isLoading = tasksLoading || standingsLoading;
 
   return (
-    <div className="fade-in" style={{ display: 'flex', height: '100%' }}>
+    <div className="fade-in" style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
 
       {/* ── Left scrollable column ── */}
       <div style={{

@@ -51,16 +51,6 @@ export default function TaskManagementPage() {
     },
   });
 
-  const freezeMutation = useMutation({
-    mutationFn: (taskId: string) => leagueApi.freezeTask(leagueSlug, selectedSeasonId!, taskId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['leagues', leagueSlug, 'seasons', selectedSeasonId, 'tasks'] });
-      setError(null);
-    },
-    onError: (err: any) => {
-      setError(err.message || 'Failed to freeze task');
-    },
-  });
 
   const publishMutation = useMutation({
     mutationFn: (taskId: string) => leagueApi.publishTask(leagueSlug, selectedSeasonId!, taskId),
@@ -400,39 +390,6 @@ export default function TaskManagementPage() {
                         </>
                       )}
 
-                      {/* Freeze — available for published tasks that aren't already frozen */}
-                      {!task.scoresFrozenAt && task.status === 'published' && (
-                        <button
-                          onClick={() => {
-                            if (confirm(`Freeze scores for "${task.name}"? This cannot be undone.`)) {
-                              freezeMutation.mutate(task.id);
-                            }
-                          }}
-                          disabled={freezeMutation.isPending}
-                          style={{
-                            padding: '0.5rem 1rem',
-                            border: '1px solid #bae6fd',
-                            borderRadius: 4,
-                            background: '#e0f2fe',
-                            color: '#0369a1',
-                            cursor: 'pointer',
-                            fontSize: '0.875rem'
-                          }}
-                        >
-                          Freeze
-                        </button>
-                      )}
-
-                      {task.scoresFrozenAt && (
-                        <div style={{
-                          padding: '0.5rem 1rem',
-                          fontSize: '0.875rem',
-                          color: 'var(--text2)'
-                        }}>
-                          Frozen {new Date(task.scoresFrozenAt).toLocaleDateString()}
-                        </div>
-                      )}
-
                       {/* Export — available for published tasks */}
                       {task.status === 'published' && (
                         <button
@@ -600,7 +557,9 @@ function TaskForm({ task, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
                 borderRadius: 4,
                 fontSize: '0.875rem',
                 background: 'var(--bg1)',
-                color: 'var(--text1)'
+                color: 'var(--text1)',
+                colorScheme: 'dark',
+                boxSizing: 'border-box',
               }}
             />
           </div>
@@ -620,7 +579,9 @@ function TaskForm({ task, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
                 borderRadius: 4,
                 fontSize: '0.875rem',
                 background: 'var(--bg1)',
-                color: 'var(--text1)'
+                color: 'var(--text1)',
+                colorScheme: 'dark',
+                boxSizing: 'border-box',
               }}
             />
           </div>

@@ -281,27 +281,43 @@ function splitCupLine(line: string): string[] {
   return result;
 }
 
-export function parseCup(content: string): ParsedTask {
+/** Internal structure for a task parsed from the Related Tasks section */
+interface RawCupTask {
+  name:      string;
+  wpNames:   string[];
+  obszones:  Map<number, { style: number; r1: number; isEss: boolean }>;
+}
+
+/**
+ * Parse a SeeYou .cup file and return ALL tasks found in the Related Tasks
+ * section. Each task's ObsZone lines are used for proper radii and SSS/ESS/Goal
+ * type assignment:
+ *   Style=2        → SSS
+ *   Style=3        → GOAL_CYLINDER
+ *   SpeedStyle=2   → ESS
+ *
+ * '???' entries (takeoff / landing placeholders) are skipped.
+ */
+export function parseCupAll(content: string): ParsedTask[] {
   const lines = content.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
-  // Build a map of waypoint name → coord
   const waypointMap = new Map<string, { lat: number; lon: number }>();
-  let inTask = false;
-  let taskName: string | undefined;
-  const taskWpNames: string[] = [];
+  const rawTasks: RawCupTask[] = [];
+  let currentTask: RawCupTask | null = null;
+  let inTaskSection = false;
 
   for (const line of lines) {
     if (line.startsWith('-----')) {
-      inTask = true;
+      inTaskSection = true;
       continue;
     }
 
-    if (!inTask) {
-      // Waypoint line — skip header
-      if (line.toLowerCase().startsWith('name')) continue;
+    if (!inTaskSection) {
+      if (/^name,/i.test(line)) continue; // header row
       const parts = splitCupLine(line);
       if (parts.length < 5) continue;
       const name = parts[0].replace(/^"|"$/g, '');
+      const code = parts[1]?.replace(/^"|"$/g, '') ?? '';
       const latRaw = parts[3].replace(/^"|"$/g, '');
       const lonRaw = parts[4].replace(/^"|"$/g, '');
       if (!latRaw || !lonRaw) continue;
@@ -309,44 +325,89 @@ export function parseCup(content: string): ParsedTask {
         const lat = parseCupCoord(latRaw);
         const lon = parseCupCoord(lonRaw);
         if (!isNaN(lat) && !isNaN(lon)) {
-          waypointMap.set(name, { lat, lon });
+          if (name) waypointMap.set(name, { lat, lon });
+          if (code && code !== name) waypointMap.set(code, { lat, lon });
         }
       } catch { /* skip malformed lines */ }
     } else {
-      // Task line: "TaskName","WP1","WP2",...
+      if (/^Options,/i.test(line)) continue;
+
+      // ObsZone=N,Style=S,R1=Rm,...
+      const ozMatch = /^ObsZone=(\d+),(.+)$/i.exec(line);
+      if (ozMatch && currentTask) {
+        const idx = parseInt(ozMatch[1]);
+        const props = ozMatch[2];
+        const styleMatch  = /Style=(\d+)/i.exec(props);
+        const r1Match     = /R1=(\d+)m/i.exec(props);
+        const speedMatch  = /SpeedStyle=(\d+)/i.exec(props);
+        currentTask.obszones.set(idx, {
+          style:  styleMatch ? parseInt(styleMatch[1]) : 1,
+          r1:     r1Match    ? parseInt(r1Match[1])    : 400,
+          isEss:  speedMatch !== null,
+        });
+        continue;
+      }
+
+      // Task definition line: "TaskName","???","WP1",...,"???"
       const parts = splitCupLine(line);
       if (parts.length < 2) continue;
-      if (!taskName) taskName = parts[0].replace(/^"|"$/g, '');
+      const taskName = parts[0].replace(/^"|"$/g, '');
+      if (!taskName) continue;
+
+      const wpNames: string[] = [];
       for (let i = 1; i < parts.length; i++) {
-        const wpName = parts[i].replace(/^"|"$/g, '');
-        if (wpName) taskWpNames.push(wpName);
+        const wp = parts[i].replace(/^"|"$/g, '');
+        if (wp && wp !== '???') wpNames.push(wp);
+      }
+      if (wpNames.length > 0) {
+        currentTask = { name: taskName, wpNames, obszones: new Map() };
+        rawTasks.push(currentTask);
       }
     }
   }
 
-  // Build turnpoints from task WP names
-  const turnpoints: ParsedTurnpoint[] = taskWpNames.map((name, idx) => {
-    const coord = waypointMap.get(name);
-    let type: ParsedTurnpoint['type'] = 'CYLINDER';
-    if (idx === 0) type = 'SSS';
-    else if (idx === taskWpNames.length - 1) type = 'GOAL_CYLINDER';
+  return rawTasks.map(task => {
+    const turnpoints: ParsedTurnpoint[] = task.wpNames.map((wpName, idx) => {
+      const coord = waypointMap.get(wpName);
+      const oz    = task.obszones.get(idx);
+
+      let type: ParsedTurnpoint['type'];
+      if (oz) {
+        if (oz.style === 2)    type = 'SSS';
+        else if (oz.style === 3) type = 'GOAL_CYLINDER';
+        else if (oz.isEss)     type = 'ESS';
+        else                   type = 'CYLINDER';
+      } else {
+        type = idx === 0 ? 'SSS'
+             : idx === task.wpNames.length - 1 ? 'GOAL_CYLINDER'
+             : 'CYLINDER';
+      }
+
+      return {
+        name:      wpName,
+        latitude:  coord?.lat ?? 0,
+        longitude: coord?.lon ?? 0,
+        radius_m:  oz?.r1 ?? 400,
+        type,
+      };
+    });
 
     return {
-      name,
-      latitude: coord?.lat ?? 0,
-      longitude: coord?.lon ?? 0,
-      radius_m: 400, // .cup doesn't encode radius; use sensible default
-      type,
+      name:       task.name,
+      taskType:   'RACE_TO_GOAL',
+      turnpoints,
+      rawContent: content,
+      format:     'cup',
     };
   });
+}
 
-  return {
-    name: taskName,
-    taskType: 'RACE_TO_GOAL',
-    turnpoints,
-    rawContent: content,
-    format: 'cup',
-  };
+export function parseCup(content: string): ParsedTask {
+  const all = parseCupAll(content);
+  if (all.length > 0) return all[0];
+
+  // Fallback: empty task
+  return { taskType: 'RACE_TO_GOAL', turnpoints: [], rawContent: content, format: 'cup' };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

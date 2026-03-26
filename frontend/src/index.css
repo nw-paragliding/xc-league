@@ -46,7 +46,8 @@ code {
 /* Layout */
 .app {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* Main content */

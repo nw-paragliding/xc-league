@@ -95,6 +95,21 @@ export interface Task {
   turnpointCount?: number;
 }
 
+export interface CupPreviewTurnpoint {
+  name:      string;
+  latitude:  number;
+  longitude: number;
+  radius_m:  number;
+  type:      string;
+}
+
+export interface CupPreviewTask {
+  index:          number;
+  name:           string;
+  turnpointCount: number;
+  turnpoints:     CupPreviewTurnpoint[];
+}
+
 export interface CreateTaskInput {
   name: string;
   description?: string;
@@ -205,10 +220,6 @@ export const leagueApi = {
   deleteTask: (leagueSlug: string, seasonId: string, taskId: string) =>
     api.delete<{ message: string }>(`/leagues/${leagueSlug}/seasons/${seasonId}/tasks/${taskId}`),
   
-  /** Freeze task scores (league admin only) */
-  freezeTask: (leagueSlug: string, seasonId: string, taskId: string) =>
-    api.post<{ message: string }>(`/leagues/${leagueSlug}/seasons/${seasonId}/tasks/${taskId}/freeze`),
-  
   /** Publish task (league admin only) */
   publishTask: (leagueSlug: string, seasonId: string, taskId: string) =>
     api.post<{ message: string }>(`/leagues/${leagueSlug}/seasons/${seasonId}/tasks/${taskId}/publish`),
@@ -252,6 +263,36 @@ export const leagueApi = {
 
     return apiFetch(
       `/leagues/${leagueSlug}/seasons/${seasonId}/tasks/import${qs}`,
+      { method: 'POST', body: form },
+    );
+  },
+
+  /** Preview all tasks in a .cup file without creating anything */
+  cupPreview: (
+    leagueSlug: string,
+    seasonId: string,
+    file: File,
+  ): Promise<{ tasks: CupPreviewTask[] }> => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    return apiFetch(
+      `/leagues/${leagueSlug}/seasons/${seasonId}/tasks/cup-preview`,
+      { method: 'POST', body: form },
+    );
+  },
+
+  /** Bulk-create multiple tasks from a .cup file */
+  bulkImport: (
+    leagueSlug: string,
+    seasonId: string,
+    file: File,
+    tasks: Array<{ index: number; name?: string; openDate?: string; closeDate?: string }>,
+  ): Promise<{ created: number; taskIds: string[] }> => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    form.append('tasks', JSON.stringify(tasks));
+    return apiFetch(
+      `/leagues/${leagueSlug}/seasons/${seasonId}/tasks/bulk-import`,
       { method: 'POST', body: form },
     );
   },

@@ -7,14 +7,16 @@
 //   Tasks     — create / edit / publish / freeze tasks per season
 // =============================================================================
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import ReactMarkdown from 'react-markdown';
 import { leagueApi, type LeagueMember, type UpdateLeagueInput, type Season, type CreateSeasonInput, type Task, type CreateTaskInput } from '../api/leagues';
 import { useLeague } from '../hooks/useLeague';
 import TaskImportModal from '../components/TaskImportModal';
 import TaskExportModal from '../components/TaskExportModal';
+import BulkImportModal from '../components/BulkImportModal';
 
-type Tab = 'settings' | 'seasons' | 'tasks';
+type Tab = 'settings' | 'seasons' | 'tasks' | 'members';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Root page with tab shell
@@ -41,20 +43,22 @@ export default function LeagueSettingsPage() {
           League Admin
         </h1>
         <p style={{ color: 'var(--text2)' }}>
-          Manage settings, seasons, and tasks for this league
+          Manage details, seasons, tasks, and members for this league
         </p>
       </header>
 
       {/* Tab bar */}
       <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '2rem' }}>
-        <button style={tabStyle('settings')} onClick={() => setTab('settings')}>Settings</button>
+        <button style={tabStyle('settings')} onClick={() => setTab('settings')}>Details</button>
         <button style={tabStyle('seasons')} onClick={() => setTab('seasons')}>Seasons</button>
         <button style={tabStyle('tasks')} onClick={() => setTab('tasks')}>Tasks</button>
+        <button style={tabStyle('members')} onClick={() => setTab('members')}>Members</button>
       </div>
 
       {tab === 'settings' && <SettingsTab />}
       {tab === 'seasons' && <SeasonsTab />}
       {tab === 'tasks' && <TasksTab />}
+      {tab === 'members' && <MembersTab />}
     </div>
   );
 }
@@ -66,8 +70,6 @@ export default function LeagueSettingsPage() {
 function SettingsTab() {
   const { leagueSlug } = useLeague();
   const queryClient = useQueryClient();
-  const [selectedMember, setSelectedMember] = useState<LeagueMember | null>(null);
-  const [action, setAction] = useState<'promote' | 'demote' | 'remove' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isEditingDetails, setIsEditingDetails] = useState(false);
 
@@ -80,11 +82,6 @@ function SettingsTab() {
     },
   });
 
-  const { data, isLoading, error: queryError } = useQuery({
-    queryKey: ['leagues', leagueSlug, 'members'],
-    queryFn: () => leagueApi.listMembers(leagueSlug),
-  });
-
   const updateLeagueMutation = useMutation({
     mutationFn: (input: UpdateLeagueInput) => leagueApi.update(leagueSlug, input),
     onSuccess: () => {
@@ -93,6 +90,73 @@ function SettingsTab() {
       setError(null);
     },
     onError: (err: any) => setError(err.message || 'Failed to update league'),
+  });
+
+  return (
+    <>
+      {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
+
+      {/* League Details */}
+      <section style={{ marginBottom: '3rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>League Details</h2>
+          {!isEditingDetails && (
+            <button
+              onClick={() => setIsEditingDetails(true)}
+              style={secondaryBtn}
+            >
+              Edit Details
+            </button>
+          )}
+        </div>
+
+        {isEditingDetails ? (
+          <LeagueDetailsForm
+            league={leagueData?.league}
+            onSubmit={(input) => updateLeagueMutation.mutate(input)}
+            onCancel={() => setIsEditingDetails(false)}
+            isSubmitting={updateLeagueMutation.isPending}
+          />
+        ) : (
+          <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '1.5rem', background: 'var(--bg2)' }}>
+            <DetailRow label="League Name" value={leagueData?.league?.name || leagueSlug} />
+            <DetailRow label="URL Slug" value={leagueData?.league?.slug || leagueSlug} mono />
+            {leagueData?.league?.shortDescription && (
+              <DetailRow label="Short Description" value={leagueData.league.shortDescription} />
+            )}
+            {leagueData?.league?.fullDescription && (
+              <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text2)', marginBottom: '0.5rem' }}>Full Description</div>
+                <div style={{ fontSize: '0.875rem', color: 'var(--text1)', lineHeight: 1.6 }} className="prose">
+                  <ReactMarkdown>{leagueData.league.fullDescription}</ReactMarkdown>
+                </div>
+              </div>
+            )}
+            {leagueData?.league?.logoUrl && (
+              <DetailRow label="Logo URL" value={leagueData.league.logoUrl} mono />
+            )}
+          </div>
+        )}
+      </section>
+
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Members tab
+// ─────────────────────────────────────────────────────────────────────────────
+
+function MembersTab() {
+  const { leagueSlug } = useLeague();
+  const queryClient = useQueryClient();
+  const [selectedMember, setSelectedMember] = useState<LeagueMember | null>(null);
+  const [action, setAction] = useState<'promote' | 'demote' | 'remove' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const { data, isLoading, error: queryError } = useQuery({
+    queryKey: ['leagues', leagueSlug, 'members'],
+    queryFn: () => leagueApi.listMembers(leagueSlug),
   });
 
   const promoteMutation = useMutation({
@@ -146,41 +210,6 @@ function SettingsTab() {
   return (
     <>
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
-
-      {/* League Details */}
-      <section style={{ marginBottom: '3rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>League Details</h2>
-          {!isEditingDetails && (
-            <button
-              onClick={() => setIsEditingDetails(true)}
-              style={secondaryBtn}
-            >
-              Edit Details
-            </button>
-          )}
-        </div>
-
-        {isEditingDetails ? (
-          <LeagueDetailsForm
-            league={leagueData?.league}
-            onSubmit={(input) => updateLeagueMutation.mutate(input)}
-            onCancel={() => setIsEditingDetails(false)}
-            isSubmitting={updateLeagueMutation.isPending}
-          />
-        ) : (
-          <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '1.5rem', background: 'var(--bg2)' }}>
-            <DetailRow label="League Name" value={leagueData?.league?.name || leagueSlug} />
-            <DetailRow label="URL Slug" value={leagueData?.league?.slug || leagueSlug} mono />
-            {leagueData?.league?.shortDescription && (
-              <DetailRow label="Short Description" value={leagueData.league.shortDescription} />
-            )}
-            {leagueData?.league?.logoUrl && (
-              <DetailRow label="Logo URL" value={leagueData.league.logoUrl} mono />
-            )}
-          </div>
-        )}
-      </section>
 
       {/* Admins */}
       <section style={{ marginBottom: '3rem' }}>
@@ -430,6 +459,7 @@ function TasksTab() {
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isBulkImporting, setIsBulkImporting] = useState(false);
   const [exportingTask, setExportingTask] = useState<Task | null>(null);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -471,12 +501,6 @@ function TasksTab() {
     onError: (err: any) => setError(err.message || 'Failed to delete task'),
   });
 
-  const freezeMutation = useMutation({
-    mutationFn: (taskId: string) => leagueApi.freezeTask(leagueSlug, selectedSeasonId!, taskId),
-    onSuccess: () => { invTasks(); setError(null); },
-    onError: (err: any) => setError(err.message || 'Failed to freeze task'),
-  });
-
   const publishMutation = useMutation({
     mutationFn: (taskId: string) => leagueApi.publishTask(leagueSlug, selectedSeasonId!, taskId),
     onSuccess: () => { invTasks(); setError(null); },
@@ -497,6 +521,15 @@ function TasksTab() {
   });
 
   const seasons = seasonsData?.seasons || [];
+
+  useEffect(() => {
+    if (selectedSeasonId || seasons.length === 0) return;
+    const nonClosed = seasons.filter(s => s.status !== 'closed');
+    const pool = nonClosed.length > 0 ? nonClosed : seasons;
+    const latest = pool.reduce((a, b) => (a.startDate > b.startDate ? a : b));
+    setSelectedSeasonId(latest.id);
+  }, [seasons, selectedSeasonId]);
+
   // Use localTasks (optimistic drag state) when available, fall back to server data
   const serverTasks = tasksData?.tasks || [];
   const tasks = localTasks ?? serverTasks;
@@ -579,9 +612,9 @@ function TasksTab() {
             <h2 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>
               Tasks — {selectedSeason?.name}
             </h2>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', gap: 6 }}>
               <button onClick={() => setIsImporting(true)} style={secondaryBtn}>↑ Import</button>
-              <button onClick={() => setIsCreating(true)} style={primaryBtn}>+ New Task</button>
+              <button onClick={() => setIsBulkImporting(true)} style={secondaryBtn}>↑ Bulk Import .cup</button>
             </div>
           </div>
 
@@ -594,6 +627,15 @@ function TasksTab() {
             />
           )}
 
+          {isBulkImporting && (
+            <BulkImportModal
+              leagueSlug={leagueSlug}
+              seasonId={selectedSeasonId!}
+              onSuccess={() => { setIsBulkImporting(false); invTasks(); }}
+              onClose={() => setIsBulkImporting(false)}
+            />
+          )}
+
           {isCreating && (
             <TaskForm
               onSubmit={(input) => createMutation.mutate(input)}
@@ -603,12 +645,19 @@ function TasksTab() {
           )}
 
           {editingTask && (
-            <TaskForm
-              task={editingTask}
-              onSubmit={(input) => updateMutation.mutate({ taskId: editingTask.id, input })}
-              onCancel={() => setEditingTask(null)}
-              isSubmitting={updateMutation.isPending}
-            />
+            <div
+              style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1.5rem' }}
+              onClick={(e) => { if (e.target === e.currentTarget) setEditingTask(null); }}
+            >
+              <div style={{ background: 'var(--bg1)', borderRadius: 8, padding: '2rem', width: '100%', maxWidth: 600, maxHeight: '90vh', overflowY: 'auto' }}>
+                <TaskForm
+                  task={editingTask}
+                  onSubmit={(input) => updateMutation.mutate({ taskId: editingTask.id, input })}
+                  onCancel={() => setEditingTask(null)}
+                  isSubmitting={updateMutation.isPending}
+                />
+              </div>
+            </div>
           )}
 
           {tasksLoading ? (
@@ -701,20 +750,6 @@ function TasksTab() {
                             Delete
                           </button>
                         </>
-                      )}
-                      {!task.scoresFrozenAt && task.status === 'published' && (
-                        <button
-                          onClick={() => { if (confirm(`Freeze scores for "${task.name}"? This cannot be undone.`)) freezeMutation.mutate(task.id); }}
-                          disabled={freezeMutation.isPending}
-                          style={{ padding: '0.5rem 1rem', border: '1px solid #bae6fd', borderRadius: 4, background: '#e0f2fe', color: '#0369a1', cursor: 'pointer', fontSize: '0.875rem' }}
-                        >
-                          Freeze
-                        </button>
-                      )}
-                      {task.scoresFrozenAt && (
-                        <div style={{ padding: '0.5rem 1rem', fontSize: '0.875rem', color: 'var(--text2)' }}>
-                          Frozen {new Date(task.scoresFrozenAt).toLocaleDateString()}
-                        </div>
                       )}
                       {task.status === 'published' && (
                         <button onClick={() => setExportingTask(task)} style={{ ...secondaryBtn, background: 'var(--bg2)' }}>
@@ -835,7 +870,12 @@ function TaskForm({ task, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
   const [name, setName] = useState(task?.name || '');
   const [description, setDescription] = useState(task?.description || '');
   const [taskType, setTaskType] = useState<'RACE_TO_GOAL' | 'OPEN_DISTANCE'>(task?.taskType || 'RACE_TO_GOAL');
-  const fmt = (iso?: string) => iso ? iso.slice(0, 16) : '';
+  const fmt = (iso?: string) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
   const [openDate, setOpenDate] = useState(fmt(task?.openDate));
   const [closeDate, setCloseDate] = useState(fmt(task?.closeDate));
   const [normalizedScore, setNormalizedScore] = useState(
@@ -849,8 +889,8 @@ function TaskForm({ task, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
       name,
       description: description || undefined,
       taskType,
-      openDate: openDate + ':00Z',
-      closeDate: closeDate + ':00Z',
+      openDate: new Date(openDate).toISOString(),
+      closeDate: new Date(closeDate).toISOString(),
       normalizedScore: ns,
     } as any);
   };
@@ -1034,9 +1074,6 @@ function TaskStatusBadge({ task }: { task: Task }) {
       ) : (
         <span style={{ padding: '0.125rem 0.5rem', background: '#f3f4f6', color: '#6b7280', borderRadius: 4, fontSize: '0.75rem', fontWeight: 600 }}>DRAFT</span>
       )}
-      {task.scoresFrozenAt && (
-        <span style={{ padding: '0.125rem 0.5rem', background: '#e0f2fe', color: '#0369a1', borderRadius: 4, fontSize: '0.75rem', fontWeight: 500 }}>FROZEN</span>
-      )}
     </>
   );
 }
@@ -1101,6 +1138,8 @@ const inputStyle: React.CSSProperties = {
   fontSize: '0.875rem',
   background: 'var(--bg1)',
   color: 'var(--text1)',
+  colorScheme: 'dark',
+  boxSizing: 'border-box',
 };
 
 const primaryBtn: React.CSSProperties = {
