@@ -13,7 +13,7 @@
     "dev:client": "cd frontend && vite",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "start": "node dist/migrate.js && node dist/server.js",
-    "typecheck": "tsc --noEmit && cd frontend && tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && cd frontend && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
