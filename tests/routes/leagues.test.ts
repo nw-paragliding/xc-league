@@ -49,10 +49,10 @@ describe('League Settings API', () => {
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body);
       expect(body.league).toMatchObject({
-        id:          testLeague.id,
-        slug:        testLeague.slug,
-        name:        testLeague.name,
-        description: 'A test league description',
+        id:               testLeague.id,
+        slug:             testLeague.slug,
+        name:             testLeague.name,
+        shortDescription: 'A test league description',
       });
       // logoUrl and createdAt should be present (even if null)
       expect('logoUrl'   in body.league).toBe(true);
@@ -70,7 +70,7 @@ describe('League Settings API', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body);
-      expect(body.league.description).toBeNull();
+      expect(body.league.shortDescription).toBeNull();
       expect(body.league.logoUrl).toBeNull();
     });
 
@@ -96,13 +96,13 @@ describe('League Settings API', () => {
       const res = await app.inject({
         method:  'PUT',
         url:     `/leagues/${testLeague.slug}`,
-        payload: { description: 'New description' },
+        payload: { shortDescription: 'New description' },
         headers: { 'x-test-user-id': adminUser.id },
       });
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body);
-      expect(body.league.description).toBe('New description');
+      expect(body.league.shortDescription).toBe('New description');
       expect(body.league.name).toBe(testLeague.name); // unchanged
     });
 
