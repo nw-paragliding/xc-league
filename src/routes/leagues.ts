@@ -1639,6 +1639,36 @@ export async function registerLeagueRoutes(
       return reply.send({ message: 'Task unpublished (returned to draft)' });
     });
 
+    // ── Freeze task scores ─────────────────────────────────────────────────
+    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/freeze', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+
+      const { seasonId, taskId } = request.params as { seasonId: string; taskId: string };
+      const league = (request as any).league;
+
+      const task = db.prepare(
+        `SELECT t.id, t.scores_frozen_at
+         FROM tasks t
+         JOIN seasons s ON s.id = t.season_id
+         WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`
+      ).get(taskId, seasonId, league.id) as { id: string; scores_frozen_at: string | null } | undefined;
+
+      if (!task) {
+        return reply.status(404).send({ error: 'Task not found' });
+      }
+
+      if (task.scores_frozen_at) {
+        return reply.status(400).send({ error: 'Task scores are already frozen' });
+      }
+
+      db.prepare(
+        `UPDATE tasks SET scores_frozen_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`
+      ).run(taskId);
+
+      request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task scores frozen');
+      return reply.send({ message: 'Task scores frozen' });
+    });
+
     // ── Reorder tasks ──────────────────────────────────────────────────────
     leagueScope.put('/leagues/:leagueSlug/seasons/:seasonId/tasks/reorder', async (request, reply) => {
       requireLeagueAdmin(request, reply);
