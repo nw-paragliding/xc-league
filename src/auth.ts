@@ -82,6 +82,20 @@ export interface AuthConfig {
 }
 
 export function loadAuthConfig(): AuthConfig {
+  if (process.env.NODE_ENV === 'test') {
+    return {
+      jwtPrivateKeyPem:    'test',
+      jwtPublicKeyPem:     'test',
+      jwtIssuer:           'test',
+      googleClientId:      'test',
+      googleClientSecret:  'test',
+      googleRedirectUri:   'test',
+      oauthStateSecret:    'test',
+      cookieName:          'xcleague_jwt',
+      secureCookies:       false,
+      frontendUrl:         'http://localhost:5173',
+    };
+  }
   const required = [
     'JWT_PRIVATE_KEY_PEM',
     'JWT_PUBLIC_KEY_PEM',
