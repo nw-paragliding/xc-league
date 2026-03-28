@@ -79,6 +79,7 @@ export interface UpdateSeasonInput {
 
 export interface Task {
   id: string;
+  seasonId: string;
   name: string;
   description?: string;
   taskType: 'RACE_TO_GOAL' | 'OPEN_DISTANCE';

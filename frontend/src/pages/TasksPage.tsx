@@ -643,13 +643,11 @@ function TaskActionPanel({
   task,
   taskStatus,
   leagueSlug,
-  seasonId,
   onSubmission,
 }: {
   task:          Task;
   taskStatus:    TaskStatus;
   leagueSlug:    string;
-  seasonId:      string;
   onSubmission?: (id: string) => void;
 }) {
   const { user, login } = useAuth();
@@ -743,7 +741,6 @@ function TaskActionPanel({
         <TaskExportModal
           task={task as any}
           leagueSlug={leagueSlug}
-          seasonId={seasonId}
           onClose={() => setShowExport(false)}
         />
       )}
@@ -756,7 +753,7 @@ function TaskActionPanel({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function TasksPage() {
-  const { leagueSlug, seasonId } = useLeague();
+  const { leagueSlug } = useLeague();
   const { data: tasks, isLoading } = useTasks();
   const [selectedId, setSelectedId]             = useState<string | null>(null);
   const [uploadedSubmissionId, setUploadedId]   = useState<string | null>(null);
@@ -868,7 +865,6 @@ export default function TasksPage() {
                 task={selectedTask}
                 taskStatus={taskStatus}
                 leagueSlug={leagueSlug}
-                seasonId={seasonId}
                 onSubmission={setUploadedId}
               />
             </div>

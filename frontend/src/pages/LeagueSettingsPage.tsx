@@ -772,7 +772,6 @@ function TasksTab() {
             <TaskExportModal
               task={exportingTask}
               leagueSlug={leagueSlug}
-              seasonId={selectedSeasonId}
               onClose={() => setExportingTask(null)}
             />
           )}

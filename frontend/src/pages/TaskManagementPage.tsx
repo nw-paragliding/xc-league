@@ -419,7 +419,6 @@ export default function TaskManagementPage() {
             <TaskExportModal
               task={exportingTask}
               leagueSlug={leagueSlug}
-              seasonId={selectedSeasonId}
               onClose={() => setExportingTask(null)}
             />
           )}

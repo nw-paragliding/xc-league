@@ -119,7 +119,7 @@ interface UploadZoneProps {
 
 export default function UploadZone({ taskId, taskStatus, task, onSubmission }: UploadZoneProps) {
   const { user, login } = useAuth();
-  const { leagueSlug, seasonId } = useLeague();
+  const { leagueSlug } = useLeague();
   const [showExport, setShowExport] = useState(false);
   const { status, progress, result, error, upload, reset } = useUpload();
   const [file, setFile] = useState<File | null>(null);
@@ -312,7 +312,6 @@ export default function UploadZone({ taskId, taskStatus, task, onSubmission }: U
         <TaskExportModal
           task={task as any}
           leagueSlug={leagueSlug}
-          seasonId={seasonId}
           onClose={() => setShowExport(false)}
         />
       )}

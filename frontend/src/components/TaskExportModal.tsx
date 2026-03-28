@@ -11,11 +11,11 @@ import { leagueApi, type Task } from '../api/leagues';
 interface Props {
   task:       Task;
   leagueSlug: string;
-  seasonId:   string;
   onClose:    () => void;
 }
 
-export default function TaskExportModal({ task, leagueSlug, seasonId, onClose }: Props) {
+export default function TaskExportModal({ task, leagueSlug, onClose }: Props) {
+  const seasonId = task.seasonId;
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
