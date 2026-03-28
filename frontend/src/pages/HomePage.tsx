@@ -168,24 +168,28 @@ function TaskLeftPanel({
 export default function HomePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
-  const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
 
   const activeTab = searchParams.get('task') ?? 'overall';
   const setActiveTab = (tab: 'overall' | string) => {
     setSelectedEntry(null);
-    if (tab === 'overall') {
-      setSearchParams({}, { replace: true });
-    } else {
-      setSearchParams({ task: tab }, { replace: true });
-    }
+    const season = searchParams.get('season');
+    const next: Record<string, string> = {};
+    if (season) next.season = season;
+    if (tab !== 'overall') next.task = tab;
+    setSearchParams(next, { replace: true });
   };
 
   const { user }                    = useAuth();
   const { leagueSlug, seasonId: contextSeasonId } = useLeague();
   const { data: seasons }           = useSeasons();
 
-  // Default to the context season (active/open), allow override via dropdown
-  const seasonId = selectedSeasonId ?? contextSeasonId;
+  // Use ?season= param if present, otherwise fall back to the active season from context
+  const seasonId = searchParams.get('season') ?? contextSeasonId;
+
+  const setSeasonId = (id: string) => {
+    setSelectedEntry(null);
+    setSearchParams({ season: id }, { replace: true });
+  };
 
   const { data: tasks, isLoading: tasksLoading } = useQuery({
     queryKey: ['tasks', leagueSlug, seasonId],
@@ -289,7 +293,7 @@ export default function HomePage() {
           <div style={{ marginBottom: '0.75rem' }}>
             <select
               value={seasonId}
-              onChange={e => { setSelectedSeasonId(e.target.value); setActiveTab('overall'); }}
+              onChange={e => setSeasonId(e.target.value)}
               style={{
                 padding: '0.3rem 0.6rem',
                 border: '1px solid var(--border)',

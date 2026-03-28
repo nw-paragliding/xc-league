@@ -886,20 +886,20 @@ function TaskForm({ task, defaultOpenDate, defaultCloseDate, onSubmit, onCancel,
   };
   const [openDate, setOpenDate] = useState(fmt(task?.openDate ?? defaultOpenDate));
   const [closeDate, setCloseDate] = useState(fmt(task?.closeDate ?? defaultCloseDate, '23:59'));
-  const [normalizedScore, setNormalizedScore] = useState(
-    task?.normalizedScore != null ? String(task.normalizedScore) : ''
+  const [taskValue, setTaskValue] = useState(
+    task?.taskValue != null ? String(task.taskValue) : ''
   );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const ns = normalizedScore !== '' ? parseInt(normalizedScore, 10) : null;
+    const tv = taskValue !== '' ? parseInt(taskValue, 10) : null;
     onSubmit({
       name,
       description: description || undefined,
       taskType,
       openDate: new Date(openDate).toISOString(),
       closeDate: new Date(closeDate).toISOString(),
-      normalizedScore: ns,
+      taskValue: tv,
     } as any);
   };
 
@@ -935,17 +935,17 @@ function TaskForm({ task, defaultOpenDate, defaultCloseDate, onSubmit, onCancel,
           </div>
         </div>
         <div>
-          <label style={labelStyle}>Normalized Score (optional)</label>
+          <label style={labelStyle}>Task Value (optional)</label>
           <input
             type="number"
             min="1"
-            value={normalizedScore}
-            onChange={(e) => setNormalizedScore(e.target.value)}
-            placeholder="e.g. 1000 — winner gets this score, others scaled proportionally"
+            value={taskValue}
+            onChange={(e) => setTaskValue(e.target.value)}
+            placeholder="Default: 1000"
             style={{ ...inputStyle, fontFamily: 'monospace' }}
           />
           <div style={{ fontSize: '0.75rem', color: 'var(--text2)', marginTop: '0.25rem' }}>
-            Leave blank to use raw GAP scores (~938 max). Set to e.g. 1000 to normalize the winner's score to that value.
+            How many points the task winner receives. Other pilots score proportionally less. Leave blank for 1000.
           </div>
         </div>
         <FormActions

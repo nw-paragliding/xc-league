@@ -187,7 +187,7 @@ describe('rebuildTaskResults', () => {
     const rows = db.prepare('SELECT * FROM task_results WHERE task_id = ?').all(task.id) as any[];
     expect(rows).toHaveLength(1);
     expect(rows[0].user_id).toBe(pilot.id);
-    expect(rows[0].total_points).toBe(500);
+    expect(rows[0].total_points).toBe(1000);
     expect(rows[0].rank).toBe(1);
   });
 
@@ -201,7 +201,7 @@ describe('rebuildTaskResults', () => {
     const rows = db.prepare('SELECT * FROM task_results WHERE task_id = ?').all(task.id) as any[];
     expect(rows).toHaveLength(1);
     expect(rows[0].reached_goal).toBe(1);
-    expect(rows[0].total_points).toBe(847);
+    expect(rows[0].total_points).toBe(1000);
   });
 
   it('ranks pilots correctly: goal pilot ranks above non-goal', () => {

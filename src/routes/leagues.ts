@@ -163,7 +163,7 @@ export async function registerLeagueRoutes(
            t.close_date as closeDate,
            CASE WHEN t.scores_frozen_at IS NOT NULL THEN 1 ELSE 0 END as isFrozen,
            t.scores_frozen_at as scoresFrozenAt,
-           t.normalized_score as normalizedScore,
+           t.normalized_score as taskValue,
            (SELECT COUNT(DISTINCT user_id) FROM flight_submissions WHERE task_id = t.id AND deleted_at IS NULL) as pilotCount,
            (SELECT COUNT(DISTINCT fs.user_id)
             FROM flight_submissions fs
@@ -1427,7 +1427,7 @@ export async function registerLeagueRoutes(
         taskType?: 'RACE_TO_GOAL' | 'OPEN_DISTANCE';
         openDate?: string;
         closeDate?: string;
-        normalizedScore?: number | null;
+        taskValue?: number | null;
       };
       
       // Verify task belongs to this season/league
@@ -1487,9 +1487,9 @@ export async function registerLeagueRoutes(
         updates.push('close_date = ?');
         params.push(body.closeDate);
       }
-      if (body.normalizedScore !== undefined) {
+      if (body.taskValue !== undefined) {
         updates.push('normalized_score = ?');
-        params.push(body.normalizedScore ?? null);
+        params.push(body.taskValue ?? null);
       }
 
       if (updates.length === 0) {
@@ -1509,7 +1509,7 @@ export async function registerLeagueRoutes(
           task_type as taskType,
           open_date as openDate,
           close_date as closeDate,
-          normalized_score as normalizedScore,
+          normalized_score as taskValue,
           updated_at as updatedAt
         FROM tasks WHERE id = ?`
       ).get(taskId);

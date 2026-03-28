@@ -23,7 +23,7 @@ export interface Task {
   closeDate:      string;
   isFrozen:       boolean;
   scoresFrozenAt:      string | null;
-  normalizedScore:     number | null;
+  taskValue:           number | null;
   pilotCount:          number;
   goalCount:           number;
   turnpoints:          Turnpoint[];

@@ -262,7 +262,7 @@ export function computePartialDistanceKm(
 // GAP SCORING  (no validity, no lead-out)
 // =============================================================================
 
-export const MAX_POINTS = 938;
+export const MAX_POINTS = 1000;
 
 /**
  * Distance points for one pilot.

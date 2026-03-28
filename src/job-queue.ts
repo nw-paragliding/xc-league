@@ -299,17 +299,18 @@ export function rebuildTaskResults(db: Database, taskId: string): void {
   const taskRow = db.prepare(
     `SELECT normalized_score FROM tasks WHERE id = ?`
   ).get(taskId) as { normalized_score: number | null } | undefined;
-  const normalized = taskRow?.normalized_score ?? null;
+  const normalized = taskRow?.normalized_score ?? 1000;
 
   let finalRows = rows;
   if (normalized !== null && rows.length > 0) {
     const winnerTotal = Math.max(...rows.map(r => r.total_points));
     if (winnerTotal > 0) {
+      const scale = normalized / winnerTotal;
       finalRows = rows.map(r => {
-        const scale = normalized / winnerTotal;
-        const dp = Math.round(r.distance_points * scale);
-        const tp = Math.round(r.time_points * scale);
-        return { ...r, distance_points: dp, time_points: tp, total_points: dp + tp };
+        const total = Math.round(r.total_points * scale);
+        const dp    = Math.round(r.distance_points * scale);
+        const tp    = total - dp;
+        return { ...r, distance_points: dp, time_points: tp, total_points: total };
       });
     }
   }

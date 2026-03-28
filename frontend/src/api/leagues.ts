@@ -86,7 +86,7 @@ export interface Task {
   closeDate: string;
   isFrozen?: boolean;
   scoresFrozenAt?: string;
-  normalizedScore?: number | null;
+  taskValue?: number | null;
   status?: 'draft' | 'published';
   createdAt: string;
   updatedAt?: string;
@@ -124,7 +124,7 @@ export interface UpdateTaskInput {
   taskType?: 'RACE_TO_GOAL' | 'OPEN_DISTANCE';
   openDate?: string;
   closeDate?: string;
-  normalizedScore?: number | null;
+  taskValue?: number | null;
 }
 
 export const leagueApi = {
