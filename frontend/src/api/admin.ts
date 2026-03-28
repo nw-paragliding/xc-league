@@ -25,10 +25,26 @@ export interface AuditLogEntry {
   targetName: string;
 }
 
+export interface LeagueSummary {
+  id: string;
+  name: string;
+  slug: string;
+  shortDescription?: string;
+  createdAt: string;
+}
+
 export const adminApi = {
   /** List all users (super admin only) */
   listUsers: () =>
     api.get<{ users: User[] }>('/admin/users'),
+
+  /** List all leagues (super admin only) */
+  listLeagues: () =>
+    api.get<{ leagues: LeagueSummary[] }>('/admin/leagues'),
+
+  /** Soft-delete a league (super admin only) */
+  deleteLeague: (leagueSlug: string) =>
+    api.delete<{ message: string }>(`/admin/leagues/${leagueSlug}`),
   
   /** Promote user to super admin */
   promoteToSuperAdmin: (userId: string) =>

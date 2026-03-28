@@ -18,13 +18,22 @@ interface TaskRow {
 }
 
 interface Props {
-  leagueSlug: string;
-  seasonId:   string;
-  onSuccess:  () => void;
-  onClose:    () => void;
+  leagueSlug:        string;
+  seasonId:          string;
+  defaultOpenDate?:  string;
+  defaultCloseDate?: string;
+  onSuccess:         () => void;
+  onClose:           () => void;
 }
 
-export default function BulkImportModal({ leagueSlug, seasonId, onSuccess, onClose }: Props) {
+export default function BulkImportModal({ leagueSlug, seasonId, defaultOpenDate, defaultCloseDate, onSuccess, onClose }: Props) {
+  const fmt = (iso?: string, defaultTime = '00:00') => {
+    if (!iso) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return `${iso}T${defaultTime}`;
+    const d = new Date(iso);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', h);
@@ -70,8 +79,8 @@ export default function BulkImportModal({ leagueSlug, seasonId, onSuccess, onClo
     previewed.map(t => ({
       index:    t.index,
       name:     t.name,
-      openDate:  '',
-      closeDate: '',
+      openDate:  fmt(defaultOpenDate),
+      closeDate: fmt(defaultCloseDate, '23:59'),
       selected:  true,
       turnpointCount: t.turnpointCount,
     }));
@@ -89,8 +98,8 @@ export default function BulkImportModal({ leagueSlug, seasonId, onSuccess, onClo
       const payload = selected.map(t => ({
         index:     t.index,
         name:      t.name || undefined,
-        openDate:  t.openDate  ? t.openDate  + ':00Z' : undefined,
-        closeDate: t.closeDate ? t.closeDate + ':00Z' : undefined,
+        openDate:  t.openDate  ? new Date(t.openDate).toISOString()  : undefined,
+        closeDate: t.closeDate ? new Date(t.closeDate).toISOString() : undefined,
       }));
       await leagueApi.bulkImport(leagueSlug, seasonId, file!, payload);
       onSuccess();

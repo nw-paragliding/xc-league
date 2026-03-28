@@ -9,23 +9,33 @@ import { useState, useRef, useEffect } from 'react';
 import { leagueApi } from '../api/leagues';
 
 interface Props {
-  leagueSlug: string;
-  seasonId:   string;
-  onSuccess:  () => void;
-  onClose:    () => void;
+  leagueSlug:       string;
+  seasonId:         string;
+  defaultOpenDate?: string;
+  defaultCloseDate?: string;
+  onSuccess:        () => void;
+  onClose:          () => void;
 }
 
-export default function TaskImportModal({ leagueSlug, seasonId, onSuccess, onClose }: Props) {
+export default function TaskImportModal({ leagueSlug, seasonId, defaultOpenDate, defaultCloseDate, onSuccess, onClose }: Props) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
+  const fmt = (iso?: string, defaultTime = '00:00') => {
+    if (!iso) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return `${iso}T${defaultTime}`;
+    const d = new Date(iso);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState('');
-  const [openDate, setOpenDate] = useState('');
-  const [closeDate, setCloseDate] = useState('');
+  const [openDate, setOpenDate] = useState(fmt(defaultOpenDate));
+  const [closeDate, setCloseDate] = useState(fmt(defaultCloseDate, '23:59'));
   const [drag, setDrag] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,8 +63,8 @@ export default function TaskImportModal({ leagueSlug, seasonId, onSuccess, onClo
     try {
       await leagueApi.importTask(leagueSlug, seasonId, file, {
         name: name || undefined,
-        openDate: openDate ? openDate + ':00Z' : undefined,
-        closeDate: closeDate ? closeDate + ':00Z' : undefined,
+        openDate: openDate ? new Date(openDate).toISOString() : undefined,
+        closeDate: closeDate ? new Date(closeDate).toISOString() : undefined,
       });
       onSuccess();
     } catch (err: any) {

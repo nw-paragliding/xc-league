@@ -1,15 +1,21 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { adminApi, type User } from '../api/admin';
+import { adminApi, type User, type LeagueSummary } from '../api/admin';
 
 export default function SuperAdminPage() {
   const queryClient = useQueryClient();
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [leagueToDelete, setLeagueToDelete] = useState<LeagueSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const { data, isLoading, error: queryError } = useQuery({
     queryKey: ['admin', 'users'],
     queryFn: adminApi.listUsers,
+  });
+
+  const { data: leaguesData, isLoading: leaguesLoading } = useQuery({
+    queryKey: ['admin', 'leagues'],
+    queryFn: adminApi.listLeagues,
   });
 
   const promoteMutation = useMutation({
@@ -33,6 +39,20 @@ export default function SuperAdminPage() {
     },
     onError: (err: any) => {
       setError(err.message || 'Failed to demote user');
+    },
+  });
+
+  const deleteLeagueMutation = useMutation({
+    mutationFn: (slug: string) => adminApi.deleteLeague(slug),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'leagues'] });
+      queryClient.invalidateQueries({ queryKey: ['leagues'] });
+      setLeagueToDelete(null);
+      setError(null);
+    },
+    onError: (err: any) => {
+      setError(err.message || 'Failed to delete league');
+      setLeagueToDelete(null);
     },
   });
 
@@ -105,6 +125,58 @@ export default function SuperAdminPage() {
           </div>
         )}
       </header>
+
+      {/* Leagues */}
+      <section style={{ marginBottom: '3rem' }}>
+        <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem' }}>
+          Leagues ({leaguesData?.leagues.length ?? 0})
+        </h2>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+          {leaguesLoading ? (
+            <div style={{ padding: '1rem' }}>
+              <div className="shimmer" style={{ height: 40, borderRadius: 4 }} />
+            </div>
+          ) : (leaguesData?.leagues ?? []).length === 0 ? (
+            <div style={{ padding: '1rem', color: 'var(--text3)', fontSize: '0.875rem' }}>No leagues</div>
+          ) : (leaguesData?.leagues ?? []).map((league, i) => (
+            <div
+              key={league.id}
+              style={{
+                padding: '1rem',
+                borderBottom: i < (leaguesData?.leagues.length ?? 0) - 1 ? '1px solid var(--border)' : 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                backgroundColor: 'var(--bg2)',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 500, marginBottom: '0.2rem' }}>{league.name}</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
+                  /{league.slug}
+                  {league.shortDescription && (
+                    <span style={{ marginLeft: 8, color: 'var(--text3)' }}>· {league.shortDescription}</span>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => setLeagueToDelete(league)}
+                style={{
+                  padding: '0.375rem 0.75rem',
+                  border: '1px solid rgba(239,68,68,0.4)',
+                  borderRadius: 4,
+                  background: 'rgba(239,68,68,0.08)',
+                  color: '#f87171',
+                  cursor: 'pointer',
+                  fontSize: '0.8rem',
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
 
       {/* Super Admins */}
       <section style={{ marginBottom: '3rem' }}>
@@ -204,6 +276,48 @@ export default function SuperAdminPage() {
           ))}
         </div>
       </section>
+
+      {/* Delete league confirm */}
+      {leagueToDelete && (
+        <div style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 1000,
+        }}>
+          <div style={{ background: 'var(--bg1)', padding: '2rem', borderRadius: 8, maxWidth: 400, width: '90%' }}>
+            <h3 style={{ marginBottom: '1rem', fontSize: '1.25rem' }}>
+              Delete "{leagueToDelete.name}"?
+            </h3>
+            <p style={{ marginBottom: '1.5rem', color: 'var(--text2)', fontSize: '0.875rem' }}>
+              This will permanently remove the league and all associated data. This cannot be undone.
+            </p>
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setLeagueToDelete(null)}
+                style={{
+                  padding: '0.5rem 1rem',
+                  border: '1px solid var(--border)', borderRadius: 4,
+                  background: 'var(--bg2)', color: 'var(--text)', cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteLeagueMutation.mutate(leagueToDelete.slug)}
+                disabled={deleteLeagueMutation.isPending}
+                style={{
+                  padding: '0.5rem 1rem',
+                  border: 'none', borderRadius: 4,
+                  background: '#dc2626', color: 'white', cursor: 'pointer',
+                }}
+              >
+                {deleteLeagueMutation.isPending ? 'Deleting…' : 'Delete League'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirm Dialog */}
       {selectedUser && (

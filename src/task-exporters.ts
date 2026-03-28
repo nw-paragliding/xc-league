@@ -170,7 +170,7 @@ export function buildXctrackDeepLink(task: ExportTask): string {
       z: encodeXctskZ(tp.longitude, tp.latitude, 0, Math.round(tp.radius_m)),
       n: tp.name,
       d: tp.name,       // description (mirrors name)
-      o: { a1: 180 },   // full-circle observation zone
+      o: { r: Math.round(tp.radius_m), a1: 180 },   // full-circle observation zone
     };
     if (tp.type === 'SSS') obj['t'] = 2;
     else if (tp.type === 'ESS') obj['t'] = 3;
@@ -181,7 +181,7 @@ export function buildXctrackDeepLink(task: ExportTask): string {
     taskType: 'CLASSIC',
     version: 2,
     t: turnpoints,
-    s: { g: [], d: 1, t: 1 },  // start: no time gates, exit direction, race type
+    s: { d: 1, t: 1 },  // no time gates (omitting g avoids XCTrack "timeGates is empty" parse error)
     o: { v: 2 },
     e: 0,  // WGS84
   };

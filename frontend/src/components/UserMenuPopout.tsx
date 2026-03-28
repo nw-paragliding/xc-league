@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useLeague } from '../hooks/useLeague';
-import LeagueSwitcher from './LeagueSwitcher';
 
 function initials(name: string) {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -75,13 +74,6 @@ export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
           boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
           padding: '8px 4px',
         }}>
-          {/* League switcher */}
-          <div style={{ padding: '4px 8px 8px' }}>
-            <LeagueSwitcher />
-          </div>
-
-          <div style={dividerStyle} />
-
           {/* Nav items */}
           <button
             style={menuItemStyle}

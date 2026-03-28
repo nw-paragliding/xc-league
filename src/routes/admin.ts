@@ -126,6 +126,45 @@ export async function registerAdminRoutes(
     reply.send({ message: 'User demoted from super admin' });
   });
 
+  // GET /admin/leagues - List all leagues (super admin only)
+  fastify.get('/admin/leagues', async (request, reply) => {
+    requireSuperAdmin(request, reply);
+
+    const leagues = db.prepare(
+      `SELECT id, name, slug, description as shortDescription, created_at as createdAt
+       FROM leagues WHERE deleted_at IS NULL ORDER BY created_at DESC`
+    ).all();
+
+    reply.send({ leagues });
+  });
+
+  // DELETE /admin/leagues/:leagueSlug - Soft-delete a league (super admin only)
+  fastify.delete('/admin/leagues/:leagueSlug', async (request, reply) => {
+    requireSuperAdmin(request, reply);
+
+    const { leagueSlug } = request.params as { leagueSlug: string };
+
+    const league = db.prepare(
+      `SELECT id, name FROM leagues WHERE slug = ? AND deleted_at IS NULL`
+    ).get(leagueSlug) as { id: string; name: string } | undefined;
+
+    if (!league) {
+      return reply.status(404).send({ error: 'League not found' });
+    }
+
+    db.prepare(
+      `UPDATE leagues SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`
+    ).run(league.id);
+
+    db.prepare(
+      `INSERT INTO admin_audit_log (id, actor_user_id, target_user_id, action, details, created_at)
+       VALUES (?, ?, ?, 'DELETE_LEAGUE', ?, datetime('now'))`
+    ).run(randomUUID(), (request as any).user!.userId, (request as any).user!.userId, league.name);
+
+    request.log.info({ actorId: (request as any).user!.userId, leagueId: league.id }, 'League deleted by super admin');
+    reply.send({ message: 'League deleted' });
+  });
+
   // GET /admin/audit-log - View admin audit log
   fastify.get('/admin/audit-log', async (request, reply) => {
     requireSuperAdmin(request, reply);

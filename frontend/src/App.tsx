@@ -19,6 +19,7 @@ import SuperAdminPage       from './pages/SuperAdminPage';
 import CreateLeaguePage     from './pages/CreateLeaguePage';
 import LeagueSettingsPage   from './pages/LeagueSettingsPage';
 import OnboardingPage       from './pages/OnboardingPage';
+import LeaguesListPage      from './pages/LeaguesListPage';
 import UserMenuPopout       from './components/UserMenuPopout';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,43 +97,17 @@ function LeagueShell({ leagueSlug }: { leagueSlug: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DefaultLeagueRedirect — fetches league list and redirects to the first one
-// ─────────────────────────────────────────────────────────────────────────────
-
-function DefaultLeagueRedirect() {
-  const { data, isLoading } = useQuery({
-    queryKey: ['leagues'],
-    queryFn: () => leagueApi.list(),
-    staleTime: 5 * 60 * 1000,
-  });
-
-  if (isLoading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: 'var(--text2)' }}>
-        Loading…
-      </div>
-    );
-  }
-
-  const first = data?.leagues?.[0];
-  if (first) {
-    return <Navigate to={`/leagues/${first.slug}`} replace />;
-  }
-
-  return <Navigate to="/leagues/_/create-league" replace />;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Root App
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<DefaultLeagueRedirect />} />
+      <Route path="/" element={<Navigate to="/leagues" replace />} />
+      <Route path="/leagues" element={<LeaguesListPage />} />
       <Route path="/onboarding" element={<OnboardingPage />} />
       <Route path="/leagues/:leagueSlug/*" element={<LeagueLayout />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<Navigate to="/leagues" replace />} />
     </Routes>
   );
 }

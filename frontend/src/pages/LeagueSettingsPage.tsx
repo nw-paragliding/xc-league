@@ -15,6 +15,7 @@ import { useLeague } from '../hooks/useLeague';
 import TaskImportModal from '../components/TaskImportModal';
 import TaskExportModal from '../components/TaskExportModal';
 import BulkImportModal from '../components/BulkImportModal';
+import LeagueSwitcher from '../components/LeagueSwitcher';
 
 type Tab = 'settings' | 'seasons' | 'tasks' | 'members';
 
@@ -39,10 +40,8 @@ export default function LeagueSettingsPage() {
   return (
     <div style={{ padding: '2rem', maxWidth: 1200, margin: '0 auto' }}>
       <header style={{ marginBottom: '1.5rem' }}>
-        <h1 style={{ fontSize: '2rem', fontWeight: 600, marginBottom: '0.25rem' }}>
-          League Admin
-        </h1>
-        <p style={{ color: 'var(--text2)' }}>
+        <LeagueSwitcher />
+        <p style={{ color: 'var(--text2)', marginTop: '0.25rem' }}>
           Manage details, seasons, tasks, and members for this league
         </p>
       </header>
@@ -622,6 +621,8 @@ function TasksTab() {
             <TaskImportModal
               leagueSlug={leagueSlug}
               seasonId={selectedSeasonId}
+              defaultOpenDate={selectedSeason?.startDate}
+              defaultCloseDate={selectedSeason?.endDate}
               onSuccess={() => { setIsImporting(false); invTasks(); }}
               onClose={() => setIsImporting(false)}
             />
@@ -631,6 +632,8 @@ function TasksTab() {
             <BulkImportModal
               leagueSlug={leagueSlug}
               seasonId={selectedSeasonId!}
+              defaultOpenDate={selectedSeason?.startDate}
+              defaultCloseDate={selectedSeason?.endDate}
               onSuccess={() => { setIsBulkImporting(false); invTasks(); }}
               onClose={() => setIsBulkImporting(false)}
             />
@@ -638,6 +641,8 @@ function TasksTab() {
 
           {isCreating && (
             <TaskForm
+              defaultOpenDate={selectedSeason?.startDate}
+              defaultCloseDate={selectedSeason?.endDate}
               onSubmit={(input) => createMutation.mutate(input)}
               onCancel={() => setIsCreating(false)}
               isSubmitting={createMutation.isPending}
@@ -721,7 +726,7 @@ function TasksTab() {
                     <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                       {!task.scoresFrozenAt && task.status !== 'published' && (
                         <button
-                          onClick={() => { if (confirm(`Publish "${task.name}"? Pilots will be able to see this task.`)) publishMutation.mutate(task.id); }}
+                          onClick={() => publishMutation.mutate(task.id)}
                           disabled={publishMutation.isPending}
                           style={{ padding: '0.5rem 1rem', border: '1px solid #86efac', borderRadius: 4, background: '#dcfce7', color: '#166534', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 500 }}
                         >
@@ -861,23 +866,26 @@ function SeasonForm({ season, onSubmit, onCancel, isSubmitting }: SeasonFormProp
 
 interface TaskFormProps {
   task?: Task;
+  defaultOpenDate?: string;
+  defaultCloseDate?: string;
   onSubmit: (input: CreateTaskInput) => void;
   onCancel: () => void;
   isSubmitting: boolean;
 }
 
-function TaskForm({ task, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
+function TaskForm({ task, defaultOpenDate, defaultCloseDate, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
   const [name, setName] = useState(task?.name || '');
   const [description, setDescription] = useState(task?.description || '');
   const [taskType, setTaskType] = useState<'RACE_TO_GOAL' | 'OPEN_DISTANCE'>(task?.taskType || 'RACE_TO_GOAL');
-  const fmt = (iso?: string) => {
+  const fmt = (iso?: string, defaultTime = '00:00') => {
     if (!iso) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return `${iso}T${defaultTime}`;
     const d = new Date(iso);
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
-  const [openDate, setOpenDate] = useState(fmt(task?.openDate));
-  const [closeDate, setCloseDate] = useState(fmt(task?.closeDate));
+  const [openDate, setOpenDate] = useState(fmt(task?.openDate ?? defaultOpenDate));
+  const [closeDate, setCloseDate] = useState(fmt(task?.closeDate ?? defaultCloseDate, '23:59'));
   const [normalizedScore, setNormalizedScore] = useState(
     task?.normalizedScore != null ? String(task.normalizedScore) : ''
   );

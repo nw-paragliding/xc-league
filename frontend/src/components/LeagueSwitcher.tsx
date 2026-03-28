@@ -110,6 +110,21 @@ export default function LeagueSwitcher() {
               </div>
             </button>
           ))}
+          <button
+            onClick={() => { setOpen(false); navigate('/leagues'); }}
+            style={{
+              width: '100%',
+              padding: '0.5rem 0.75rem',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              textAlign: 'left',
+              fontSize: '0.75rem',
+              color: 'var(--text3)',
+            }}
+          >
+            Browse all leagues →
+          </button>
         </div>
       )}
     </div>

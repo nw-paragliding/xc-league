@@ -5,11 +5,11 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
-import { useTasks } from '../hooks/useTasks';
-import { useStandings } from '../hooks/useStandings';
+import { useSeasons } from '../hooks/useStandings';
 import { useAuth } from '../hooks/useAuth';
 import { useLeague } from '../hooks/useLeague';
 import { tasksApi } from '../api/tasks';
+import { standingsApi } from '../api/standings';
 import { trackApi } from '../api/track';
 import type { League } from '../api/leagues';
 import type { ReplayFix } from '../api/track';
@@ -168,6 +168,7 @@ function TaskLeftPanel({
 export default function HomePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
+  const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
 
   const activeTab = searchParams.get('task') ?? 'overall';
   const setActiveTab = (tab: 'overall' | string) => {
@@ -179,10 +180,25 @@ export default function HomePage() {
     }
   };
 
-  const { user }                                            = useAuth();
-  const { leagueSlug, seasonId }                            = useLeague();
-  const { data: tasks, isLoading: tasksLoading }            = useTasks();
-  const { data: standingsData, isLoading: standingsLoading } = useStandings();
+  const { user }                    = useAuth();
+  const { leagueSlug, seasonId: contextSeasonId } = useLeague();
+  const { data: seasons }           = useSeasons();
+
+  // Default to the context season (active/open), allow override via dropdown
+  const seasonId = selectedSeasonId ?? contextSeasonId;
+
+  const { data: tasks, isLoading: tasksLoading } = useQuery({
+    queryKey: ['tasks', leagueSlug, seasonId],
+    queryFn:  () => tasksApi.list(leagueSlug, seasonId),
+    select:   (res) => res.tasks,
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const { data: standingsData, isLoading: standingsLoading } = useQuery({
+    queryKey: ['standings', leagueSlug, seasonId],
+    queryFn:  () => standingsApi.get(leagueSlug, seasonId),
+    staleTime: 60 * 1000,
+  });
 
   const { data: leagueData } = useQuery({
     queryKey: ['leagues', leagueSlug],
@@ -268,10 +284,33 @@ export default function HomePage() {
           )}
         </div>
 
+        {/* Season selector */}
+        {seasons && seasons.length > 1 && (
+          <div style={{ marginBottom: '0.75rem' }}>
+            <select
+              value={seasonId}
+              onChange={e => { setSelectedSeasonId(e.target.value); setActiveTab('overall'); }}
+              style={{
+                padding: '0.3rem 0.6rem',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                background: 'var(--bg2)',
+                color: 'var(--text1)',
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
+            >
+              {seasons.map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {/* Season subtitle */}
         {season && (
-          <div style={{ fontSize: 13, color: 'var(--text3)', marginBottom: '1rem', marginTop: '-0.75rem', fontFamily: 'var(--font-mono)' }}>
-            {season.name} · {standings.length} pilot{standings.length !== 1 ? 's' : ''} · {publishedTasks.length} task{publishedTasks.length !== 1 ? 's' : ''}
+          <div style={{ fontSize: 13, color: 'var(--text3)', marginBottom: '1rem', marginTop: '-0.25rem', fontFamily: 'var(--font-mono)' }}>
+            {standings.length} pilot{standings.length !== 1 ? 's' : ''} · {publishedTasks.length} task{publishedTasks.length !== 1 ? 's' : ''}
           </div>
         )}
 
