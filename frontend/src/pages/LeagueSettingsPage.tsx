@@ -10,6 +10,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
+import rehypeSanitize from 'rehype-sanitize';
 import { leagueApi, type LeagueMember, type UpdateLeagueInput, type Season, type CreateSeasonInput, type Task, type CreateTaskInput } from '../api/leagues';
 import { useLeague } from '../hooks/useLeague';
 import TaskImportModal from '../components/TaskImportModal';
@@ -127,7 +128,7 @@ function SettingsTab() {
               <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text2)', marginBottom: '0.5rem' }}>Full Description</div>
                 <div style={{ fontSize: '0.875rem', color: 'var(--text1)', lineHeight: 1.6 }} className="prose">
-                  <ReactMarkdown>{leagueData.league.fullDescription}</ReactMarkdown>
+                  <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{leagueData.league.fullDescription}</ReactMarkdown>
                 </div>
               </div>
             )}

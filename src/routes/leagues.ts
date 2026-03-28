@@ -301,7 +301,9 @@ export async function registerLeagueRoutes(
     });
 
     // ── Upload IGC file (submission) ───────────────────────────────────────
-    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions', async (request, reply) => {
+    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions', {
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    }, async (request, reply) => {
       return handleIgcUpload(request as any, reply, db, queue);
     });
 
@@ -1543,13 +1545,16 @@ export async function registerLeagueRoutes(
         return reply.status(400).send({ error: 'Cannot delete a frozen task' });
       }
       
-      // Soft delete the task
-      db.prepare(
-        `UPDATE tasks
-         SET deleted_at = datetime('now'), updated_at = datetime('now')
-         WHERE id = ?`
-      ).run(taskId);
-      
+      // Soft delete the task and cascade to related data in one transaction.
+      // task_results has no deleted_at (computed data) so hard-delete those rows.
+      db.transaction(() => {
+        db.prepare(`UPDATE tasks SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(taskId);
+        db.prepare(`UPDATE turnpoints SET deleted_at = datetime('now') WHERE task_id = ? AND deleted_at IS NULL`).run(taskId);
+        db.prepare(`UPDATE flight_submissions SET deleted_at = datetime('now') WHERE task_id = ? AND deleted_at IS NULL`).run(taskId);
+        db.prepare(`UPDATE flight_attempts SET deleted_at = datetime('now') WHERE task_id = ? AND deleted_at IS NULL`).run(taskId);
+        db.prepare(`DELETE FROM task_results WHERE task_id = ?`).run(taskId);
+      })();
+
       request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task deleted');
       return reply.send({ message: 'Task deleted' });
     });

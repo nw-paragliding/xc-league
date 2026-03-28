@@ -17,6 +17,7 @@ import { getTaskStatus, STATUS_STYLE } from '../utils/taskStatus';
 import { computeDistanceKm } from '../components/TaskMap';
 import { toCylinder } from '../components/TaskMap';
 import ReactMarkdown from 'react-markdown';
+import rehypeSanitize from 'rehype-sanitize';
 import LeagueSwitcher from '../components/LeagueSwitcher';
 import ScoringExplainer from '../components/ScoringExplainer';
 import StandingsMatrix from '../components/StandingsMatrix';
@@ -380,7 +381,7 @@ export default function HomePage() {
                 lineHeight: 1.75,
                 color: 'var(--text2)',
               }}>
-                <ReactMarkdown>{leagueData.league.fullDescription}</ReactMarkdown>
+                <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{leagueData.league.fullDescription}</ReactMarkdown>
               </div>
             )}
             <div style={{

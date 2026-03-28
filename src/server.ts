@@ -14,6 +14,7 @@ import fastifyStatic from '@fastify/static';
 import fastifyCookie from '@fastify/cookie';
 import fastifyMultipart from '@fastify/multipart';
 import fastifyCors from '@fastify/cors';
+import fastifyRateLimit from '@fastify/rate-limit';
 import Database from 'better-sqlite3';
 import { join } from 'path';
 import { readFileSync, readdirSync } from 'fs';
@@ -141,6 +142,24 @@ async function main() {
     origin:      IS_PROD ? false : 'http://localhost:5173',
     credentials: true,   // allow cookies cross-origin in dev
   });
+
+  // Rate limiting — global default + stricter limits on auth/upload routes
+  await app.register(fastifyRateLimit, {
+    global:     true,
+    max:        200,
+    timeWindow: '1 minute',
+    // Skip rate limiting in test/dev to avoid flaky tests
+    skipOnError: true,
+    ...(IS_PROD ? {} : { max: 10000 }), // effectively off in dev
+  });
+
+  // HSTS — tell browsers to always use HTTPS for this origin
+  if (IS_PROD) {
+    app.addHook('onSend', (_request, reply, _payload, done) => {
+      reply.header('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
+      done();
+    });
+  }
 
   // Auth middleware — decorates every request with request.user
   await app.register(authPlugin, { config: authConfig, db });
