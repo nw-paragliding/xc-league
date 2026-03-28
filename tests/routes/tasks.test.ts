@@ -892,8 +892,12 @@ describe('QR roundtrip — 25_August_NWXC.xctsk → XCTSK QR', () => {
     expect(ourObj.t[6].z.endsWith(r400)).toBe(true);
   });
 
-  it('includes start section s matching reference structure', () => {
-    expect(ourObj.s).toEqual(refObj.s);
+  it('includes start section s with d and t fields', () => {
+    // g (timeGates) is intentionally omitted — passing g:[] causes XCTrack
+    // to throw "sss.timeGates is empty". We only assert the fields we set.
+    expect(ourObj.s.d).toBe(1);
+    expect(ourObj.s.t).toBe(1);
+    expect(ourObj.s.g).toBeUndefined();
   });
 
   it('includes options o matching reference', () => {
