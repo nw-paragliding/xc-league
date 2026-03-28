@@ -130,10 +130,19 @@ npm start
 ```
 
 ### Testing
-**Currently no test framework is configured.** If adding tests:
-- Backend: Use Vitest or Node's built-in test runner
-- Frontend: Use Vitest with @testing-library/react
-- Run single test: `vitest run path/to/test.ts` (after setup)
+```bash
+# Run all backend tests (Vitest)
+npm test
+
+# Run a single backend test file
+npx vitest run src/task-parsers.test.ts
+
+# Run frontend tests
+cd frontend && npm test
+
+# Run a single frontend test file
+cd frontend && npx vitest run src/components/BulkImportModal.test.tsx
+```
 
 ---
 
@@ -396,10 +405,15 @@ See `.env.example` for all required variables. Key ones:
 ## Notes for Agents
 
 - **Never commit `.env` or `.npmrc` files** - they contain secrets and local paths
+- **Never commit `.pem` files** - they contain private keys
 - **Always use prepared statements** - never interpolate SQL
-- **Run typechecks before committing** - use `npm run typecheck`
+- **Run tests and typecheck before pushing** - the CI pipeline runs both and will fail the deploy if either fails:
+  ```bash
+  npm run typecheck   # checks both backend and frontend types
+  npm test            # runs Vitest (backend + task-parsers tests)
+  ```
 - **Backend uses CommonJS** (`module: "commonjs"`) - Frontend uses ESNext
 - **No linter configured yet** - follow existing code style closely
-- **No tests yet** - if adding features, consider adding Vitest
+- **Tests**: Backend uses Vitest (`npm test`). Frontend tests use Vitest + @testing-library/react (`cd frontend && npm test`)
 - **Cookie-first auth** - frontend relies on HttpOnly cookies, not localStorage
 - **dotenv must be imported first** - Add `import 'dotenv/config';` as the first import in any new entry point files
