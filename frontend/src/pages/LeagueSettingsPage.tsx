@@ -417,13 +417,26 @@ function SeasonsTab() {
                   </button>
                 )}
                 {season.status === 'open' && (
-                  <button
-                    onClick={() => { if (confirm(`Close season "${season.name}"? This cannot be undone.`)) closeMutation.mutate(season.id); }}
-                    disabled={closeMutation.isPending}
-                    style={{ padding: '0.5rem 1rem', border: '1px solid #fca5a5', borderRadius: 4, background: '#fee', color: '#991b1b', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 500 }}
-                  >
-                    Close Season
-                  </button>
+                  <div style={{ position: 'relative', display: 'inline-block' }} className="tooltip-host">
+                    <button
+                      onClick={() => { if (confirm(`Close season "${season.name}"? This cannot be undone.`)) closeMutation.mutate(season.id); }}
+                      disabled={closeMutation.isPending}
+                      style={{ padding: '0.5rem 1rem', border: '1px solid #fca5a5', borderRadius: 4, background: '#fee', color: '#991b1b', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 500 }}
+                    >
+                      Close Season
+                    </button>
+                    <div className="tooltip" style={{
+                      position: 'absolute', bottom: 'calc(100% + 8px)', left: '50%', transform: 'translateX(-50%)',
+                      width: 240, padding: '8px 10px',
+                      background: 'rgba(15,19,24,0.97)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 6,
+                      fontSize: 11, color: 'rgba(255,255,255,0.8)', lineHeight: 1.5,
+                      pointerEvents: 'none', zIndex: 50,
+                      opacity: 0, transition: 'opacity 0.15s',
+                    }}>
+                      Closes the season and locks all scores. Pilots can no longer submit flights.
+                      <strong style={{ color: '#fca5a5', display: 'block', marginTop: 4 }}>This cannot be undone.</strong>
+                    </div>
+                  </div>
                 )}
                 {season.status !== 'closed' && (
                   <button onClick={() => setEditingSeason(season)} disabled={updateMutation.isPending} style={secondaryBtn}>
