@@ -80,9 +80,9 @@ const BASE_STYLE = {
     terrain:   { type: 'raster' as const, tiles: [TOPO_TILES],  tileSize: 256, maxzoom: 17 },
   },
   layers: [
-    { id: 'satellite-layer', type: 'raster' as const, source: 'satellite', layout: { visibility: 'none' as const } },
-    { id: 'labels-layer',    type: 'raster' as const, source: 'labels',    layout: { visibility: 'none' as const } },
-    { id: 'terrain-layer',   type: 'raster' as const, source: 'terrain' },
+    { id: 'satellite-layer', type: 'raster' as const, source: 'satellite' },
+    { id: 'labels-layer',    type: 'raster' as const, source: 'labels' },
+    { id: 'terrain-layer',   type: 'raster' as const, source: 'terrain',   layout: { visibility: 'none' as const } },
   ],
 };
 
@@ -104,7 +104,7 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
   const [legendOpen, setLegendOpen] = useState<string | null>(null);
   const tpsRef       = useRef<Turnpoint[]>(turnpoints);
   const trackRef     = useRef<ReplayFix[] | null | undefined>(track);
-  const [basemap, setBasemap]   = useState<'satellite' | 'terrain'>('terrain');
+  const [basemap, setBasemap]   = useState<'satellite' | 'terrain'>('satellite');
   const [mapReady, setMapReady] = useState(false);
 
   tpsRef.current   = turnpoints;
