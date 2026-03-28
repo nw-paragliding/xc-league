@@ -87,23 +87,18 @@ function bootstrapSuperAdmin() {
     return;
   }
 
-  // Check if any super admins exist
-  const existingSuperAdmin = db.prepare(
-    `SELECT id FROM users WHERE is_super_admin = 1 AND deleted_at IS NULL LIMIT 1`
-  ).get();
-
-  if (existingSuperAdmin) {
-    console.log('[migrate] Super admin already exists, skipping bootstrap');
-    return;
-  }
-
-  // Check if the bootstrap email user exists
+  // Check if the bootstrap email user exists and whether they're already a super admin
   const user = db.prepare(
-    `SELECT id, email FROM users WHERE email = ? AND deleted_at IS NULL`
-  ).get(bootstrapEmail) as { id: string; email: string } | undefined;
+    `SELECT id, email, is_super_admin FROM users WHERE email = ? AND deleted_at IS NULL`
+  ).get(bootstrapEmail) as { id: string; email: string; is_super_admin: number } | undefined;
 
   if (!user) {
     console.warn(`[migrate] Bootstrap super admin email ${bootstrapEmail} not found - user must sign in first`);
+    return;
+  }
+
+  if (user.is_super_admin) {
+    console.log(`[migrate] ${bootstrapEmail} is already a super admin, skipping bootstrap`);
     return;
   }
 

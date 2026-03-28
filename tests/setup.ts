@@ -12,6 +12,7 @@ let testDb: Database.Database | null = null;
 beforeAll(() => {
   // Set test environment variables
   process.env.NODE_ENV = 'test';
+  process.env.ENABLE_TEST_AUTH = 'true';
   process.env.DB_PATH = TEST_DB_PATH;
 });
 

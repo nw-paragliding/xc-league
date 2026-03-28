@@ -431,7 +431,7 @@ export async function handleIgcDownload(
 
   reply
     .header('Content-Type', 'application/octet-stream')
-    .header('Content-Disposition', `attachment; filename="${row.igc_filename}"`)
+    .header('Content-Disposition', `attachment; filename="${row.igc_filename.replace(/[^\w.\-]/g, '_')}"`)
     .header('Content-Length', row.igc_data.length)
     .header('Cache-Control', isFrozen ? 'public, max-age=86400' : 'private, no-cache')
     .send(row.igc_data);

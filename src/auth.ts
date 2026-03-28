@@ -452,9 +452,9 @@ const authPluginImpl: any = async (
 
   fastify.addHook('preHandler', async (request: any, _reply: any) => {
     // ── Test-mode bypass ────────────────────────────────────────────────────
-    // When NODE_ENV=test, accept an x-test-user-id header to authenticate as
-    // any user in the DB without needing a real JWT. Never active in production.
-    if (process.env['NODE_ENV'] === 'test') {
+    // Requires BOTH NODE_ENV=test AND ENABLE_TEST_AUTH=true so a misconfigured
+    // production deploy with wrong NODE_ENV can never activate this bypass.
+    if (process.env['NODE_ENV'] === 'test' && process.env['ENABLE_TEST_AUTH'] === 'true') {
       const testUserId = (request.headers as Record<string, string>)['x-test-user-id'];
       if (testUserId) {
         const userRow = db.prepare(
