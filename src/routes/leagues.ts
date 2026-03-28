@@ -156,6 +156,7 @@ export async function registerLeagueRoutes(
       const rows = db.prepare(
         `SELECT
            t.id,
+           t.season_id as seasonId,
            t.name,
            t.task_type as taskType,
            t.status,

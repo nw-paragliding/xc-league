@@ -24,15 +24,30 @@ export default function TaskExportModal({ task, leagueSlug, onClose }: Props) {
 
   const [downloading, setDownloading] = useState<'xctsk' | 'cup' | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [qrTooLarge, setQrTooLarge] = useState(false);
+  const [qrError, setQrError] = useState<'too_large' | 'load_error' | null>(null);
 
-  const qrSrc = leagueApi.getTaskQrUrl(leagueSlug, seasonId, task.id, 'xctrack', 'xctsk');
+  const qrSrc = seasonId
+    ? leagueApi.getTaskQrUrl(leagueSlug, seasonId, task.id, 'xctrack', 'xctsk')
+    : null;
 
-  useEffect(() => { setQrTooLarge(false); }, [qrSrc]);
+  useEffect(() => { setQrError(null); }, [qrSrc]);
 
-  const handleQrError = () => setQrTooLarge(true);
+  const handleQrError = async () => {
+    if (!qrSrc) return;
+    try {
+      const res = await fetch(qrSrc);
+      if (res.status === 422) {
+        setQrError('too_large');
+      } else {
+        setQrError('load_error');
+      }
+    } catch {
+      setQrError('load_error');
+    }
+  };
 
   const handleDownload = async (format: 'xctsk' | 'cup') => {
+    if (!seasonId) { setDownloadError('Season ID unavailable — please refresh and try again.'); return; }
     setDownloading(format);
     setDownloadError(null);
     try {
@@ -101,7 +116,7 @@ export default function TaskExportModal({ task, leagueSlug, onClose }: Props) {
 
         {/* QR Code — fills width */}
         <div style={{ padding: '14px 20px 0' }}>
-          {qrTooLarge ? (
+          {qrError ? (
             <div style={{
               borderRadius: 10,
               background: 'var(--bg2)',
@@ -110,37 +125,50 @@ export default function TaskExportModal({ task, leagueSlug, onClose }: Props) {
               textAlign: 'center',
             }}>
               <div style={{ fontSize: 28, marginBottom: 10 }}>⚠</div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>
-                Task too large for QR code
+              {qrError === 'too_large' ? (
+                <>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>
+                    Task too large for QR code
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
+                    Too many turnpoints to encode. Use the download buttons below.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>
+                    QR code unavailable
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
+                    Use the download buttons below to get the task file.
+                  </div>
+                </>
+              )}
+            </div>
+          ) : qrSrc ? (
+            <>
+              <div style={{
+                borderRadius: 10,
+                overflow: 'hidden',
+                background: 'white',
+                lineHeight: 0,
+              }}>
+                <img
+                  key={qrSrc}
+                  src={qrSrc}
+                  alt="Task QR code"
+                  onError={handleQrError}
+                  style={{ display: 'block', width: '100%', height: 'auto', imageRendering: 'pixelated' }}
+                />
               </div>
-              <div style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
-                Too many turnpoints to encode. Use the download buttons below.
+              <div style={{
+                textAlign: 'center', padding: '10px 0 4px',
+                fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)',
+              }}>
+                Scan with XCTrack or FlySkHy to load task directly
               </div>
-            </div>
-          ) : (
-            <div style={{
-              borderRadius: 10,
-              overflow: 'hidden',
-              background: 'white',
-              lineHeight: 0,
-            }}>
-              <img
-                key={qrSrc}
-                src={qrSrc}
-                alt="Task QR code"
-                onError={handleQrError}
-                style={{ display: 'block', width: '100%', height: 'auto', imageRendering: 'pixelated' }}
-              />
-            </div>
-          )}
-          {!qrTooLarge && (
-            <div style={{
-              textAlign: 'center', padding: '10px 0 4px',
-              fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)',
-            }}>
-              Scan with XCTrack or FlySkHy to load task directly
-            </div>
-          )}
+            </>
+          ) : null}
         </div>
 
         {/* Download buttons */}
