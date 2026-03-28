@@ -9,8 +9,9 @@ import { optimiseRoute, computeDistanceKm, type Cylinder } from '../../../src/sh
 // Constants & helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ESRI_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-const TOPO_TILES = 'https://tile.opentopomap.org/{z}/{x}/{y}.png';
+const ESRI_TILES   = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const ESRI_LABELS  = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
+const TOPO_TILES   = 'https://tile.opentopomap.org/{z}/{x}/{y}.png';
 
 function tpColor(type: string) {
   if (type === 'SSS') return '#4a9eff';
@@ -74,11 +75,13 @@ function mergeCircles(entries: TpEntry[]): { radiusM: number; color: string }[] 
 const BASE_STYLE = {
   version: 8 as const,
   sources: {
-    satellite: { type: 'raster' as const, tiles: [ESRI_TILES], tileSize: 256, maxzoom: 19 },
-    terrain:   { type: 'raster' as const, tiles: [TOPO_TILES], tileSize: 256, maxzoom: 17 },
+    satellite: { type: 'raster' as const, tiles: [ESRI_TILES],  tileSize: 256, maxzoom: 19 },
+    labels:    { type: 'raster' as const, tiles: [ESRI_LABELS], tileSize: 256, maxzoom: 19 },
+    terrain:   { type: 'raster' as const, tiles: [TOPO_TILES],  tileSize: 256, maxzoom: 17 },
   },
   layers: [
     { id: 'satellite-layer', type: 'raster' as const, source: 'satellite', layout: { visibility: 'none' as const } },
+    { id: 'labels-layer',    type: 'raster' as const, source: 'labels',    layout: { visibility: 'none' as const } },
     { id: 'terrain-layer',   type: 'raster' as const, source: 'terrain' },
   ],
 };
@@ -223,6 +226,7 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     const map = mapRef.current;
     if (!map || !mapReady) return;
     map.setLayoutProperty('satellite-layer', 'visibility', basemap === 'satellite' ? 'visible' : 'none');
+    map.setLayoutProperty('labels-layer',    'visibility', basemap === 'satellite' ? 'visible' : 'none');
     map.setLayoutProperty('terrain-layer',   'visibility', basemap === 'terrain'   ? 'visible' : 'none');
   }, [basemap, mapReady]);
 
