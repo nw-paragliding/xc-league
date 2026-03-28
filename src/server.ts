@@ -131,7 +131,7 @@ async function main() {
     limits: {
       fileSize:  MAX_IGC_SIZE_BYTES,
       files:     1,      // only one file per upload request
-      fieldSize: 64 * 1024,  // bulk-import sends task config JSON (can be large)
+      fieldSize: 500 * 1024, // bulk-import sends task config JSON (can be large)
     },
   });
 
