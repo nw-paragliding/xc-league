@@ -203,8 +203,8 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: BASE_STYLE as maplibregl.StyleSpecification,
-      center: [10, 47],
-      zoom: 7,
+      center: [-121.976, 47.504],
+      zoom: 10,
       attributionControl: { compact: true },
     });
     mapRef.current = map;
