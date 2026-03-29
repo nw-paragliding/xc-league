@@ -45,6 +45,7 @@ function TabBar({
       borderBottom: '1px solid var(--border)',
       marginBottom: 24,
       overflowX: 'auto',
+      overflowY: 'hidden',
       position: 'sticky',
       top: 0,
       background: 'var(--bg)',
@@ -63,12 +64,31 @@ function TabBar({
   );
 }
 
+function MobileViewToggle({ showMap, onToggle }: { showMap: boolean; onToggle: (v: boolean) => void }) {
+  return (
+    <div className="mobile-view-toggle">
+      <button
+        className={`mobile-view-btn${!showMap ? ' active' : ''}`}
+        onClick={() => onToggle(false)}
+      >
+        List
+      </button>
+      <button
+        className={`mobile-view-btn${showMap ? ' active' : ''}`}
+        onClick={() => onToggle(true)}
+      >
+        Map
+      </button>
+    </div>
+  );
+}
+
 function TabButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
       style={{
-        padding: '10px 16px',
+        padding: '12px 16px',
         background: 'none',
         border: 'none',
         borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
@@ -80,6 +100,7 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
         transition: 'color 0.15s',
         marginBottom: -1,
         flexShrink: 0,
+        minHeight: 44,
       }}
     >
       {label}
@@ -169,10 +190,12 @@ function TaskLeftPanel({
 export default function HomePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
+  const [mobileShowMap, setMobileShowMap] = useState(false);
 
   const activeTab = searchParams.get('task') ?? 'overall';
   const setActiveTab = (tab: 'overall' | string) => {
     setSelectedEntry(null);
+    setMobileShowMap(false);
     const season = searchParams.get('season');
     const next: Record<string, string> = {};
     if (season) next.season = season;
@@ -189,6 +212,7 @@ export default function HomePage() {
 
   const setSeasonId = (id: string) => {
     setSelectedEntry(null);
+    setMobileShowMap(false);
     setSearchParams({ season: id }, { replace: true });
   };
 
@@ -267,19 +291,54 @@ export default function HomePage() {
 
   const isLoading = tasksLoading || standingsLoading;
 
+  const rightContent = activeTab === 'overall' ? (
+    <div style={{
+      height: '100%',
+      overflowY: 'auto',
+      padding: '2rem',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 12,
+    }}>
+      {leagueData?.league?.fullDescription && (
+        <div className="prose" style={{
+          padding: '16px 20px',
+          background: 'var(--bg2)',
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          fontSize: 13,
+          lineHeight: 1.75,
+          color: 'var(--text2)',
+        }}>
+          <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{leagueData.league.fullDescription}</ReactMarkdown>
+        </div>
+      )}
+      <div style={{
+        padding: '16px 20px',
+        background: 'var(--bg2)',
+        border: '1px solid var(--border)',
+        borderRadius: 8,
+      }}>
+        <div style={{
+          fontSize: 11, fontWeight: 700, letterSpacing: '0.1em',
+          textTransform: 'uppercase', color: 'var(--text3)',
+          fontFamily: 'var(--font-mono)', marginBottom: 14,
+        }}>
+          How Scoring Works
+        </div>
+        <ScoringExplainer />
+      </div>
+    </div>
+  ) : activeTask ? (
+    <TaskMap turnpoints={activeTask.turnpoints} height="100%" track={track} />
+  ) : null;
+
   return (
-    <div className="fade-in" style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+    <div className="fade-in home-layout">
 
       {/* ── Left scrollable column ── */}
-      <div style={{
-        flex: '0 0 520px',
-        overflowY: 'auto',
-        overflowX: 'auto',
-        padding: '2rem',
-        borderRight: '1px solid var(--border)',
-        minWidth: 0,
-      }}>
-        {/* League header / switcher */}
+      <div className="home-left">
+        {/* League header / switcher — always visible */}
         <div style={{ marginBottom: '1rem', maxWidth: 320 }}>
           <LeagueSwitcher />
           {leagueData?.league?.shortDescription && (
@@ -289,7 +348,7 @@ export default function HomePage() {
           )}
         </div>
 
-        {/* Season selector */}
+        {/* Season selector — always visible */}
         {seasons && seasons.length > 1 && (
           <div style={{ marginBottom: '0.75rem' }}>
             <select
@@ -312,7 +371,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Season subtitle */}
+        {/* Season subtitle — always visible */}
         {season && (
           <div style={{ fontSize: 13, color: 'var(--text3)', marginBottom: '1rem', marginTop: '-0.25rem', fontFamily: 'var(--font-mono)' }}>
             {standings.length} pilot{standings.length !== 1 ? 's' : ''} · {publishedTasks.length} task{publishedTasks.length !== 1 ? 's' : ''}
@@ -326,83 +385,51 @@ export default function HomePage() {
           onSelect={setActiveTab}
         />
 
-        {/* Left content */}
-        {isLoading ? (
-          <div>
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="shimmer" style={{ height: 42, borderRadius: 6, marginBottom: 6 }} />
-            ))}
-          </div>
-        ) : activeTab === 'overall' ? (
-          <StandingsMatrix
-            standings={standings}
-            tasks={publishedTasks}
-            scoreMap={scoreMap}
-            maxByTask={maxByTask}
-            myId={user?.id}
-          />
-        ) : activeTask ? (
-          <TaskLeftPanel
-            task={activeTask}
-            leaderboardEntries={activeEntries}
-            leaderboardLoading={activeQuery?.isLoading ?? false}
-            myId={user?.id}
-            selectedPilotId={activeEntry?.pilotId}
-            trackLoading={trackLoading}
-            onSelectPilot={setSelectedEntry}
-          />
-        ) : null}
+        {/* Mobile List/Map toggle — only shown on mobile when a task is selected */}
+        {activeTask && (
+          <MobileViewToggle showMap={mobileShowMap} onToggle={setMobileShowMap} />
+        )}
+
+        {/* Left content — hidden on mobile when map is shown */}
+        {!mobileShowMap && (
+          isLoading ? (
+            <div>
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="shimmer" style={{ height: 42, borderRadius: 6, marginBottom: 6 }} />
+              ))}
+            </div>
+          ) : activeTab === 'overall' ? (
+            <StandingsMatrix
+              standings={standings}
+              tasks={publishedTasks}
+              scoreMap={scoreMap}
+              maxByTask={maxByTask}
+              myId={user?.id}
+            />
+          ) : activeTask ? (
+            <TaskLeftPanel
+              task={activeTask}
+              leaderboardEntries={activeEntries}
+              leaderboardLoading={activeQuery?.isLoading ?? false}
+              myId={user?.id}
+              selectedPilotId={activeEntry?.pilotId}
+              trackLoading={trackLoading}
+              onSelectPilot={setSelectedEntry}
+            />
+          ) : null
+        )}
+
+        {/* Map — rendered inline on mobile when map view is active */}
+        <div className={`home-map-mobile${mobileShowMap && activeTask ? '' : ' hidden'}`}>
+          {activeTask && (
+            <TaskMap turnpoints={activeTask.turnpoints} height="100%" track={track} />
+          )}
+        </div>
       </div>
 
-      {/* ── Right sticky column — full viewport height ── */}
-      <div style={{
-        flex: '1 1 0',
-        position: 'sticky',
-        top: 0,
-        height: '100vh',
-        overflow: 'hidden',
-      }}>
-        {activeTab === 'overall' ? (
-          <div style={{
-            height: '100%',
-            overflowY: 'auto',
-            padding: '2rem',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 12,
-          }}>
-            {leagueData?.league?.fullDescription && (
-              <div className="prose" style={{
-                padding: '16px 20px',
-                background: 'var(--bg2)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                fontSize: 13,
-                lineHeight: 1.75,
-                color: 'var(--text2)',
-              }}>
-                <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{leagueData.league.fullDescription}</ReactMarkdown>
-              </div>
-            )}
-            <div style={{
-              padding: '16px 20px',
-              background: 'var(--bg2)',
-              border: '1px solid var(--border)',
-              borderRadius: 8,
-            }}>
-              <div style={{
-                fontSize: 11, fontWeight: 700, letterSpacing: '0.1em',
-                textTransform: 'uppercase', color: 'var(--text3)',
-                fontFamily: 'var(--font-mono)', marginBottom: 14,
-              }}>
-                How Scoring Works
-              </div>
-              <ScoringExplainer />
-            </div>
-          </div>
-        ) : activeTask ? (
-          <TaskMap turnpoints={activeTask.turnpoints} height="100%" track={track} />
-        ) : null}
+      {/* ── Right column — desktop only (hidden on mobile via CSS) ── */}
+      <div className="home-right">
+        {rightContent}
       </div>
 
     </div>

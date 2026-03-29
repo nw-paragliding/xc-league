@@ -105,8 +105,8 @@ export default function TaskLeaderboard({ entries, isLoading, myId, selectedPilo
             <th style={{ ...TH, textAlign: 'center', width: 32 }}>↗</th>
             <th style={{ ...TH, textAlign: 'right' }}>Dist</th>
             <th style={{ ...TH, textAlign: 'right' }}>Time</th>
-            <th style={{ ...TH, textAlign: 'right' }}>D.Pts</th>
-            <th style={{ ...TH, textAlign: 'right' }}>T.Pts</th>
+            <th style={{ ...TH, textAlign: 'right' }} className="col-hide-mobile">D.Pts</th>
+            <th style={{ ...TH, textAlign: 'right' }} className="col-hide-mobile">T.Pts</th>
             <th style={{ ...TH, textAlign: 'right' }}>Total</th>
             {anyFlagged && <th style={{ ...TH, textAlign: 'center', width: 28 }}>⚑</th>}
           </tr>
@@ -140,10 +140,10 @@ export default function TaskLeaderboard({ entries, isLoading, myId, selectedPilo
                 <td style={{ ...TD, textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--text2)' }}>
                   {fmtTime(e.taskTimeS)}
                 </td>
-                <td style={{ ...TD, textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--text2)' }}>
+                <td style={{ ...TD, textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--text2)' }} className="col-hide-mobile">
                   {Math.round(e.distancePoints)}
                 </td>
-                <td style={{ ...TD, textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--text2)' }}>
+                <td style={{ ...TD, textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--text2)' }} className="col-hide-mobile">
                   {Math.round(e.timePoints)}
                 </td>
                 <td style={{ ...TD, textAlign: 'right' }}>

@@ -56,6 +56,112 @@ code {
   overflow-y: auto;
 }
 
+/* ── Home layout (split) ──────────────────────────────────────────────────── */
+
+.home-layout {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+.home-left {
+  flex: 0 0 520px;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 2rem;
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+
+.home-right {
+  flex: 1 1 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Mobile (<= 768px) ────────────────────────────────────────────────────── */
+
+/* Mobile list/map toggle — hidden on desktop */
+.mobile-view-toggle { display: none; }
+
+/* Mobile map container — hidden always; shown via media query when active */
+.home-map-mobile { display: none; }
+.home-map-mobile.hidden { display: none !important; }
+
+@media (max-width: 768px) {
+  .app {
+    height: auto;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .main {
+    overflow: visible;
+    height: auto;
+  }
+
+  .home-layout {
+    flex-direction: column;
+    height: auto;
+    overflow: visible;
+  }
+
+  .home-left {
+    flex: none;
+    width: 100%;
+    max-width: 100vw;
+    padding: 1rem 1rem 0.5rem;
+    border-right: none;
+    overflow-x: clip; /* clip without creating a scroll container, so child overflow-x:auto still works */
+  }
+
+  .home-right {
+    display: none; /* desktop only */
+  }
+
+  .mobile-view-toggle {
+    display: flex;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 3px;
+    margin-bottom: 16px;
+    width: fit-content;
+  }
+
+  .mobile-view-btn {
+    flex: 1;
+    padding: 7px 20px;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    color: var(--text3);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    min-height: 36px;
+  }
+
+  .mobile-view-btn.active {
+    background: var(--bg2);
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+
+  .home-map-mobile {
+    display: block;
+    height: calc(100dvh - 180px);
+  }
+
+  .col-hide-mobile {
+    display: none;
+  }
+}
+
 /* Shimmer loading effect */
 @keyframes shimmer {
   0% { opacity: 0.5; }
