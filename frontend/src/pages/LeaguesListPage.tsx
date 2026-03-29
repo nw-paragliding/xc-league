@@ -21,11 +21,11 @@ export default function LeaguesListPage() {
   const leagues = data?.leagues ?? [];
 
   return (
-    <div className="app">
+    <>
       <UserMenuPopout isLeagueAdmin={false} />
 
-      <main className="main">
-        <div style={{ maxWidth: 720, margin: '0 auto', padding: '3rem 2rem' }}>
+      <div style={{ minHeight: '100dvh', background: 'var(--bg)' }}>
+        <div className="page-container">
 
           {/* Header */}
           <div style={{ marginBottom: '2.5rem' }}>
@@ -90,6 +90,8 @@ export default function LeaguesListPage() {
                     cursor: 'pointer',
                     textAlign: 'left',
                     width: '100%',
+                    minWidth: 0,
+                    overflow: 'hidden',
                     transition: 'border-color 0.15s, background 0.15s',
                   }}
                   onMouseEnter={e => {
@@ -121,12 +123,12 @@ export default function LeaguesListPage() {
                   </div>
 
                   {/* Text */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                     <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--text)', marginBottom: 2 }}>
                       {league.name}
                     </div>
                     {league.shortDescription && (
-                      <div style={{ fontSize: 13, color: 'var(--text3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <div style={{ fontSize: 13, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
                         {league.shortDescription}
                       </div>
                     )}
@@ -159,7 +161,7 @@ export default function LeaguesListPage() {
             </div>
           )}
         </div>
-      </main>
-    </div>
+      </div>
+    </>
   );
 }
