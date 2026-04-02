@@ -24,7 +24,7 @@ export default function LeaguesListPage() {
     <>
       <UserMenuPopout isLeagueAdmin={false} />
 
-      <div style={{ minHeight: '100dvh', background: 'var(--bg)' }}>
+      <div style={{ minHeight: '100dvh', background: 'var(--bg)', width: '100%' }}>
         <div className="page-container" style={{ maxWidth: 520 }}>
 
           {/* Header */}
