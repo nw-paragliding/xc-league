@@ -23,7 +23,7 @@ import {
   type TurnpointDef,
 } from './pipeline';
 import { rebuildTaskResults, type SQLiteJobQueue, type RescoreTaskPayload } from './job-queue';
-import { requireAuth, requireLeagueMember }    from './auth';
+import { requireAuth }    from './auth';
 
 // =============================================================================
 // TYPES
@@ -81,10 +81,22 @@ export async function handleIgcUpload(
   queue:   SQLiteJobQueue,
 ): Promise<void> {
   requireAuth(request as any, reply);
-  requireLeagueMember(request as any, reply);
 
   const userId   = (request as any).user!.userId;
+  const league   = (request as any).league!;
   const { taskId, seasonId } = request.params;
+
+  // Auto-join: add user as pilot member if not already in the league
+  const existingMembership = db.prepare(
+    `SELECT id FROM league_memberships
+     WHERE league_id = ? AND user_id = ? AND left_at IS NULL AND deleted_at IS NULL`
+  ).get(league.id, userId);
+  if (!existingMembership) {
+    db.prepare(
+      `INSERT INTO league_memberships (id, league_id, user_id, role, joined_at, created_at, updated_at)
+       VALUES (?, ?, ?, 'pilot', datetime('now'), datetime('now'), datetime('now'))`
+    ).run(randomUUID(), league.id, userId);
+  }
 
   // ── Resolve task ───────────────────────────────────────────────────────────
   const task = db.prepare(
@@ -95,7 +107,7 @@ export async function handleIgcUpload(
        AND t.season_id = ?
        AND s.league_id = ?
        AND t.deleted_at IS NULL`,
-  ).get(taskId, seasonId, (request as any).league!.id) as TaskRow | undefined;
+  ).get(taskId, seasonId, league.id) as TaskRow | undefined;
 
   if (!task) {
     return reply.status(404).send({ error: { code: 'TASK_NOT_FOUND', message: 'Task not found' } });
