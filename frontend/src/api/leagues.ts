@@ -152,6 +152,12 @@ export const leagueApi = {
   /** List all members of a league */
   listMembers: (leagueSlug: string) =>
     api.get<{ members: LeagueMember[] }>(`/leagues/${leagueSlug}/members`),
+
+  /** Search users by email (for adding admins) */
+  searchUsers: (leagueSlug: string, email: string) =>
+    api.get<{ users: { id: string; email: string; displayName: string; avatarUrl: string }[] }>(
+      `/leagues/${leagueSlug}/users/search?email=${encodeURIComponent(email)}`
+    ),
   
   /** Promote a member to admin (league admin only) */
   promoteMember: (leagueSlug: string, userId: string) =>

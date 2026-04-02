@@ -528,6 +528,25 @@ export async function registerLeagueRoutes(
       return reply.status(201).send({ message: 'Joined league successfully' });
     });
 
+    // ── Search users by email (for adding admins) ─────────────────────────
+    leagueScope.get('/leagues/:leagueSlug/users/search', async (request, reply) => {
+      requireLeagueAdmin(request, reply);
+
+      const { email } = request.query as { email?: string };
+      if (!email || email.trim().length < 3) {
+        return reply.status(400).send({ error: 'Provide at least 3 characters to search' });
+      }
+
+      const users = db.prepare(
+        `SELECT id, email, display_name as displayName, avatar_url as avatarUrl
+         FROM users
+         WHERE email LIKE ? AND deleted_at IS NULL
+         LIMIT 10`
+      ).all(`%${email.trim()}%`) as { id: string; email: string; displayName: string; avatarUrl: string }[];
+
+      return reply.send({ users });
+    });
+
     // ── List league members ────────────────────────────────────────────────
     leagueScope.get('/leagues/:leagueSlug/members', async (request, reply) => {
       requireLeagueMember(request, reply);
@@ -554,20 +573,25 @@ export async function registerLeagueRoutes(
       const { userId } = request.params as { userId: string };
       const league = (request as any).league;
       
-      // Check if user is a member
-      const membership = db.prepare(
+      // Check if user is a member; auto-add them if not
+      let membership = db.prepare(
         `SELECT id, role FROM league_memberships
          WHERE league_id = ? AND user_id = ? AND left_at IS NULL AND deleted_at IS NULL`
       ).get(league.id, userId) as { id: string; role: string } | undefined;
-      
+
       if (!membership) {
-        return reply.status(404).send({ error: 'User is not a member of this league' });
+        const membershipId = randomUUID();
+        db.prepare(
+          `INSERT INTO league_memberships (id, league_id, user_id, role, joined_at, created_at, updated_at)
+           VALUES (?, ?, ?, 'pilot', datetime('now'), datetime('now'), datetime('now'))`
+        ).run(membershipId, league.id, userId);
+        membership = { id: membershipId, role: 'pilot' };
       }
-      
+
       if (membership.role === 'admin') {
         return reply.status(400).send({ error: 'User is already an admin' });
       }
-      
+
       db.prepare(
         `UPDATE league_memberships
          SET role = 'admin', updated_at = datetime('now')

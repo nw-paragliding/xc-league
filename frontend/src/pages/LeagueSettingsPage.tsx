@@ -7,7 +7,7 @@
 //   Tasks     — create / edit / publish / freeze tasks per season
 // =============================================================================
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useTransition } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import rehypeSanitize from 'rehype-sanitize';
@@ -154,6 +154,13 @@ function MembersTab() {
   const [action, setAction] = useState<'promote' | 'demote' | 'remove' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Add admin by email
+  const [showAddAdmin, setShowAddAdmin] = useState(false);
+  const [searchEmail, setSearchEmail] = useState('');
+  const [searchResults, setSearchResults] = useState<{ id: string; email: string; displayName: string; avatarUrl: string }[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [, startTransition] = useTransition();
+
   const { data, isLoading, error: queryError } = useQuery({
     queryKey: ['leagues', leagueSlug, 'members'],
     queryFn: () => leagueApi.listMembers(leagueSlug),
@@ -164,6 +171,7 @@ function MembersTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['leagues', leagueSlug, 'members'] });
       setSelectedMember(null); setAction(null); setError(null);
+      setShowAddAdmin(false); setSearchEmail(''); setSearchResults([]);
     },
     onError: (err: any) => setError(err.message || 'Failed to promote member'),
   });
@@ -193,6 +201,20 @@ function MembersTab() {
     if (action === 'remove')  removeMutation.mutate(selectedMember.userId);
   };
 
+  const handleEmailSearch = async (email: string) => {
+    setSearchEmail(email);
+    if (email.length < 3) { setSearchResults([]); return; }
+    setSearching(true);
+    try {
+      const result = await leagueApi.searchUsers(leagueSlug, email);
+      startTransition(() => setSearchResults(result.users));
+    } catch {
+      // ignore
+    } finally {
+      setSearching(false);
+    }
+  };
+
   if (isLoading) return <div className="shimmer" style={{ width: '100%', height: 400 }} />;
 
   if (queryError) {
@@ -213,9 +235,54 @@ function MembersTab() {
 
       {/* Admins */}
       <section style={{ marginBottom: '3rem' }}>
-        <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem' }}>
-          Administrators ({admins.length})
-        </h2>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>
+            Administrators ({admins.length})
+          </h2>
+          <button style={primaryBtn} onClick={() => setShowAddAdmin(v => !v)}>
+            {showAddAdmin ? 'Cancel' : '+ Add Admin'}
+          </button>
+        </div>
+
+        {showAddAdmin && (
+          <div style={{ marginBottom: '1rem', padding: '1rem', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8 }}>
+            <input
+              type="email"
+              placeholder="Search by email..."
+              value={searchEmail}
+              onChange={e => handleEmailSearch(e.target.value)}
+              style={{ width: '100%', padding: '0.5rem 0.75rem', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', fontSize: 14, boxSizing: 'border-box' }}
+              autoFocus
+            />
+            {searching && <div style={{ fontSize: 13, color: 'var(--text3)', marginTop: 8 }}>Searching…</div>}
+            {!searching && searchEmail.length >= 3 && searchResults.length === 0 && (
+              <div style={{ fontSize: 13, color: 'var(--text3)', marginTop: 8 }}>No users found.</div>
+            )}
+            {searchResults.length > 0 && (
+              <div style={{ marginTop: 8, border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+                {searchResults.map((u, i) => (
+                  <div
+                    key={u.id}
+                    style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0.65rem 0.75rem', background: 'var(--bg)', borderTop: i > 0 ? '1px solid var(--border)' : undefined }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 500, fontSize: 14 }}>{u.displayName || u.email}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text3)' }}>{u.email}</div>
+                    </div>
+                    <button
+                      style={primaryBtn}
+                      disabled={promoteMutation.isPending}
+                      onClick={() => promoteMutation.mutate(u.id)}
+                    >
+                      Add as Admin
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
           {admins.length === 0 ? (
             <EmptyState message="No administrators" />
