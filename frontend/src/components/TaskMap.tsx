@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Turnpoint } from '../api/tasks';
@@ -106,6 +106,11 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
   tpsRef.current   = turnpoints;
   trackRef.current = track;
 
+  // Cache optimiseRoute result — recomputed only when turnpoints change, not on pan/zoom
+  const cachedRoute = useMemo(() => optimisedRouteResult(turnpoints), [turnpoints]);
+  const routeRef = useRef(cachedRoute);
+  routeRef.current = cachedRoute;
+
   const drawSvg = useCallback(() => {
     const map = mapRef.current;
     const svg = svgRef.current;
@@ -129,7 +134,7 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     };
 
     // ── 1. Optimized route line ───────────────────────────────────────────────
-    const routeResult = optimisedRouteResult(tps);
+    const routeResult = routeRef.current;
     const linePts = routeResult
       ? routeResult.touchPoints.map(p => [p.lng, p.lat] as [number, number])
       : tps.map(tp => [tp.longitude, tp.latitude] as [number, number]);
@@ -316,9 +321,8 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       markersRef.current.push(marker);
     }
 
-    const route = optimisedRouteResult(turnpoints);
-    const fitPts = route
-      ? route.touchPoints.map(p => [p.lng, p.lat] as [number, number])
+    const fitPts = cachedRoute
+      ? cachedRoute.touchPoints.map(p => [p.lng, p.lat] as [number, number])
       : turnpoints.map(tp => [tp.longitude, tp.latitude] as [number, number]);
     if (fitPts.length >= 2) {
       const lons = fitPts.map(([lng]) => lng);
