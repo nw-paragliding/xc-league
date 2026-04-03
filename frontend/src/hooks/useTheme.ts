@@ -34,7 +34,11 @@ export function useTheme() {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
     const mq = window.matchMedia('(prefers-color-scheme: light)');
     const handler = () => {
-      try { if (localStorage.getItem(STORAGE_KEY)) return; } catch { /* */ }
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored === 'light' || stored === 'dark') return;
+        if (stored !== null) localStorage.removeItem(STORAGE_KEY);
+      } catch { /* */ }
       setTheme(mq.matches ? 'light' : 'dark');
     };
     mq.addEventListener('change', handler);
