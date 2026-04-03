@@ -172,7 +172,8 @@ export async function registerLeagueRoutes(
             WHERE fs.task_id = t.id AND fs.deleted_at IS NULL AND fa.reached_goal = 1) as goalCount,
            json_group_array(json_object(
              'name', tp.name, 'latitude', tp.latitude, 'longitude', tp.longitude,
-             'radiusM', tp.radius_m, 'type', tp.type, 'sequenceIndex', tp.sequence_index
+             'radiusM', tp.radius_m, 'type', tp.type, 'sequenceIndex', tp.sequence_index,
+             'goalLineBearingDeg', tp.goal_line_bearing_deg
            ) ORDER BY tp.sequence_index) FILTER (WHERE tp.id IS NOT NULL) as turnpointsJson
          FROM tasks t
          LEFT JOIN turnpoints tp ON tp.task_id = t.id AND tp.deleted_at IS NULL
@@ -1248,9 +1249,9 @@ export async function registerLeagueRoutes(
           db.prepare(
             `INSERT INTO turnpoints (
               id, task_id, league_id, sequence_index,
-              name, latitude, longitude, radius_m, type,
+              name, latitude, longitude, radius_m, type, goal_line_bearing_deg,
               created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
           ).run(
             tpId,
             taskId,
@@ -1261,6 +1262,7 @@ export async function registerLeagueRoutes(
             tp.longitude,
             tp.radius_m,
             tp.type,
+            tp.goalLineBearingDeg ?? null,
           );
 
           if (tp.type === 'SSS') sssId = tpId;
@@ -1415,10 +1417,10 @@ export async function registerLeagueRoutes(
             db.prepare(
               `INSERT INTO turnpoints (
                 id, task_id, league_id, sequence_index,
-                name, latitude, longitude, radius_m, type,
+                name, latitude, longitude, radius_m, type, goal_line_bearing_deg,
                 created_at, updated_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
-            ).run(tpId, taskId, league.id, i, tp.name, tp.latitude, tp.longitude, tp.radius_m, tp.type);
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+            ).run(tpId, taskId, league.id, i, tp.name, tp.latitude, tp.longitude, tp.radius_m, tp.type, tp.goalLineBearingDeg ?? null);
 
             if (tp.type === 'SSS') sssId = tpId;
             if (tp.type === 'ESS') essId = tpId;

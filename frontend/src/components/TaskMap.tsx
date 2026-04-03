@@ -43,7 +43,7 @@ function optimizedLinePts(tps: Turnpoint[]): [number, number][] {
 const LOCATION_TOL = 1e-4;
 const COLOR_PRI: Record<string, number> = { '#4a9eff': 3, '#5db87a': 2, '#e8a842': 1 };
 
-interface TpEntry { role: string; color: string; radiusM: number; }
+interface TpEntry { role: string; color: string; radiusM: number; isGoalLine: boolean; }
 interface TpGroup { lng: number; lat: number; name: string; entries: TpEntry[]; }
 
 function buildGroups(tps: Turnpoint[]): TpGroup[] {
@@ -51,14 +51,15 @@ function buildGroups(tps: Turnpoint[]): TpGroup[] {
   const groups: TpGroup[] = [];
   for (const tp of tps) {
     const isPlain = tp.type !== 'SSS' && tp.type !== 'ESS' && tp.type !== 'GOAL_CYLINDER' && tp.type !== 'GOAL_LINE';
-    const role  = tpRole(tp, isPlain ? ++cylIdx : 0);
-    const color = tpColor(tp.type);
+    const role       = tpRole(tp, isPlain ? ++cylIdx : 0);
+    const color      = tpColor(tp.type);
+    const isGoalLine = tp.type === 'GOAL_LINE';
     const g = groups.find(g =>
       Math.abs(g.lng - tp.longitude) < LOCATION_TOL &&
       Math.abs(g.lat - tp.latitude)  < LOCATION_TOL,
     );
-    if (g) g.entries.push({ role, color, radiusM: tp.radiusM });
-    else   groups.push({ lng: tp.longitude, lat: tp.latitude, name: tp.name, entries: [{ role, color, radiusM: tp.radiusM }] });
+    if (g) g.entries.push({ role, color, radiusM: tp.radiusM, isGoalLine });
+    else   groups.push({ lng: tp.longitude, lat: tp.latitude, name: tp.name, entries: [{ role, color, radiusM: tp.radiusM, isGoalLine }] });
   }
   return groups;
 }
@@ -70,6 +71,11 @@ function mergeCircles(entries: TpEntry[]): { radiusM: number; color: string }[] 
     if (!prev || (COLOR_PRI[color] ?? 0) > (COLOR_PRI[prev] ?? 0)) m.set(radiusM, color);
   }
   return Array.from(m.entries()).sort((a, b) => b[0] - a[0]).map(([radiusM, color]) => ({ radiusM, color }));
+}
+
+function optimisedRouteResult(tps: Turnpoint[]) {
+  if (tps.length < 2) return null;
+  try { return optimiseRoute(tps.map(toCylinder)); } catch { return null; }
 }
 
 const BASE_STYLE = {
@@ -133,7 +139,10 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     };
 
     // ── 1. Optimized route line ───────────────────────────────────────────────
-    const linePts = optimizedLinePts(tps);
+    const routeResult = optimisedRouteResult(tps);
+    const linePts = routeResult
+      ? routeResult.touchPoints.map(p => [p.lng, p.lat] as [number, number])
+      : tps.map(tp => [tp.longitude, tp.latitude] as [number, number]);
     if (linePts.length >= 2) {
       const sp = linePts.map(([lng, lat]) => map.project([lng, lat]));
       const d  = sp.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('');
@@ -163,7 +172,24 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       }
     }
 
-    // ── 2. IGC track line ─────────────────────────────────────────────────────
+    // ── 2. Goal line ──────────────────────────────────────────────────────────
+    const lastTp = tps[tps.length - 1];
+    const glBearing = routeResult?.goalLineBearingDeg ?? 0;
+    if (lastTp?.type === 'GOAL_LINE' && glBearing !== 0) {
+      const brgRad  = glBearing * Math.PI / 180;
+      const halfM   = lastTp.radiusM;
+      const lat     = lastTp.latitude;
+      const lng     = lastTp.longitude;
+      const dlatDeg = Math.cos(brgRad) * halfM / 6371000 * (180 / Math.PI);
+      const dlngDeg = Math.sin(brgRad) * halfM / (6371000 * Math.cos(lat * Math.PI / 180)) * (180 / Math.PI);
+      const ep1 = map.project([lng + dlngDeg, lat + dlatDeg]);
+      const ep2 = map.project([lng - dlngDeg, lat - dlatDeg]);
+      const d = `M${ep1.x.toFixed(1)},${ep1.y.toFixed(1)} L${ep2.x.toFixed(1)},${ep2.y.toFixed(1)}`;
+      mk('path', { d, fill: 'none', stroke: 'rgba(0,0,0,0.6)', 'stroke-width': 8, 'stroke-linecap': 'round' });
+      mk('path', { d, fill: 'none', stroke: '#5db87a', 'stroke-width': 4, 'stroke-linecap': 'round' });
+    }
+
+    // ── 3. IGC track line ─────────────────────────────────────────────────────
     const fixes = trackRef.current;
     if (fixes && fixes.length >= 2) {
       const pts = fixes.map(f => map.project([f.lng, f.lat]));
@@ -174,7 +200,7 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
 
     // ── 4. Cylinder shadow rings ──────────────────────────────────────────────
     for (const group of groups) {
-      for (const { radiusM } of mergeCircles(group.entries)) {
+      for (const { radiusM } of mergeCircles(group.entries.filter(e => !e.isGoalLine))) {
         const { cx, cy, r } = projR(group.lng, group.lat, radiusM);
         if (r < 1) continue;
         mk('circle', { cx: cx.toFixed(1), cy: cy.toFixed(1), r: r.toFixed(1), fill: 'none', stroke: 'rgba(0,0,0,0.55)', 'stroke-width': 8 });
@@ -183,7 +209,7 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
 
     // ── 5. Coloured dashed rings ──────────────────────────────────────────────
     for (const group of groups) {
-      for (const { radiusM, color } of mergeCircles(group.entries)) {
+      for (const { radiusM, color } of mergeCircles(group.entries.filter(e => !e.isGoalLine))) {
         const { cx, cy, r } = projR(group.lng, group.lat, radiusM);
         if (r < 1) continue;
         mk('circle', { cx: cx.toFixed(1), cy: cy.toFixed(1), r: r.toFixed(1), fill: color + '28', stroke: color, 'stroke-width': 3, 'stroke-dasharray': '10 5' });
