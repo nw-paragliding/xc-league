@@ -172,21 +172,42 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       }
     }
 
-    // ── 2. Goal line ──────────────────────────────────────────────────────────
+    // ── 2. Goal line D-shape (chord + inbound semi-circle, CIVL GAP 2025 §6.2.3.1) ──
     const lastTp = tps[tps.length - 1];
     const glBearing = routeResult?.goalLineBearingDeg ?? 0;
-    if (lastTp?.type === 'GOAL_LINE' && glBearing !== 0) {
+    if (lastTp?.type === 'GOAL_LINE' && glBearing !== 0 && linePts.length >= 2) {
       const brgRad  = glBearing * Math.PI / 180;
       const halfM   = lastTp.radiusM;
       const lat     = lastTp.latitude;
       const lng     = lastTp.longitude;
       const dlatDeg = Math.cos(brgRad) * halfM / 6371000 * (180 / Math.PI);
       const dlngDeg = Math.sin(brgRad) * halfM / (6371000 * Math.cos(lat * Math.PI / 180)) * (180 / Math.PI);
-      const ep1 = map.project([lng + dlngDeg, lat + dlatDeg]);
-      const ep2 = map.project([lng - dlngDeg, lat - dlatDeg]);
-      const d = `M${ep1.x.toFixed(1)},${ep1.y.toFixed(1)} L${ep2.x.toFixed(1)},${ep2.y.toFixed(1)}`;
-      mk('path', { d, fill: 'none', stroke: 'rgba(0,0,0,0.6)', 'stroke-width': 8, 'stroke-linecap': 'round' });
-      mk('path', { d, fill: 'none', stroke: '#5db87a', 'stroke-width': 4, 'stroke-linecap': 'round' });
+      const ep1    = map.project([lng + dlngDeg, lat + dlatDeg]);
+      const ep2    = map.project([lng - dlngDeg, lat - dlatDeg]);
+      const goalPx = map.project([lng, lat]);
+
+      // Sweep direction: arc curves toward the inbound (approach) side.
+      // Cross product of chord direction × (prevTouchPt - goalCenter) in screen space.
+      // cross < 0 → prevTouchPt is on the counterclockwise side → sweep = 0.
+      const prevLinePt = linePts[linePts.length - 2];
+      const prevPx = map.project(prevLinePt as [number, number]);
+      const cross  = (ep2.x - ep1.x) * (prevPx.y - goalPx.y)
+                   - (ep2.y - ep1.y) * (prevPx.x - goalPx.x);
+      const sweep = cross < 0 ? 0 : 1;
+
+      // Arc radius in screen pixels
+      const arcR = Math.hypot(ep1.x - goalPx.x, ep1.y - goalPx.y).toFixed(1);
+
+      // D-shape: chord ep1→ep2, then semi-circle arc back to ep1
+      const d = [
+        `M${ep1.x.toFixed(1)},${ep1.y.toFixed(1)}`,
+        `L${ep2.x.toFixed(1)},${ep2.y.toFixed(1)}`,
+        `A${arcR},${arcR},0,0,${sweep},${ep1.x.toFixed(1)},${ep1.y.toFixed(1)}`,
+        'Z',
+      ].join(' ');
+
+      mk('path', { d, fill: 'rgba(0,0,0,0.2)',       stroke: 'rgba(0,0,0,0.55)',  'stroke-width': 8, 'stroke-linejoin': 'round' });
+      mk('path', { d, fill: 'rgba(93,184,122,0.15)', stroke: '#5db87a', 'stroke-width': 3, 'stroke-dasharray': '10 5', 'stroke-linejoin': 'round' });
     }
 
     // ── 3. IGC track line ─────────────────────────────────────────────────────
