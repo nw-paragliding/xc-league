@@ -1,16 +1,19 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useLayoutEffect, useEffect, useCallback } from 'react';
 
 type Theme = 'light' | 'dark';
 
 const STORAGE_KEY = 'theme';
 
 function getSystemTheme(): Theme {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'dark';
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
 function getInitialTheme(): Theme {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === 'light' || stored === 'dark') return stored;
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored === 'light' || stored === 'dark') return stored;
+  } catch { /* localStorage unavailable */ }
   return getSystemTheme();
 }
 
@@ -21,20 +24,18 @@ function applyTheme(theme: Theme) {
 export function useTheme() {
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
-  // Apply on mount + when theme changes
-  useEffect(() => {
+  // Apply before paint so there's no flicker on toggle
+  useLayoutEffect(() => {
     applyTheme(theme);
   }, [theme]);
 
   // Listen for system preference changes when no explicit override
   useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
     const mq = window.matchMedia('(prefers-color-scheme: light)');
     const handler = () => {
-      if (!localStorage.getItem(STORAGE_KEY)) {
-        const sys = mq.matches ? 'light' : 'dark';
-        setTheme(sys);
-        applyTheme(sys);
-      }
+      try { if (localStorage.getItem(STORAGE_KEY)) return; } catch { /* */ }
+      setTheme(mq.matches ? 'light' : 'dark');
     };
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
@@ -43,7 +44,8 @@ export function useTheme() {
   const toggle = useCallback(() => {
     setTheme(prev => {
       const next = prev === 'dark' ? 'light' : 'dark';
-      localStorage.setItem(STORAGE_KEY, next);
+      applyTheme(next); // synchronous to avoid single-frame flicker
+      try { localStorage.setItem(STORAGE_KEY, next); } catch { /* */ }
       return next;
     });
   }, []);

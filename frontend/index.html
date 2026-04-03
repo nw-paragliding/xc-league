@@ -8,7 +8,7 @@
   <body>
     <script>
       // Apply theme before first paint to prevent flash of wrong theme
-      (function(){var t=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme:light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',t)})();
+      (function(){var t;try{var s=localStorage.getItem('theme');if(s==='light'||s==='dark')t=s}catch(e){}if(!t)t=matchMedia('(prefers-color-scheme:light)').matches?'light':'dark';document.documentElement.setAttribute('data-theme',t)})();
     </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
