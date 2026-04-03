@@ -48,7 +48,6 @@ export function useTheme() {
   const toggle = useCallback(() => {
     setTheme(prev => {
       const next = prev === 'dark' ? 'light' : 'dark';
-      applyTheme(next); // synchronous to avoid single-frame flicker
       try { localStorage.setItem(STORAGE_KEY, next); } catch { /* */ }
       return next;
     });
