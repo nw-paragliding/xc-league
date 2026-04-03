@@ -172,10 +172,10 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       }
     }
 
-    // ── 2. Goal line D-shape (chord + inbound semi-circle, CIVL GAP 2025 §6.2.3.1) ──
+    // ── 2. Goal line D-shape (chord + outbound semi-circle, CIVL GAP 2025 §6.2.3.1) ──
     const lastTp = tps[tps.length - 1];
-    const glBearing = routeResult?.goalLineBearingDeg ?? 0;
-    if (lastTp?.type === 'GOAL_LINE' && glBearing !== 0 && linePts.length >= 2) {
+    const glBearing = routeResult?.goalLineBearingDeg ?? lastTp?.goalLineBearingDeg;
+    if (lastTp?.type === 'GOAL_LINE' && glBearing != null && linePts.length >= 2) {
       const brgRad  = glBearing * Math.PI / 180;
       const halfM   = lastTp.radiusM;
       const lat     = lastTp.latitude;

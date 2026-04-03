@@ -11,7 +11,7 @@ export interface Turnpoint {
   radiusM:            number;
   type:               'SSS' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE' | 'CYLINDER';
   sequenceIndex:      number;
-  goalLineBearingDeg?: number;
+  goalLineBearingDeg?: number | null;
 }
 
 export interface Task {

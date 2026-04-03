@@ -352,7 +352,7 @@ export function detectAttempts(
       if (tp.type === 'GOAL_LINE') {
         // Compute goal line bearing: use stored value or derive from previous TP
         let bearingDeg = tp.goalLineBearingDeg;
-        if (!bearingDeg) {
+        if (bearingDeg == null) {
           const prevTp = task.turnpoints[tpIdx - 1];
           const prevLocal = projectToLocal(prevTp.lat, prevTp.lng, tp.lat, tp.lng);
           const inboundAngle = Math.atan2(prevLocal.x, prevLocal.y) * 180 / Math.PI;
@@ -560,7 +560,7 @@ export function segmentEntersGoalSemiCircle(
   if (disc < 0) return null;
 
   const sqrtDisc = Math.sqrt(disc);
-  // Check entry (t1) then exit (t2); return earliest crossing on the inbound arc
+  // Check entry (t1) then exit (t2); return earliest crossing on the outbound arc
   for (const t of [(-B2 - sqrtDisc) / (2*A2), (-B2 + sqrtDisc) / (2*A2)]) {
     if (t < 0 || t > 1) continue;
     if (onOutboundSide(ax + t*dx, ay + t*dy)) return t;
