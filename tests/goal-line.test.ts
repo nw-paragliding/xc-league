@@ -130,9 +130,9 @@ describe('segmentEntersGoalSemiCircle', () => {
     expect(Math.sqrt(80 ** 2 + py ** 2)).toBeCloseTo(R, 0);
   });
 
-  it('returns null for a degenerate (zero-length) segment', () => {
+  it('returns 0 for a zero-length segment when point is inside the semi-circle', () => {
     const t = segmentEntersGoalSemiCircle({ x: 0, y: 50 }, { x: 0, y: 50 }, ORIGIN, R, BRG);
-    // A is inside the semi-circle → still returns 0 (the "already inside" check fires first)
+    // A is inside the semi-circle → the "already inside" check fires
     expect(t).toBe(0);
   });
 

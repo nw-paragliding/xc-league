@@ -30,16 +30,6 @@ function toCylinder(tp: Turnpoint): Cylinder {
   return { lat: tp.latitude, lng: tp.longitude, radiusM: tp.radiusM, type: tp.type };
 }
 
-function optimizedLinePts(tps: Turnpoint[]): [number, number][] {
-  if (tps.length < 2) return tps.map(tp => [tp.longitude, tp.latitude]);
-  try {
-    const route = optimiseRoute(tps.map(toCylinder));
-    return route.touchPoints.map(p => [p.lng, p.lat]);
-  } catch {
-    return tps.map(tp => [tp.longitude, tp.latitude]);
-  }
-}
-
 const LOCATION_TOL = 1e-4;
 const COLOR_PRI: Record<string, number> = { '#4a9eff': 3, '#5db87a': 2, '#e8a842': 1 };
 
@@ -326,10 +316,13 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       markersRef.current.push(marker);
     }
 
-    const linePts = optimizedLinePts(turnpoints);
-    if (linePts.length >= 2) {
-      const lons = linePts.map(([lng]) => lng);
-      const lats = linePts.map(([, lat]) => lat);
+    const route = optimisedRouteResult(turnpoints);
+    const fitPts = route
+      ? route.touchPoints.map(p => [p.lng, p.lat] as [number, number])
+      : turnpoints.map(tp => [tp.longitude, tp.latitude] as [number, number]);
+    if (fitPts.length >= 2) {
+      const lons = fitPts.map(([lng]) => lng);
+      const lats = fitPts.map(([, lat]) => lat);
       map.fitBounds(
         [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
         { padding: 80, maxZoom: 14, duration: 600 },
