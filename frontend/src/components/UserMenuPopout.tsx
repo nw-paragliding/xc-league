@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useLeague } from '../hooks/useLeague';
+import { useTheme } from '../hooks/useTheme';
 
 function initials(name: string) {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -14,6 +15,7 @@ interface UserMenuPopoutProps {
 export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
   const { user, isLoading, login, logout } = useAuth();
   const { leagueSlug } = useLeague();
+  const { theme, toggle: toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -71,7 +73,7 @@ export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
           background: 'var(--bg2)',
           border: '1px solid var(--border)',
           borderRadius: 8,
-          boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+          boxShadow: '0 8px 24px var(--shadow)',
           padding: '8px 4px',
         }}>
           {/* Nav items */}
@@ -119,6 +121,16 @@ export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
             Create League
           </button>
 
+          <button
+            style={menuItemStyle}
+            onClick={toggleTheme}
+            onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg3)')}
+            onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+          >
+            <span style={{ fontSize: 14 }}>{theme === 'dark' ? '☀' : '☾'}</span>
+            {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          </button>
+
           <div style={dividerStyle} />
 
           {user ? (
@@ -155,7 +167,7 @@ export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
           border: `1px solid ${open ? 'var(--accent)' : 'var(--border)'}`,
           cursor: 'pointer',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          boxShadow: '0 4px 12px var(--shadow)',
           transition: 'all 0.15s',
           fontSize: '0.75rem', fontWeight: 600, color: 'var(--text)',
         }}
