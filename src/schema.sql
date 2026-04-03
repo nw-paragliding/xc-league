@@ -156,7 +156,6 @@ CREATE INDEX idx_tasks_close    ON tasks (close_date) WHERE deleted_at IS NULL;
 CREATE TABLE turnpoints (
     id                      TEXT        PRIMARY KEY,  -- UUID
     task_id                 TEXT        NOT NULL REFERENCES tasks (id),
-    league_id               TEXT        NOT NULL REFERENCES leagues (id),  -- denormalised
     sequence_index          INTEGER     NOT NULL,  -- 0-based; 0 = SSS
     name                    TEXT        NOT NULL,
     latitude                REAL        NOT NULL,  -- WGS84 decimal degrees
@@ -179,7 +178,6 @@ CREATE TABLE turnpoints (
 );
 
 CREATE INDEX idx_turnpoints_task   ON turnpoints (task_id)   WHERE deleted_at IS NULL;
-CREATE INDEX idx_turnpoints_league ON turnpoints (league_id) WHERE deleted_at IS NULL;
 
 -- Deferred FKs: tasks.sss/ess/goal_turnpoint_id reference turnpoints
 -- SQLite doesn't support deferred FK cycles cleanly; enforce in application layer
@@ -234,7 +232,6 @@ CREATE TABLE flight_attempts (
     submission_id               TEXT        NOT NULL REFERENCES flight_submissions (id),
     task_id                     TEXT        NOT NULL REFERENCES tasks (id),
     user_id                     TEXT        NOT NULL REFERENCES users (id),
-    league_id                   TEXT        NOT NULL REFERENCES leagues (id),  -- denormalised
 
     -- Timing
     sss_crossing_time           TEXT        NOT NULL,   -- interpolated ISO 8601 UTC
@@ -266,7 +263,6 @@ CREATE TABLE flight_attempts (
 CREATE INDEX idx_attempts_submission ON flight_attempts (submission_id)          WHERE deleted_at IS NULL;
 CREATE INDEX idx_attempts_task_user  ON flight_attempts (task_id, user_id)       WHERE deleted_at IS NULL;
 CREATE INDEX idx_attempts_task_goal  ON flight_attempts (task_id, reached_goal)  WHERE deleted_at IS NULL;
-CREATE INDEX idx_attempts_league     ON flight_attempts (league_id)              WHERE deleted_at IS NULL;
 
 -- Turnpoint crossings: one row per TP successfully crossed in an attempt
 CREATE TABLE turnpoint_crossings (
@@ -318,7 +314,6 @@ CREATE TABLE season_standings (
     id                  TEXT        PRIMARY KEY,  -- UUID
     season_id           TEXT        NOT NULL REFERENCES seasons (id),
     user_id             TEXT        NOT NULL REFERENCES users (id),
-    league_id           TEXT        NOT NULL REFERENCES leagues (id),
     total_points        REAL        NOT NULL DEFAULT 0,
     tasks_flown         INTEGER     NOT NULL DEFAULT 0,
     tasks_with_goal     INTEGER     NOT NULL DEFAULT 0,
@@ -344,7 +339,6 @@ CREATE TABLE task_results (
     id                  TEXT        PRIMARY KEY,  -- UUID
     task_id             TEXT        NOT NULL REFERENCES tasks (id),
     user_id             TEXT        NOT NULL REFERENCES users (id),
-    league_id           TEXT        NOT NULL REFERENCES leagues (id),
     best_attempt_id     TEXT        NOT NULL REFERENCES flight_attempts (id),
     distance_flown_km   REAL        NOT NULL DEFAULT 0,
     reached_goal        INTEGER     NOT NULL DEFAULT 0,
@@ -363,7 +357,6 @@ CREATE TABLE task_results (
 
 CREATE INDEX idx_task_results_task   ON task_results (task_id, rank);
 CREATE INDEX idx_task_results_user   ON task_results (user_id);
-CREATE INDEX idx_task_results_league ON task_results (league_id);
 
 
 -- =============================================================================

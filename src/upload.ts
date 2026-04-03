@@ -304,15 +304,15 @@ export async function handleIgcUpload(
 
       db.prepare(`
         INSERT INTO flight_attempts (
-          id, submission_id, task_id, user_id, league_id,
+          id, submission_id, task_id, user_id,
           sss_crossing_time, ess_crossing_time, goal_crossing_time, task_time_s,
           reached_goal, last_turnpoint_index,
           distance_flown_km, distance_points, time_points, total_points,
           has_flagged_crossings, attempt_index,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        attemptId, submissionId, taskId, userId, task.league_id,
+        attemptId, submissionId, taskId, userId,
         sssCrossingTime, essCrossingTime, goalCrossingTime,
         attempt.taskTimeS !== null ? Math.round(attempt.taskTimeS) : null,
         attempt.reachedGoal ? 1 : 0,

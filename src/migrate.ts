@@ -15,6 +15,7 @@ import Database from 'better-sqlite3';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
+import { dropRedundantLeagueIdColumns } from './migration-helpers';
 
 const DB_PATH = process.env['DB_PATH'] ?? './league.db';
 
@@ -76,6 +77,9 @@ for (const file of migrationFiles) {
   db.prepare('INSERT INTO migrations (name) VALUES (?)').run(name);
   console.log(`[migrate] ${name} applied`);
 }
+
+// 0010: drop league_id columns that SQLite can't handle via IF EXISTS
+dropRedundantLeagueIdColumns(db);
 
 // ---- Bootstrap Super Admin ----
 // If BOOTSTRAP_SUPER_ADMIN_EMAIL is set and no super admins exist,

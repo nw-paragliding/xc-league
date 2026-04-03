@@ -18,6 +18,7 @@ import fastifyRateLimit from '@fastify/rate-limit';
 import Database from 'better-sqlite3';
 import { join } from 'path';
 import { readFileSync, readdirSync } from 'fs';
+import { dropRedundantLeagueIdColumns } from './migration-helpers';
 import { loadAuthConfig, authPlugin } from './auth';
 import { SQLiteJobQueue, bootstrapWorker, rebuildTaskResults } from './job-queue';
 
@@ -70,6 +71,9 @@ function runMigrations(db: Database.Database): void {
     db.prepare('INSERT INTO migrations (name) VALUES (?)').run(name);
     console.log(`[migrate] Applied ${name}`);
   }
+
+  // 0010: drop league_id columns that SQLite can't handle via IF EXISTS
+  dropRedundantLeagueIdColumns(db);
 }
 
 async function main() {
