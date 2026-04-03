@@ -1268,14 +1268,13 @@ export async function registerLeagueRoutes(
 
           db.prepare(
             `INSERT INTO turnpoints (
-              id, task_id, league_id, sequence_index,
+              id, task_id, sequence_index,
               name, latitude, longitude, radius_m, type, goal_line_bearing_deg,
               created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
           ).run(
             tpId,
             taskId,
-            league.id,
             i,
             tp.name,
             tp.latitude,
@@ -1438,11 +1437,11 @@ export async function registerLeagueRoutes(
             const bearing = tp.type === 'GOAL_LINE' ? (tp.goalLineBearingDeg ?? glBearingBulk) : null;
             db.prepare(
               `INSERT INTO turnpoints (
-                id, task_id, league_id, sequence_index,
+                id, task_id, sequence_index,
                 name, latitude, longitude, radius_m, type, goal_line_bearing_deg,
                 created_at, updated_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
-            ).run(tpId, taskId, league.id, i, tp.name, tp.latitude, tp.longitude, tp.radius_m, tp.type, bearing);
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+            ).run(tpId, taskId, i, tp.name, tp.latitude, tp.longitude, tp.radius_m, tp.type, bearing);
 
             if (tp.type === 'SSS') sssId = tpId;
             if (tp.type === 'ESS') essId = tpId;

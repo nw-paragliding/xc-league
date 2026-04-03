@@ -21,7 +21,7 @@ export function setupTestDatabase(db: Database.Database) {
   db.exec(schema);
   db.prepare(`INSERT OR IGNORE INTO migrations (name) VALUES ('0001_initial_schema')`).run();
 
-  // 0002 and 0003: numbered migrations
+  // 0002+: numbered migrations
   const migrationsDir = join(__dirname, '../src/migrations');
   const files = readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
   for (const file of files) {
@@ -29,6 +29,14 @@ export function setupTestDatabase(db: Database.Database) {
     const sql = readFileSync(join(migrationsDir, file), 'utf-8');
     db.exec(sql);
     db.prepare(`INSERT OR IGNORE INTO migrations (name) VALUES (?)`).run(name);
+  }
+
+  // 0010: drop league_id columns if they still exist (fresh schema already omits them)
+  for (const table of ['turnpoints', 'flight_attempts', 'task_results', 'season_standings']) {
+    const cols = db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all() as { name: string }[];
+    if (cols.some(c => c.name === 'league_id')) {
+      db.exec(`ALTER TABLE ${table} DROP COLUMN league_id`);
+    }
   }
 }
 
@@ -203,15 +211,15 @@ export function createTestAttempt(
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO flight_attempts (
-       id, submission_id, task_id, user_id, league_id,
+       id, submission_id, task_id, user_id,
        sss_crossing_time, ess_crossing_time, goal_crossing_time, task_time_s,
        reached_goal, last_turnpoint_index,
        distance_flown_km, distance_points, time_points, total_points,
        has_flagged_crossings, attempt_index,
        created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    id, submissionId, taskId, userId, leagueId,
+    id, submissionId, taskId, userId,
     now, opts.reachedGoal ? now : null, opts.reachedGoal ? now : null,
     opts.taskTimeS ?? null,
     opts.reachedGoal ? 1 : 0,
@@ -248,13 +256,13 @@ export function createTestTaskResult(
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO task_results (
-       id, task_id, user_id, league_id, best_attempt_id,
+       id, task_id, user_id, best_attempt_id,
        distance_flown_km, reached_goal, task_time_s,
        distance_points, time_points, total_points, has_flagged_crossings,
        rank, last_computed_at, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    id, taskId, userId, leagueId, bestAttemptId,
+    id, taskId, userId, bestAttemptId,
     opts.distanceFlownKm  ?? 10,
     opts.reachedGoal      ? 1 : 0,
     opts.taskTimeS        ?? null,
@@ -284,12 +292,12 @@ export function createTestSeasonStanding(
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO season_standings (
-       id, season_id, user_id, league_id,
+       id, season_id, user_id,
        total_points, tasks_flown, tasks_with_goal,
        rank, last_computed_at, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    id, seasonId, userId, leagueId,
+    id, seasonId, userId,
     opts.totalPoints   ?? 100,
     opts.tasksFlown    ?? 1,
     opts.tasksWithGoal ?? 0,

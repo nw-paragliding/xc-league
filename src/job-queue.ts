@@ -267,7 +267,7 @@ export function rebuildTaskResults(db: Database, taskId: string): void {
   const rows = db.prepare(`
     WITH ranked AS (
       SELECT
-        id, user_id, league_id,
+        id, user_id,
         distance_flown_km, reached_goal, task_time_s,
         distance_points, time_points, total_points, has_flagged_crossings,
         ROW_NUMBER() OVER (
@@ -280,7 +280,7 @@ export function rebuildTaskResults(db: Database, taskId: string): void {
       WHERE task_id = ? AND deleted_at IS NULL
     )
     SELECT
-      id, user_id, league_id, distance_flown_km, reached_goal, task_time_s,
+      id, user_id, distance_flown_km, reached_goal, task_time_s,
       distance_points, time_points, total_points, has_flagged_crossings,
       RANK() OVER (
         ORDER BY total_points DESC,
@@ -289,7 +289,7 @@ export function rebuildTaskResults(db: Database, taskId: string): void {
       ) AS pilot_rank
     FROM ranked WHERE rn = 1
   `).all(taskId) as Array<{
-    id: string; user_id: string; league_id: string;
+    id: string; user_id: string;
     distance_flown_km: number; reached_goal: number; task_time_s: number | null;
     distance_points: number; time_points: number; total_points: number;
     has_flagged_crossings: number; pilot_rank: number;
@@ -318,16 +318,16 @@ export function rebuildTaskResults(db: Database, taskId: string): void {
   const now = new Date().toISOString();
   const ins = db.prepare(`
     INSERT INTO task_results (
-      id, task_id, user_id, league_id, best_attempt_id,
+      id, task_id, user_id, best_attempt_id,
       distance_flown_km, reached_goal, task_time_s,
       distance_points, time_points, total_points, has_flagged_crossings,
       rank, last_computed_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const r of finalRows) {
     ins.run(
-      randomUUID(), taskId, r.user_id, r.league_id, r.id,
+      randomUUID(), taskId, r.user_id, r.id,
       r.distance_flown_km, r.reached_goal, r.task_time_s,
       r.distance_points, r.time_points, r.total_points, r.has_flagged_crossings,
       r.pilot_rank, now, now, now,
@@ -450,9 +450,9 @@ async function handleRebuildStandings(
   db.transaction(() => {
     const upsert = db.prepare(`
       INSERT INTO season_standings
-        (id, season_id, user_id, league_id, total_points, tasks_flown, tasks_with_goal,
+        (id, season_id, user_id, total_points, tasks_flown, tasks_with_goal,
          rank, last_computed_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (season_id, user_id) DO UPDATE SET
         total_points     = excluded.total_points,
         tasks_flown      = excluded.tasks_flown,
@@ -464,7 +464,7 @@ async function handleRebuildStandings(
 
     rows.forEach((row, i) => {
       upsert.run(
-        randomUUID(), payload.seasonId, row.user_id, payload.leagueId,
+        randomUUID(), payload.seasonId, row.user_id,
         row.total_points, row.tasks_flown, row.tasks_with_goal,
         i + 1,
         now, now, now,

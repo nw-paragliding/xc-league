@@ -106,12 +106,12 @@ async function buildTestApp(db: ReturnType<typeof getTestDb>) {
 }
 
 /** Add a minimal turnpoint to a task so it can be published */
-function addTurnpoint(db: ReturnType<typeof getTestDb>, taskId: string, leagueId: string, type: string, idx: number) {
+function addTurnpoint(db: ReturnType<typeof getTestDb>, taskId: string, _leagueId: string, type: string, idx: number) {
   const { randomUUID } = require('crypto');
   db.prepare(`
-    INSERT INTO turnpoints (id, task_id, league_id, sequence_index, name, latitude, longitude, radius_m, type, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, 47.5, -122.0, 400, ?, datetime('now'), datetime('now'))
-  `).run(randomUUID(), taskId, leagueId, idx, `TP${idx}`, type);
+    INSERT INTO turnpoints (id, task_id, sequence_index, name, latitude, longitude, radius_m, type, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 47.5, -122.0, 400, ?, datetime('now'), datetime('now'))
+  `).run(randomUUID(), taskId, idx, `TP${idx}`, type);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

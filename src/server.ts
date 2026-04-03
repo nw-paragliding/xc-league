@@ -70,6 +70,16 @@ function runMigrations(db: Database.Database): void {
     db.prepare('INSERT INTO migrations (name) VALUES (?)').run(name);
     console.log(`[migrate] Applied ${name}`);
   }
+
+  // 0010: drop league_id columns (SQLite has no DROP COLUMN IF EXISTS,
+  // so we check pragma_table_info and drop only if the column still exists)
+  for (const table of ['turnpoints', 'flight_attempts', 'task_results', 'season_standings']) {
+    const cols = db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all() as { name: string }[];
+    if (cols.some(c => c.name === 'league_id')) {
+      db.exec(`ALTER TABLE ${table} DROP COLUMN league_id`);
+      console.log(`[migrate] Dropped league_id from ${table}`);
+    }
+  }
 }
 
 async function main() {
