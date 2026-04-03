@@ -336,6 +336,28 @@ export function detectAttempts(
     let essCrossing: CylinderCrossing | null = null;
     let goalCrossing: CylinderCrossing | null = null;
 
+    // Pre-compute goal line bearing once per attempt (avoid re-running optimiseRoute per segment)
+    const goalTp = task.turnpoints[task.turnpoints.length - 1];
+    let cachedGoalBearing: number | undefined;
+    if (goalTp?.type === 'GOAL_LINE') {
+      cachedGoalBearing = goalTp.goalLineBearingDeg ?? undefined;
+      if (cachedGoalBearing == null) {
+        try {
+          const cyls: Cylinder[] = task.turnpoints.map(t => ({
+            lat: t.lat, lng: t.lng, radiusM: t.radiusM, type: t.type,
+          }));
+          cachedGoalBearing = optimiseRoute(cyls).goalLineBearingDeg;
+        } catch {
+          const prevTp = task.turnpoints[task.turnpoints.length - 2];
+          if (prevTp) {
+            const prevLocal = projectToLocal(prevTp.lat, prevTp.lng, goalTp.lat, goalTp.lng);
+            const inboundAngle = Math.atan2(-prevLocal.x, -prevLocal.y) * 180 / Math.PI;
+            cachedGoalBearing = ((inboundAngle + 90) + 360) % 360;
+          }
+        }
+      }
+    }
+
     // Use while loop so we can re-check the same fix-pair after a TP is achieved
     let fixI = sssCross.fixIndex;
     while (fixI < fixes.length - 1 && tpIdx < task.turnpoints.length) {
@@ -349,17 +371,17 @@ export function detectAttempts(
       let crossed = false;
       let crossT: number | null = null;
 
-      if (tp.type === 'GOAL_LINE') {
-        // Compute goal line bearing: use stored value or derive from previous TP
-        let bearingDeg = tp.goalLineBearingDeg;
-        if (!bearingDeg) {
-          const prevTp = task.turnpoints[tpIdx - 1];
-          const prevLocal = projectToLocal(prevTp.lat, prevTp.lng, tp.lat, tp.lng);
-          const inboundAngle = Math.atan2(prevLocal.x, prevLocal.y) * 180 / Math.PI;
-          bearingDeg = ((inboundAngle + 90) + 360) % 360;
+      if (tp.type === 'GOAL_LINE' && cachedGoalBearing != null) {
+        const bearingDeg = cachedGoalBearing;
+        const tChord = segmentIntersectsGoalLine(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);
+        const tArc   = segmentEntersGoalSemiCircle(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);
+        if (tChord !== null || tArc !== null) {
+          crossT = Math.min(
+            tChord !== null ? tChord : Infinity,
+            tArc   !== null ? tArc   : Infinity,
+          );
+          crossed = true;
         }
-        crossT = segmentIntersectsGoalLine(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);
-        if (crossT !== null) crossed = true;
       } else if (distA < tp.radiusM) {
         // Already inside this cylinder — count as immediately achieved
         crossT = 0;
@@ -506,6 +528,58 @@ export function segmentIntersectsGoalLine(
   const u = (p1ax * bay  - p1ay * bax)   / denom;
 
   if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return t;
+  return null;
+}
+
+/**
+ * Does segment A→B enter the semi-circular portion of the goal control zone?
+ *
+ * Per CIVL GAP 2025 §6.2.3.1, the full goal OZ is a D-shape: the chord (goal
+ * line) plus a semi-circle of radius r on the OUTBOUND side (away from p —
+ * "behind the goal line when coming from p"). This function detects entry
+ * through the curved arc boundary so pilots who reach the D from any direction
+ * (e.g. approaching from past the goal) are still scored correctly.
+ *
+ * bearingDeg is the goal LINE bearing (perpendicular to the inbound track).
+ */
+export function segmentEntersGoalSemiCircle(
+  a: Point2D, b: Point2D,
+  centre: Point2D,
+  radiusM: number,
+  bearingDeg: number,
+): number | null {
+  // The semi-circle is on the OUTBOUND side — behind the goal line when coming
+  // from p (CIVL GAP 2025 §6.2.3.1). "Behind" means the far side from p: the
+  // side the pilot is on *after* crossing the chord.
+  // direction from goal centre toward prev TP = goalLineBearing + 90°
+  // outbound = opposite direction, so dot product with towardPrev must be < 0
+  const towardPrevRad = ((bearingDeg + 90) % 360) * Math.PI / 180;
+  const tpx = Math.sin(towardPrevRad);
+  const tpy = Math.cos(towardPrevRad);
+  const onOutboundSide = (px: number, py: number) => px * tpx + py * tpy < 0;
+
+  // Work in centre-relative coordinates
+  const ax = a.x - centre.x, ay = a.y - centre.y;
+  const bx = b.x - centre.x, by = b.y - centre.y;
+  const dx = bx - ax, dy = by - ay;
+
+  // Already inside the semi-circle at point A
+  if (ax*ax + ay*ay <= radiusM*radiusM && onOutboundSide(ax, ay)) return 0;
+
+  // Find intersections of the segment with the bounding circle
+  const A2 = dx*dx + dy*dy;
+  if (A2 < 1e-10) return null;
+  const B2 = 2*(ax*dx + ay*dy);
+  const C2 = ax*ax + ay*ay - radiusM*radiusM;
+  const disc = B2*B2 - 4*A2*C2;
+  if (disc < 0) return null;
+
+  const sqrtDisc = Math.sqrt(disc);
+  // Check entry (t1) then exit (t2); return earliest crossing on the outbound arc
+  for (const t of [(-B2 - sqrtDisc) / (2*A2), (-B2 + sqrtDisc) / (2*A2)]) {
+    if (t < 0 || t > 1) continue;
+    if (onOutboundSide(ax + t*dx, ay + t*dy)) return t;
+  }
   return null;
 }
 

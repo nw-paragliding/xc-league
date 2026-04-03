@@ -13,7 +13,23 @@ import { parseTaskFile, parseCupAll } from '../task-parsers';
 import { parseAndValidate } from '../pipeline';
 import { handleIgcUpload } from '../upload';
 import { exportXctsk, exportCup, buildXctrackDeepLink, buildDownloadUrl, type ExportTask, type ExportTurnpoint } from '../task-exporters';
+import { optimiseRoute, type Cylinder } from '../shared/task-engine';
+import type { ParsedTurnpoint } from '../task-parsers';
 import QRCode from 'qrcode';
+
+/** Compute goal line bearing via optimiseRoute when the parser doesn't provide one. */
+function computeGoalLineBearing(turnpoints: ParsedTurnpoint[]): number | null {
+  const last = turnpoints[turnpoints.length - 1];
+  if (!last || last.type !== 'GOAL_LINE') return null;
+  if (last.goalLineBearingDeg != null) return last.goalLineBearingDeg;
+  if (turnpoints.length < 2) return null;
+  try {
+    const cyls: Cylinder[] = turnpoints.map(tp => ({
+      lat: tp.latitude, lng: tp.longitude, radiusM: tp.radius_m, type: tp.type,
+    }));
+    return optimiseRoute(cyls).goalLineBearingDeg;
+  } catch { return null; }
+}
 
 interface LeagueRouteOptions {
   db: Database.Database;
@@ -172,7 +188,8 @@ export async function registerLeagueRoutes(
             WHERE fs.task_id = t.id AND fs.deleted_at IS NULL AND fa.reached_goal = 1) as goalCount,
            json_group_array(json_object(
              'name', tp.name, 'latitude', tp.latitude, 'longitude', tp.longitude,
-             'radiusM', tp.radius_m, 'type', tp.type, 'sequenceIndex', tp.sequence_index
+             'radiusM', tp.radius_m, 'type', tp.type, 'sequenceIndex', tp.sequence_index,
+             'goalLineBearingDeg', tp.goal_line_bearing_deg
            ) ORDER BY tp.sequence_index) FILTER (WHERE tp.id IS NOT NULL) as turnpointsJson
          FROM tasks t
          LEFT JOIN turnpoints tp ON tp.task_id = t.id AND tp.deleted_at IS NULL
@@ -1236,6 +1253,9 @@ export async function registerLeagueRoutes(
           nextOrderImport,
         );
 
+        // Compute goal line bearing if the parser didn't provide one
+        const glBearing = computeGoalLineBearing(parsed.turnpoints);
+
         // Create turnpoints
         let sssId: string | null = null;
         let essId: string | null = null;
@@ -1244,13 +1264,14 @@ export async function registerLeagueRoutes(
         for (let i = 0; i < parsed.turnpoints.length; i++) {
           const tp = parsed.turnpoints[i];
           const tpId = randomUUID();
+          const bearing = tp.type === 'GOAL_LINE' ? (tp.goalLineBearingDeg ?? glBearing) : null;
 
           db.prepare(
             `INSERT INTO turnpoints (
               id, task_id, league_id, sequence_index,
-              name, latitude, longitude, radius_m, type,
+              name, latitude, longitude, radius_m, type, goal_line_bearing_deg,
               created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
           ).run(
             tpId,
             taskId,
@@ -1261,6 +1282,7 @@ export async function registerLeagueRoutes(
             tp.longitude,
             tp.radius_m,
             tp.type,
+            bearing,
           );
 
           if (tp.type === 'SSS') sssId = tpId;
@@ -1405,6 +1427,7 @@ export async function registerLeagueRoutes(
             nextOrder,
           );
 
+          const glBearingBulk = computeGoalLineBearing(parsed.turnpoints);
           let sssId: string | null = null;
           let essId: string | null = null;
           let goalId: string | null = null;
@@ -1412,13 +1435,14 @@ export async function registerLeagueRoutes(
           for (let i = 0; i < parsed.turnpoints.length; i++) {
             const tp = parsed.turnpoints[i];
             const tpId = randomUUID();
+            const bearing = tp.type === 'GOAL_LINE' ? (tp.goalLineBearingDeg ?? glBearingBulk) : null;
             db.prepare(
               `INSERT INTO turnpoints (
                 id, task_id, league_id, sequence_index,
-                name, latitude, longitude, radius_m, type,
+                name, latitude, longitude, radius_m, type, goal_line_bearing_deg,
                 created_at, updated_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
-            ).run(tpId, taskId, league.id, i, tp.name, tp.latitude, tp.longitude, tp.radius_m, tp.type);
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+            ).run(tpId, taskId, league.id, i, tp.name, tp.latitude, tp.longitude, tp.radius_m, tp.type, bearing);
 
             if (tp.type === 'SSS') sssId = tpId;
             if (tp.type === 'ESS') essId = tpId;

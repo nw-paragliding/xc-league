@@ -5,12 +5,13 @@ import { api, apiFetch, API_BASE } from './client';
 // =============================================================================
 
 export interface Turnpoint {
-  name:          string;
-  latitude:      number;
-  longitude:     number;
-  radiusM:       number;
-  type:          'SSS' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE' | 'CYLINDER';
-  sequenceIndex: number;
+  name:               string;
+  latitude:           number;
+  longitude:          number;
+  radiusM:            number;
+  type:               'SSS' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE' | 'CYLINDER';
+  sequenceIndex:      number;
+  goalLineBearingDeg?: number | null;
 }
 
 export interface Task {

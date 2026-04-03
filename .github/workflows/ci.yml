@@ -5,7 +5,6 @@ on:
 
 jobs:
   test:
-    name: Typecheck & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

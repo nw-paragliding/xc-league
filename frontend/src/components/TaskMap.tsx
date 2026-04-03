@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Turnpoint } from '../api/tasks';
@@ -30,20 +30,10 @@ function toCylinder(tp: Turnpoint): Cylinder {
   return { lat: tp.latitude, lng: tp.longitude, radiusM: tp.radiusM, type: tp.type };
 }
 
-function optimizedLinePts(tps: Turnpoint[]): [number, number][] {
-  if (tps.length < 2) return tps.map(tp => [tp.longitude, tp.latitude]);
-  try {
-    const route = optimiseRoute(tps.map(toCylinder));
-    return route.touchPoints.map(p => [p.lng, p.lat]);
-  } catch {
-    return tps.map(tp => [tp.longitude, tp.latitude]);
-  }
-}
-
 const LOCATION_TOL = 1e-4;
 const COLOR_PRI: Record<string, number> = { '#4a9eff': 3, '#5db87a': 2, '#e8a842': 1 };
 
-interface TpEntry { role: string; color: string; radiusM: number; }
+interface TpEntry { role: string; color: string; radiusM: number; isGoalLine: boolean; }
 interface TpGroup { lng: number; lat: number; name: string; entries: TpEntry[]; }
 
 function buildGroups(tps: Turnpoint[]): TpGroup[] {
@@ -51,14 +41,15 @@ function buildGroups(tps: Turnpoint[]): TpGroup[] {
   const groups: TpGroup[] = [];
   for (const tp of tps) {
     const isPlain = tp.type !== 'SSS' && tp.type !== 'ESS' && tp.type !== 'GOAL_CYLINDER' && tp.type !== 'GOAL_LINE';
-    const role  = tpRole(tp, isPlain ? ++cylIdx : 0);
-    const color = tpColor(tp.type);
+    const role       = tpRole(tp, isPlain ? ++cylIdx : 0);
+    const color      = tpColor(tp.type);
+    const isGoalLine = tp.type === 'GOAL_LINE';
     const g = groups.find(g =>
       Math.abs(g.lng - tp.longitude) < LOCATION_TOL &&
       Math.abs(g.lat - tp.latitude)  < LOCATION_TOL,
     );
-    if (g) g.entries.push({ role, color, radiusM: tp.radiusM });
-    else   groups.push({ lng: tp.longitude, lat: tp.latitude, name: tp.name, entries: [{ role, color, radiusM: tp.radiusM }] });
+    if (g) g.entries.push({ role, color, radiusM: tp.radiusM, isGoalLine });
+    else   groups.push({ lng: tp.longitude, lat: tp.latitude, name: tp.name, entries: [{ role, color, radiusM: tp.radiusM, isGoalLine }] });
   }
   return groups;
 }
@@ -70,6 +61,11 @@ function mergeCircles(entries: TpEntry[]): { radiusM: number; color: string }[] 
     if (!prev || (COLOR_PRI[color] ?? 0) > (COLOR_PRI[prev] ?? 0)) m.set(radiusM, color);
   }
   return Array.from(m.entries()).sort((a, b) => b[0] - a[0]).map(([radiusM, color]) => ({ radiusM, color }));
+}
+
+function optimisedRouteResult(tps: Turnpoint[]) {
+  if (tps.length < 2) return null;
+  try { return optimiseRoute(tps.map(toCylinder)); } catch { return null; }
 }
 
 const BASE_STYLE = {
@@ -110,6 +106,11 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
   tpsRef.current   = turnpoints;
   trackRef.current = track;
 
+  // Cache optimiseRoute result — recomputed only when turnpoints change, not on pan/zoom
+  const cachedRoute = useMemo(() => optimisedRouteResult(turnpoints), [turnpoints]);
+  const routeRef = useRef(cachedRoute);
+  routeRef.current = cachedRoute;
+
   const drawSvg = useCallback(() => {
     const map = mapRef.current;
     const svg = svgRef.current;
@@ -133,7 +134,10 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     };
 
     // ── 1. Optimized route line ───────────────────────────────────────────────
-    const linePts = optimizedLinePts(tps);
+    const routeResult = routeRef.current;
+    const linePts = routeResult
+      ? routeResult.touchPoints.map(p => [p.lng, p.lat] as [number, number])
+      : tps.map(tp => [tp.longitude, tp.latitude] as [number, number]);
     if (linePts.length >= 2) {
       const sp = linePts.map(([lng, lat]) => map.project([lng, lat]));
       const d  = sp.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('');
@@ -163,7 +167,47 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       }
     }
 
-    // ── 2. IGC track line ─────────────────────────────────────────────────────
+    // ── 2. Goal line D-shape (chord + outbound semi-circle, CIVL GAP 2025 §6.2.3.1) ──
+    const lastTp = tps[tps.length - 1];
+    const glBearing = routeResult?.goalLineBearingDeg ?? lastTp?.goalLineBearingDeg;
+    if (lastTp?.type === 'GOAL_LINE' && glBearing != null && linePts.length >= 2) {
+      const brgRad  = glBearing * Math.PI / 180;
+      const halfM   = lastTp.radiusM;
+      const lat     = lastTp.latitude;
+      const lng     = lastTp.longitude;
+      const dlatDeg = Math.cos(brgRad) * halfM / 6371000 * (180 / Math.PI);
+      const dlngDeg = Math.sin(brgRad) * halfM / (6371000 * Math.cos(lat * Math.PI / 180)) * (180 / Math.PI);
+      const ep1    = map.project([lng + dlngDeg, lat + dlatDeg]);
+      const ep2    = map.project([lng - dlngDeg, lat - dlatDeg]);
+      const goalPx = map.project([lng, lat]);
+
+      // Sweep direction: arc curves toward the OUTBOUND side (away from p).
+      // Per CIVL GAP 2025 §6.2.3.1, "behind the goal line when coming from p"
+      // is the far side from p — the D opens away from the approach direction.
+      // Cross product of chord direction × (prevTouchPt - goalCenter) in screen space.
+      // cross < 0 → prevTouchPt is on the counterclockwise side → arc goes clockwise (sweep = 1).
+      const prevLinePt = linePts[linePts.length - 2];
+      const prevPx = map.project(prevLinePt as [number, number]);
+      const cross  = (ep2.x - ep1.x) * (prevPx.y - goalPx.y)
+                   - (ep2.y - ep1.y) * (prevPx.x - goalPx.x);
+      const sweep = cross < 0 ? 1 : 0;
+
+      // Arc radius in screen pixels
+      const arcR = Math.hypot(ep1.x - goalPx.x, ep1.y - goalPx.y).toFixed(1);
+
+      // D-shape: chord ep1→ep2, then semi-circle arc back to ep1
+      const d = [
+        `M${ep1.x.toFixed(1)},${ep1.y.toFixed(1)}`,
+        `L${ep2.x.toFixed(1)},${ep2.y.toFixed(1)}`,
+        `A${arcR},${arcR},0,0,${sweep},${ep1.x.toFixed(1)},${ep1.y.toFixed(1)}`,
+        'Z',
+      ].join(' ');
+
+      mk('path', { d, fill: 'rgba(0,0,0,0.2)',       stroke: 'rgba(0,0,0,0.55)',  'stroke-width': 8, 'stroke-linejoin': 'round' });
+      mk('path', { d, fill: 'rgba(93,184,122,0.15)', stroke: '#5db87a', 'stroke-width': 3, 'stroke-dasharray': '10 5', 'stroke-linejoin': 'round' });
+    }
+
+    // ── 3. IGC track line ─────────────────────────────────────────────────────
     const fixes = trackRef.current;
     if (fixes && fixes.length >= 2) {
       const pts = fixes.map(f => map.project([f.lng, f.lat]));
@@ -174,7 +218,7 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
 
     // ── 4. Cylinder shadow rings ──────────────────────────────────────────────
     for (const group of groups) {
-      for (const { radiusM } of mergeCircles(group.entries)) {
+      for (const { radiusM } of mergeCircles(group.entries.filter(e => !e.isGoalLine))) {
         const { cx, cy, r } = projR(group.lng, group.lat, radiusM);
         if (r < 1) continue;
         mk('circle', { cx: cx.toFixed(1), cy: cy.toFixed(1), r: r.toFixed(1), fill: 'none', stroke: 'rgba(0,0,0,0.55)', 'stroke-width': 8 });
@@ -183,7 +227,7 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
 
     // ── 5. Coloured dashed rings ──────────────────────────────────────────────
     for (const group of groups) {
-      for (const { radiusM, color } of mergeCircles(group.entries)) {
+      for (const { radiusM, color } of mergeCircles(group.entries.filter(e => !e.isGoalLine))) {
         const { cx, cy, r } = projR(group.lng, group.lat, radiusM);
         if (r < 1) continue;
         mk('circle', { cx: cx.toFixed(1), cy: cy.toFixed(1), r: r.toFixed(1), fill: color + '28', stroke: color, 'stroke-width': 3, 'stroke-dasharray': '10 5' });
@@ -277,10 +321,12 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       markersRef.current.push(marker);
     }
 
-    const linePts = optimizedLinePts(turnpoints);
-    if (linePts.length >= 2) {
-      const lons = linePts.map(([lng]) => lng);
-      const lats = linePts.map(([, lat]) => lat);
+    const fitPts = cachedRoute
+      ? cachedRoute.touchPoints.map(p => [p.lng, p.lat] as [number, number])
+      : turnpoints.map(tp => [tp.longitude, tp.latitude] as [number, number]);
+    if (fitPts.length >= 2) {
+      const lons = fitPts.map(([lng]) => lng);
+      const lats = fitPts.map(([, lat]) => lat);
       map.fitBounds(
         [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
         { padding: 80, maxZoom: 14, duration: 600 },
