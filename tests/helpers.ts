@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
+import { dropRedundantLeagueIdColumns } from '../src/migration-helpers';
 
 export function setupTestDatabase(db: Database.Database) {
   db.pragma('journal_mode = WAL');
@@ -31,13 +32,8 @@ export function setupTestDatabase(db: Database.Database) {
     db.prepare(`INSERT OR IGNORE INTO migrations (name) VALUES (?)`).run(name);
   }
 
-  // 0010: drop league_id columns if they still exist (fresh schema already omits them)
-  for (const table of ['turnpoints', 'flight_attempts', 'task_results', 'season_standings']) {
-    const cols = db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all() as { name: string }[];
-    if (cols.some(c => c.name === 'league_id')) {
-      db.exec(`ALTER TABLE ${table} DROP COLUMN league_id`);
-    }
-  }
+  // 0010: drop league_id columns that SQLite can't handle via IF EXISTS
+  dropRedundantLeagueIdColumns(db);
 }
 
 export function createTestUser(db: Database.Database, overrides: Partial<{

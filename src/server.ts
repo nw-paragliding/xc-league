@@ -18,6 +18,7 @@ import fastifyRateLimit from '@fastify/rate-limit';
 import Database from 'better-sqlite3';
 import { join } from 'path';
 import { readFileSync, readdirSync } from 'fs';
+import { dropRedundantLeagueIdColumns } from './migration-helpers';
 import { loadAuthConfig, authPlugin } from './auth';
 import { SQLiteJobQueue, bootstrapWorker, rebuildTaskResults } from './job-queue';
 
@@ -71,15 +72,8 @@ function runMigrations(db: Database.Database): void {
     console.log(`[migrate] Applied ${name}`);
   }
 
-  // 0010: drop league_id columns (SQLite has no DROP COLUMN IF EXISTS,
-  // so we check pragma_table_info and drop only if the column still exists)
-  for (const table of ['turnpoints', 'flight_attempts', 'task_results', 'season_standings']) {
-    const cols = db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all() as { name: string }[];
-    if (cols.some(c => c.name === 'league_id')) {
-      db.exec(`ALTER TABLE ${table} DROP COLUMN league_id`);
-      console.log(`[migrate] Dropped league_id from ${table}`);
-    }
-  }
+  // 0010: drop league_id columns that SQLite can't handle via IF EXISTS
+  dropRedundantLeagueIdColumns(db);
 }
 
 async function main() {
