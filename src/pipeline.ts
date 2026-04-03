@@ -336,6 +336,28 @@ export function detectAttempts(
     let essCrossing: CylinderCrossing | null = null;
     let goalCrossing: CylinderCrossing | null = null;
 
+    // Pre-compute goal line bearing once per attempt (avoid re-running optimiseRoute per segment)
+    const goalTp = task.turnpoints[task.turnpoints.length - 1];
+    let cachedGoalBearing: number | undefined;
+    if (goalTp?.type === 'GOAL_LINE') {
+      cachedGoalBearing = goalTp.goalLineBearingDeg ?? undefined;
+      if (cachedGoalBearing == null) {
+        try {
+          const cyls: Cylinder[] = task.turnpoints.map(t => ({
+            lat: t.lat, lng: t.lng, radiusM: t.radiusM, type: t.type,
+          }));
+          cachedGoalBearing = optimiseRoute(cyls).goalLineBearingDeg;
+        } catch {
+          const prevTp = task.turnpoints[task.turnpoints.length - 2];
+          if (prevTp) {
+            const prevLocal = projectToLocal(prevTp.lat, prevTp.lng, goalTp.lat, goalTp.lng);
+            const inboundAngle = Math.atan2(-prevLocal.x, -prevLocal.y) * 180 / Math.PI;
+            cachedGoalBearing = ((inboundAngle + 90) + 360) % 360;
+          }
+        }
+      }
+    }
+
     // Use while loop so we can re-check the same fix-pair after a TP is achieved
     let fixI = sssCross.fixIndex;
     while (fixI < fixes.length - 1 && tpIdx < task.turnpoints.length) {
@@ -349,24 +371,8 @@ export function detectAttempts(
       let crossed = false;
       let crossT: number | null = null;
 
-      if (tp.type === 'GOAL_LINE') {
-        // Compute goal line bearing: use stored value, or fall back to optimiseRoute
-        // (GAP 2025 §6.2.3.1: perpendicular to optimised inbound, not raw TP centres)
-        let bearingDeg = tp.goalLineBearingDeg;
-        if (bearingDeg == null) {
-          try {
-            const cyls: Cylinder[] = task.turnpoints.map(t => ({
-              lat: t.lat, lng: t.lng, radiusM: t.radiusM, type: t.type,
-            }));
-            bearingDeg = optimiseRoute(cyls).goalLineBearingDeg;
-          } catch {
-            // Last resort: derive from raw TP centres
-            const prevTp = task.turnpoints[tpIdx - 1];
-            const prevLocal = projectToLocal(prevTp.lat, prevTp.lng, tp.lat, tp.lng);
-            const inboundAngle = Math.atan2(-prevLocal.x, -prevLocal.y) * 180 / Math.PI;
-            bearingDeg = ((inboundAngle + 90) + 360) % 360;
-          }
-        }
+      if (tp.type === 'GOAL_LINE' && cachedGoalBearing != null) {
+        const bearingDeg = cachedGoalBearing;
         const tChord = segmentIntersectsGoalLine(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);
         const tArc   = segmentEntersGoalSemiCircle(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);
         if (tChord !== null || tArc !== null) {
