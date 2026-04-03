@@ -355,7 +355,8 @@ export function detectAttempts(
         if (bearingDeg == null) {
           const prevTp = task.turnpoints[tpIdx - 1];
           const prevLocal = projectToLocal(prevTp.lat, prevTp.lng, tp.lat, tp.lng);
-          const inboundAngle = Math.atan2(prevLocal.x, prevLocal.y) * 180 / Math.PI;
+          // prevLocal is goal→prev; negate to get prev→goal (inbound direction)
+          const inboundAngle = Math.atan2(-prevLocal.x, -prevLocal.y) * 180 / Math.PI;
           bearingDeg = ((inboundAngle + 90) + 360) % 360;
         }
         const tChord = segmentIntersectsGoalLine(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);

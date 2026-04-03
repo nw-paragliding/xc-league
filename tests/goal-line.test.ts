@@ -161,15 +161,16 @@ describe('goal D-shape: chord + semi-circle together', () => {
   const BRG = 90;
 
   it('chord crossing scores earlier than arc entry when both occur', () => {
-    // Segment from south to north — crosses chord at y=0, enters arc at y=100
-    // Chord crossing at t=0.5 (y goes -100→100, chord at y=0)
+    // Segment from south to north — crosses chord at y=0, reaches arc at y=+100.
+    // Chord crossing at t=0.5 (y goes -100→100, chord at y=0).
     const tChord = segmentIntersectsGoalLine({ x: 0, y: -100 }, { x: 0, y: 100 }, ORIGIN, R, BRG);
     const tArc = segmentEntersGoalSemiCircle({ x: 0, y: -100 }, { x: 0, y: 100 }, ORIGIN, R, BRG);
-    expect(tChord).toBeCloseTo(0.5, 5);
-    // Arc entry is null here: A is inside the circle at (0,-100) which is exactly on boundary,
-    // and the arc crossing at y=+100 is the EXIT not entry (sweep goes outward)
-    // The pilot crosses the chord first anyway.
     expect(tChord).not.toBeNull();
+    expect(tChord).toBeCloseTo(0.5, 5);
+    // The semi-circle intersection occurs at the outbound boundary point y=+100, i.e. t=1.
+    expect(tArc).not.toBeNull();
+    expect(tArc!).toBeCloseTo(1, 5);
+    expect(tChord!).toBeLessThan(tArc!);
   });
 
   it('pilot approaching from the outbound side scores via semi-circle (not chord)', () => {
