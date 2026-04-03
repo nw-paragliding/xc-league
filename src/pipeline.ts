@@ -350,14 +350,22 @@ export function detectAttempts(
       let crossT: number | null = null;
 
       if (tp.type === 'GOAL_LINE') {
-        // Compute goal line bearing: use stored value or derive from previous TP
+        // Compute goal line bearing: use stored value, or fall back to optimiseRoute
+        // (GAP 2025 §6.2.3.1: perpendicular to optimised inbound, not raw TP centres)
         let bearingDeg = tp.goalLineBearingDeg;
         if (bearingDeg == null) {
-          const prevTp = task.turnpoints[tpIdx - 1];
-          const prevLocal = projectToLocal(prevTp.lat, prevTp.lng, tp.lat, tp.lng);
-          // prevLocal is goal→prev; negate to get prev→goal (inbound direction)
-          const inboundAngle = Math.atan2(-prevLocal.x, -prevLocal.y) * 180 / Math.PI;
-          bearingDeg = ((inboundAngle + 90) + 360) % 360;
+          try {
+            const cyls: Cylinder[] = task.turnpoints.map(t => ({
+              lat: t.lat, lng: t.lng, radiusM: t.radiusM, type: t.type,
+            }));
+            bearingDeg = optimiseRoute(cyls).goalLineBearingDeg;
+          } catch {
+            // Last resort: derive from raw TP centres
+            const prevTp = task.turnpoints[tpIdx - 1];
+            const prevLocal = projectToLocal(prevTp.lat, prevTp.lng, tp.lat, tp.lng);
+            const inboundAngle = Math.atan2(-prevLocal.x, -prevLocal.y) * 180 / Math.PI;
+            bearingDeg = ((inboundAngle + 90) + 360) % 360;
+          }
         }
         const tChord = segmentIntersectsGoalLine(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);
         const tArc   = segmentEntersGoalSemiCircle(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);

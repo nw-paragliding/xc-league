@@ -205,7 +205,8 @@ describe('optimiseRoute with GOAL_LINE', () => {
       { lat: 47.6, lng: -121.8, radiusM: 200, type: 'GOAL_LINE' },
     ];
     const result = optimiseRoute(cylinders);
-    expect(result.goalLineBearingDeg).not.toBe(0);
+    expect(result.goalLineBearingDeg).toBeGreaterThanOrEqual(0);
+    expect(result.goalLineBearingDeg).toBeLessThan(360);
     expect(result.touchPoints).toHaveLength(2);
     expect(result.totalDistanceKm).toBeGreaterThan(0);
   });

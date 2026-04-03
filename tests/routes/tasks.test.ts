@@ -1025,3 +1025,107 @@ describe('Task QR endpoint — GET /leagues/:slug/seasons/:seasonId/tasks/:taskI
     expect(res.statusCode).toBeGreaterThanOrEqual(400);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GOAL_LINE import — verify goal_line_bearing_deg is computed and persisted
+// ─────────────────────────────────────────────────────────────────────────────
+
+const XCTSK_GOAL_LINE = `<?xml version="1.0"?>
+<xctrack>
+  <task type="RACE_TO_GOAL">
+    <turnpoints>
+      <turnpoint>
+        <waypoint name="START" lat="470000000" lon="-1220000000" />
+        <observation-zone type="cylinder" radius="400" />
+      </turnpoint>
+      <turnpoint>
+        <waypoint name="TP1" lat="475000000" lon="-1215000000" />
+        <observation-zone type="cylinder" radius="400" />
+      </turnpoint>
+      <turnpoint>
+        <waypoint name="GOAL" lat="480000000" lon="-1220000000" />
+        <observation-zone type="line" radius="200" />
+      </turnpoint>
+    </turnpoints>
+    <sss index="0" />
+    <ess index="1" />
+    <goal index="2" />
+  </task>
+</xctrack>`;
+
+describe('GOAL_LINE import — goal_line_bearing_deg persistence', () => {
+  let app: ReturnType<typeof Fastify>;
+  let db: ReturnType<typeof getTestDb>;
+  let testLeague: any;
+  let testSeason: any;
+  let adminUser: any;
+
+  beforeEach(async () => {
+    resetTestDb();
+    db = getTestDb();
+    setupTestDatabase(db);
+    adminUser = createTestUser(db);
+    testLeague = createTestLeague(db);
+    addLeagueMember(db, testLeague.id, adminUser.id, 'admin');
+    testSeason = createTestSeason(db, testLeague.id);
+    app = await buildTestApp(db);
+  });
+
+  it('computes and stores goal_line_bearing_deg for a GOAL_LINE task', async () => {
+    const { payload } = makeFilePayload(XCTSK_GOAL_LINE, 'goal-line.xctsk');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/import`,
+      payload,
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const { task } = JSON.parse(res.body);
+
+    // Check DB directly — goal_line_bearing_deg should be non-null for the GOAL_LINE TP
+    const goalTp = db.prepare(
+      `SELECT type, goal_line_bearing_deg FROM turnpoints
+       WHERE task_id = ? AND type = 'GOAL_LINE'`
+    ).get(task.id) as any;
+
+    expect(goalTp).toBeTruthy();
+    expect(goalTp.goal_line_bearing_deg).not.toBeNull();
+    expect(goalTp.goal_line_bearing_deg).toBeGreaterThanOrEqual(0);
+    expect(goalTp.goal_line_bearing_deg).toBeLessThan(360);
+
+    // Non-GOAL_LINE turnpoints should have null bearing
+    const otherTps = db.prepare(
+      `SELECT type, goal_line_bearing_deg FROM turnpoints
+       WHERE task_id = ? AND type != 'GOAL_LINE'`
+    ).all(task.id) as any[];
+    for (const tp of otherTps) {
+      expect(tp.goal_line_bearing_deg).toBeNull();
+    }
+  });
+
+  it('returns goalLineBearingDeg in the task list API', async () => {
+    const { payload } = makeFilePayload(XCTSK_GOAL_LINE, 'goal-line.xctsk');
+
+    await app.inject({
+      method: 'POST',
+      url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/import`,
+      payload,
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+
+    const listRes = await app.inject({
+      method: 'GET',
+      url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks`,
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+
+    expect(listRes.statusCode).toBe(200);
+    const { tasks } = JSON.parse(listRes.body);
+    const goalTp = tasks[0].turnpoints.find((tp: any) => tp.type === 'GOAL_LINE');
+    expect(goalTp).toBeTruthy();
+    expect(goalTp.goalLineBearingDeg).not.toBeNull();
+    expect(typeof goalTp.goalLineBearingDeg).toBe('number');
+  });
+});
