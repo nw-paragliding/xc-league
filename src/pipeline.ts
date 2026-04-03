@@ -520,9 +520,10 @@ export function segmentIntersectsGoalLine(
  * Does segment A→B enter the semi-circular portion of the goal control zone?
  *
  * Per CIVL GAP 2025 §6.2.3.1, the full goal OZ is a D-shape: the chord (goal
- * line) plus a semi-circle of radius r on the inbound side. This function
- * detects entry through the curved arc boundary so pilots who fly into the
- * semi-circle without crossing the chord are still scored correctly.
+ * line) plus a semi-circle of radius r on the OUTBOUND side (away from p —
+ * "behind the goal line when coming from p"). This function detects entry
+ * through the curved arc boundary so pilots who reach the D from any direction
+ * (e.g. approaching from past the goal) are still scored correctly.
  *
  * bearingDeg is the goal LINE bearing (perpendicular to the inbound track).
  */
@@ -532,12 +533,15 @@ export function segmentEntersGoalSemiCircle(
   radiusM: number,
   bearingDeg: number,
 ): number | null {
-  // The inbound side is the half-space facing the previous TP.
+  // The semi-circle is on the OUTBOUND side — behind the goal line when coming
+  // from p (CIVL GAP 2025 §6.2.3.1). "Behind" means the far side from p: the
+  // side the pilot is on *after* crossing the chord.
   // direction from goal centre toward prev TP = goalLineBearing + 90°
+  // outbound = opposite direction, so dot product with towardPrev must be < 0
   const towardPrevRad = ((bearingDeg + 90) % 360) * Math.PI / 180;
   const tpx = Math.sin(towardPrevRad);
   const tpy = Math.cos(towardPrevRad);
-  const onInboundSide = (px: number, py: number) => px * tpx + py * tpy > 0;
+  const onOutboundSide = (px: number, py: number) => px * tpx + py * tpy < 0;
 
   // Work in centre-relative coordinates
   const ax = a.x - centre.x, ay = a.y - centre.y;
@@ -545,7 +549,7 @@ export function segmentEntersGoalSemiCircle(
   const dx = bx - ax, dy = by - ay;
 
   // Already inside the semi-circle at point A
-  if (ax*ax + ay*ay <= radiusM*radiusM && onInboundSide(ax, ay)) return 0;
+  if (ax*ax + ay*ay <= radiusM*radiusM && onOutboundSide(ax, ay)) return 0;
 
   // Find intersections of the segment with the bounding circle
   const A2 = dx*dx + dy*dy;
@@ -559,7 +563,7 @@ export function segmentEntersGoalSemiCircle(
   // Check entry (t1) then exit (t2); return earliest crossing on the inbound arc
   for (const t of [(-B2 - sqrtDisc) / (2*A2), (-B2 + sqrtDisc) / (2*A2)]) {
     if (t < 0 || t > 1) continue;
-    if (onInboundSide(ax + t*dx, ay + t*dy)) return t;
+    if (onOutboundSide(ax + t*dx, ay + t*dy)) return t;
   }
   return null;
 }

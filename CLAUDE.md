@@ -20,8 +20,9 @@ Key rules relevant to this codebase:
 - The line extends **l/2** from the goal centre in each direction, so the optimised route
   always bisects it symmetrically.
 - The full control zone is a **D-shape**: the chord (the line) plus a semi-circle of radius r
-  on the inbound side (the side pilots approach from). Both the line and the semi-circle
-  are part of the valid goal zone.
+  on the **outbound** side — "behind the goal line when coming from p" means the FAR side
+  from p (the side a pilot is on *after* crossing the chord). The flat face of the D faces p.
+  Both the chord and the semi-circle are part of the valid goal zone.
 - Goal can be reached **from any direction** (§9.2.3). Directionality was removed for
   virtual/tracklog goals. The physical goal line (§9.2.3.1) still requires correct direction.
 - Tolerance is applied separately to the straight portion and to the semi-circle (§9.1.3).

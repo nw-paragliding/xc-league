@@ -186,14 +186,16 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       const ep2    = map.project([lng - dlngDeg, lat - dlatDeg]);
       const goalPx = map.project([lng, lat]);
 
-      // Sweep direction: arc curves toward the inbound (approach) side.
+      // Sweep direction: arc curves toward the OUTBOUND side (away from p).
+      // Per CIVL GAP 2025 §6.2.3.1, "behind the goal line when coming from p"
+      // is the far side from p — the D opens away from the approach direction.
       // Cross product of chord direction × (prevTouchPt - goalCenter) in screen space.
-      // cross < 0 → prevTouchPt is on the counterclockwise side → sweep = 0.
+      // cross < 0 → prevTouchPt is on the counterclockwise side → arc goes clockwise (sweep = 1).
       const prevLinePt = linePts[linePts.length - 2];
       const prevPx = map.project(prevLinePt as [number, number]);
       const cross  = (ep2.x - ep1.x) * (prevPx.y - goalPx.y)
                    - (ep2.y - ep1.y) * (prevPx.x - goalPx.x);
-      const sweep = cross < 0 ? 0 : 1;
+      const sweep = cross < 0 ? 1 : 0;
 
       // Arc radius in screen pixels
       const arcR = Math.hypot(ep1.x - goalPx.x, ep1.y - goalPx.y).toFixed(1);
