@@ -25,6 +25,9 @@ RUN npm run build:server
 # ── Stage 2: Build frontend ───────────────────────────────────────────────────
 FROM node:20-alpine AS client-builder
 
+ARG VITE_MAPTILER_KEY
+ARG VITE_OPENAIP_KEY
+
 WORKDIR /build/frontend
 
 COPY frontend/package*.json ./
