@@ -1,7 +1,7 @@
-import Database from 'better-sqlite3';
-import { readFileSync, readdirSync } from 'fs';
-import { join } from 'path';
+import type Database from 'better-sqlite3';
 import { randomUUID } from 'crypto';
+import { readdirSync, readFileSync } from 'fs';
+import { join } from 'path';
 import { dropRedundantLeagueIdColumns } from '../src/migration-helpers';
 
 export function setupTestDatabase(db: Database.Database) {
@@ -24,7 +24,9 @@ export function setupTestDatabase(db: Database.Database) {
 
   // 0002+: numbered migrations
   const migrationsDir = join(__dirname, '../src/migrations');
-  const files = readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
+  const files = readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
   for (const file of files) {
     const name = file.replace('.sql', '');
     const sql = readFileSync(join(migrationsDir, file), 'utf-8');
@@ -36,12 +38,15 @@ export function setupTestDatabase(db: Database.Database) {
   dropRedundantLeagueIdColumns(db);
 }
 
-export function createTestUser(db: Database.Database, overrides: Partial<{
-  id: string;
-  email: string;
-  displayName: string;
-  isSuperAdmin: boolean;
-}> = {}) {
+export function createTestUser(
+  db: Database.Database,
+  overrides: Partial<{
+    id: string;
+    email: string;
+    displayName: string;
+    isSuperAdmin: boolean;
+  }> = {},
+) {
   const userId = overrides.id || randomUUID();
   const email = overrides.email || `test-${userId}@example.com`;
   const displayName = overrides.displayName || 'Test User';
@@ -49,7 +54,7 @@ export function createTestUser(db: Database.Database, overrides: Partial<{
 
   db.prepare(
     `INSERT INTO users (id, email, display_name, is_super_admin, token_version, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 0, datetime('now'), datetime('now'))`
+     VALUES (?, ?, ?, ?, 0, datetime('now'), datetime('now'))`,
   ).run(userId, email, displayName, isSuperAdmin);
 
   return {
@@ -60,19 +65,22 @@ export function createTestUser(db: Database.Database, overrides: Partial<{
   };
 }
 
-export function createTestLeague(db: Database.Database, overrides: Partial<{
-  id: string;
-  name: string;
-  slug: string;
-  description: string;
-}> = {}) {
+export function createTestLeague(
+  db: Database.Database,
+  overrides: Partial<{
+    id: string;
+    name: string;
+    slug: string;
+    description: string;
+  }> = {},
+) {
   const leagueId = overrides.id || randomUUID();
   const name = overrides.name || 'Test League';
   const slug = overrides.slug || `test-league-${leagueId.slice(0, 8)}`;
 
   db.prepare(
     `INSERT INTO leagues (id, name, slug, description, created_at, updated_at)
-     VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))`
+     VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))`,
   ).run(leagueId, name, slug, overrides.description || null);
 
   return {
@@ -87,13 +95,13 @@ export function addLeagueMember(
   db: Database.Database,
   leagueId: string,
   userId: string,
-  role: 'admin' | 'pilot' = 'pilot'
+  role: 'admin' | 'pilot' = 'pilot',
 ) {
   const membershipId = randomUUID();
 
   db.prepare(
     `INSERT INTO league_memberships (id, league_id, user_id, role, joined_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))`
+     VALUES (?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))`,
   ).run(membershipId, leagueId, userId, role);
 
   return membershipId;
@@ -108,7 +116,7 @@ export function createTestSeason(
     competitionType: 'XC' | 'HIKE_AND_FLY';
     startDate: string;
     endDate: string;
-  }> = {}
+  }> = {},
 ) {
   const seasonId = overrides.id || randomUUID();
   const name = overrides.name || 'Test Season';
@@ -121,7 +129,7 @@ export function createTestSeason(
       id, league_id, name, competition_type, start_date, end_date,
       nominal_distance_km, nominal_time_s, nominal_goal_ratio,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 70.0, 5400, 0.3, datetime('now'), datetime('now'))`
+    ) VALUES (?, ?, ?, ?, ?, ?, 70.0, 5400, 0.3, datetime('now'), datetime('now'))`,
   ).run(seasonId, leagueId, name, competitionType, startDate, endDate);
 
   return {
@@ -143,7 +151,7 @@ export function createTestTask(
     taskType: 'RACE_TO_GOAL' | 'OPEN_DISTANCE';
     openDate: string;
     closeDate: string;
-  }> = {}
+  }> = {},
 ) {
   const taskId = overrides.id || randomUUID();
   const name = overrides.name || 'Test Task';
@@ -155,7 +163,7 @@ export function createTestTask(
     `INSERT INTO tasks (
       id, season_id, league_id, name, task_type, open_date, close_date,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
   ).run(taskId, seasonId, leagueId, name, taskType, openDate, closeDate);
 
   return {
@@ -193,14 +201,14 @@ export function createTestAttempt(
   userId: string,
   leagueId: string,
   opts: {
-    reachedGoal?:        boolean;
-    distanceFlownKm?:    number;
-    taskTimeS?:          number | null;
-    distancePoints?:     number;
-    timePoints?:         number;
-    totalPoints?:        number;
+    reachedGoal?: boolean;
+    distanceFlownKm?: number;
+    taskTimeS?: number | null;
+    distancePoints?: number;
+    timePoints?: number;
+    totalPoints?: number;
     hasFlaggedCrossings?: boolean;
-    attemptIndex?:       number;
+    attemptIndex?: number;
   } = {},
 ) {
   const id = randomUUID();
@@ -215,18 +223,24 @@ export function createTestAttempt(
        created_at, updated_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    id, submissionId, taskId, userId,
-    now, opts.reachedGoal ? now : null, opts.reachedGoal ? now : null,
+    id,
+    submissionId,
+    taskId,
+    userId,
+    now,
+    opts.reachedGoal ? now : null,
+    opts.reachedGoal ? now : null,
     opts.taskTimeS ?? null,
     opts.reachedGoal ? 1 : 0,
     0,
-    opts.distanceFlownKm  ?? 10,
-    opts.distancePoints   ?? 100,
-    opts.timePoints       ?? 0,
-    opts.totalPoints      ?? 100,
+    opts.distanceFlownKm ?? 10,
+    opts.distancePoints ?? 100,
+    opts.timePoints ?? 0,
+    opts.totalPoints ?? 100,
     opts.hasFlaggedCrossings ? 1 : 0,
     opts.attemptIndex ?? 0,
-    now, now,
+    now,
+    now,
   );
   return id;
 }
@@ -238,13 +252,13 @@ export function createTestTaskResult(
   leagueId: string,
   bestAttemptId: string,
   opts: {
-    rank?:               number;
-    distanceFlownKm?:    number;
-    reachedGoal?:        boolean;
-    taskTimeS?:          number | null;
-    distancePoints?:     number;
-    timePoints?:         number;
-    totalPoints?:        number;
+    rank?: number;
+    distanceFlownKm?: number;
+    reachedGoal?: boolean;
+    taskTimeS?: number | null;
+    distancePoints?: number;
+    timePoints?: number;
+    totalPoints?: number;
     hasFlaggedCrossings?: boolean;
   } = {},
 ) {
@@ -258,16 +272,21 @@ export function createTestTaskResult(
        rank, last_computed_at, created_at, updated_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    id, taskId, userId, bestAttemptId,
-    opts.distanceFlownKm  ?? 10,
-    opts.reachedGoal      ? 1 : 0,
-    opts.taskTimeS        ?? null,
-    opts.distancePoints   ?? 100,
-    opts.timePoints       ?? 0,
-    opts.totalPoints      ?? 100,
+    id,
+    taskId,
+    userId,
+    bestAttemptId,
+    opts.distanceFlownKm ?? 10,
+    opts.reachedGoal ? 1 : 0,
+    opts.taskTimeS ?? null,
+    opts.distancePoints ?? 100,
+    opts.timePoints ?? 0,
+    opts.totalPoints ?? 100,
     opts.hasFlaggedCrossings ? 1 : 0,
     opts.rank ?? 1,
-    now, now, now,
+    now,
+    now,
+    now,
   );
   return id;
 }
@@ -278,9 +297,9 @@ export function createTestSeasonStanding(
   userId: string,
   leagueId: string,
   opts: {
-    rank?:          number;
-    totalPoints?:   number;
-    tasksFlown?:    number;
+    rank?: number;
+    totalPoints?: number;
+    tasksFlown?: number;
     tasksWithGoal?: number;
   } = {},
 ) {
@@ -293,12 +312,16 @@ export function createTestSeasonStanding(
        rank, last_computed_at, created_at, updated_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    id, seasonId, userId,
-    opts.totalPoints   ?? 100,
-    opts.tasksFlown    ?? 1,
+    id,
+    seasonId,
+    userId,
+    opts.totalPoints ?? 100,
+    opts.tasksFlown ?? 1,
     opts.tasksWithGoal ?? 0,
-    opts.rank          ?? 1,
-    now, now, now,
+    opts.rank ?? 1,
+    now,
+    now,
+    now,
   );
   return id;
 }

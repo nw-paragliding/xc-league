@@ -1,7 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
 import SeasonManagementPage from './SeasonManagementPage';
 
 // Mock the useLeague hook
@@ -33,7 +33,7 @@ describe('SeasonManagementPage', () => {
     return render(
       <QueryClientProvider client={queryClient}>
         <SeasonManagementPage />
-      </QueryClientProvider>
+      </QueryClientProvider>,
     );
   };
 
@@ -107,9 +107,7 @@ describe('SeasonManagementPage', () => {
   });
 
   it('should handle API errors gracefully', async () => {
-    vi.mocked(leagueApi.listSeasons).mockRejectedValue(
-      new Error('Failed to load seasons')
-    );
+    vi.mocked(leagueApi.listSeasons).mockRejectedValue(new Error('Failed to load seasons'));
 
     renderPage();
 

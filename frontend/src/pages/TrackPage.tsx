@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
-import { useTrack } from '../hooks/useTrack';
-import { useTasks, useMySubmissions } from '../hooks/useTasks';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
+import { useMySubmissions, useTasks } from '../hooks/useTasks';
+import { useTrack } from '../hooks/useTrack';
 import { TaskMap } from './TasksPage';
 
 function fmtTime(seconds: number | null) {
@@ -9,8 +9,8 @@ function fmtTime(seconds: number | null) {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-  return `${m}:${String(s).padStart(2,'0')}`;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 export default function TrackPage() {
@@ -23,8 +23,8 @@ export default function TrackPage() {
   const { data: submissions } = useMySubmissions(selectedTaskId);
   const { data: track, isLoading, error } = useTrack(selectedTaskId, selectedSubmissionId);
 
-  const selectedTask  = tasks?.find(t => t.id === selectedTaskId) ?? null;
-  const trackCoords   = track?.fixes.map(f => [f.lng, f.lat] as [number, number]);
+  const selectedTask = tasks?.find((t) => t.id === selectedTaskId) ?? null;
+  const trackCoords = track?.fixes.map((f) => [f.lng, f.lat] as [number, number]);
 
   // Auto-select first submission when submissions load
   useEffect(() => {
@@ -41,7 +41,9 @@ export default function TrackPage() {
         <div style={{ fontSize: 14, color: 'var(--text2)', fontFamily: 'var(--font-mono)', marginBottom: 24 }}>
           Track replay is available for your own submissions
         </div>
-        <button className="btn btn-primary" onClick={login}>Continue with Google</button>
+        <button className="btn btn-primary" onClick={login}>
+          Continue with Google
+        </button>
       </div>
     );
   }
@@ -57,7 +59,11 @@ export default function TrackPage() {
               : 'Select a task and submission'}
           </div>
         </div>
-        {track?.meta.reachedGoal && <span className="badge badge-goal" style={{ alignSelf: 'center' }}>✓ Goal</span>}
+        {track?.meta.reachedGoal && (
+          <span className="badge badge-goal" style={{ alignSelf: 'center' }}>
+            ✓ Goal
+          </span>
+        )}
       </div>
 
       <div className="page-body" style={{ flex: 1, display: 'flex', gap: 20, overflow: 'hidden', minHeight: 0 }}>
@@ -66,53 +72,99 @@ export default function TrackPage() {
           <div className="map-container" style={{ flex: 1, position: 'relative' }}>
             <TaskMap turnpoints={selectedTask?.turnpoints ?? []} trackCoords={trackCoords} />
             {!selectedSubmissionId && !isLoading && (
-              <div style={{
-                position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: 'var(--text3)', fontFamily: 'var(--font-mono)', fontSize: 13,
-                background: 'rgba(15,19,24,0.6)', pointerEvents: 'none',
-              }}>
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--text3)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 13,
+                  background: 'rgba(15,19,24,0.6)',
+                  pointerEvents: 'none',
+                }}
+              >
                 Select a task and submission to view track
               </div>
             )}
             {isLoading && (
-              <div style={{
-                position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: 'var(--text3)', fontFamily: 'var(--font-mono)', fontSize: 13,
-                background: 'rgba(15,19,24,0.6)', pointerEvents: 'none',
-              }}>
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--text3)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 13,
+                  background: 'rgba(15,19,24,0.6)',
+                  pointerEvents: 'none',
+                }}
+              >
                 Loading track…
               </div>
             )}
             {(error as any) && (
-              <div style={{
-                position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: 'var(--danger)', fontFamily: 'var(--font-mono)', fontSize: 13,
-                background: 'rgba(15,19,24,0.6)', pointerEvents: 'none',
-              }}>
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--danger)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 13,
+                  background: 'rgba(15,19,24,0.6)',
+                  pointerEvents: 'none',
+                }}
+              >
                 {(error as any).message ?? 'Failed to load track'}
               </div>
             )}
             {track && (
               <div className="map-overlay">
-                <div className="map-chip"><strong>Duration</strong> {fmtTime(track.meta.durationS)}</div>
-                <div className="map-chip"><strong>Points</strong> {track.meta.totalPoints}</div>
+                <div className="map-chip">
+                  <strong>Duration</strong> {fmtTime(track.meta.durationS)}
+                </div>
+                <div className="map-chip">
+                  <strong>Points</strong> {track.meta.totalPoints}
+                </div>
               </div>
             )}
           </div>
         </div>
 
         {/* Sidebar */}
-        <div style={{ width: 260, flexShrink: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div
+          style={{ width: 260, flexShrink: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 20 }}
+        >
           {/* Task picker */}
           <div>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: '0.15em',
+                textTransform: 'uppercase',
+                color: 'var(--text3)',
+                fontFamily: 'var(--font-mono)',
+                marginBottom: 8,
+              }}
+            >
               Task
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {(tasks ?? []).map(t => (
+              {(tasks ?? []).map((t) => (
                 <div
                   key={t.id}
-                  onClick={() => { setSelectedTaskId(t.id); setSelectedSubmissionId(null); }}
+                  onClick={() => {
+                    setSelectedTaskId(t.id);
+                    setSelectedSubmissionId(null);
+                  }}
                   style={{
                     padding: '8px 12px',
                     borderRadius: 'var(--r)',
@@ -134,7 +186,17 @@ export default function TrackPage() {
           {/* Submission picker */}
           {selectedTaskId && (
             <div>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: '0.15em',
+                  textTransform: 'uppercase',
+                  color: 'var(--text3)',
+                  fontFamily: 'var(--font-mono)',
+                  marginBottom: 8,
+                }}
+              >
                 Submission
               </div>
               {!submissions?.length ? (
@@ -143,7 +205,7 @@ export default function TrackPage() {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {submissions.map(s => (
+                  {submissions.map((s) => (
                     <div
                       key={s.id}
                       onClick={() => setSelectedSubmissionId(s.id)}
@@ -157,7 +219,12 @@ export default function TrackPage() {
                         transition: 'all 0.15s',
                       }}
                     >
-                      <div style={{ fontWeight: 600, color: selectedSubmissionId === s.id ? 'var(--gold)' : 'var(--text2)' }}>
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          color: selectedSubmissionId === s.id ? 'var(--gold)' : 'var(--text2)',
+                        }}
+                      >
                         {s.igcFilename}
                       </div>
                       <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--text3)', marginTop: 2 }}>
@@ -173,7 +240,17 @@ export default function TrackPage() {
           {/* Crossings */}
           {track?.crossings.length ? (
             <div>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: '0.15em',
+                  textTransform: 'uppercase',
+                  color: 'var(--text3)',
+                  fontFamily: 'var(--font-mono)',
+                  marginBottom: 8,
+                }}
+              >
                 Crossings
               </div>
               <div className="crossing-list">

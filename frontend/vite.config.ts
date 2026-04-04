@@ -1,5 +1,5 @@
-import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite';
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -17,8 +17,8 @@ export default defineConfig({
             // Rewrite cookies from :3000 to :5173 so they work cross-port
             const cookies = proxyRes.headers['set-cookie'];
             if (cookies) {
-              proxyRes.headers['set-cookie'] = cookies.map(cookie =>
-                cookie.replace(/Domain=localhost:3000/gi, 'Domain=localhost')
+              proxyRes.headers['set-cookie'] = cookies.map((cookie) =>
+                cookie.replace(/Domain=localhost:3000/gi, 'Domain=localhost'),
               );
             }
           });

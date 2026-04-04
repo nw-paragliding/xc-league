@@ -1,11 +1,11 @@
-import { useState, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useUpload } from '../hooks/useSubmission';
+import { useRef, useState } from 'react';
+import { leagueApi } from '../api/leagues';
+import type { SubmissionResponse } from '../api/tasks';
+import { tasksApi } from '../api/tasks';
 import { useAuth } from '../hooks/useAuth';
 import { useLeague } from '../hooks/useLeague';
-import { leagueApi } from '../api/leagues';
-import { tasksApi } from '../api/tasks';
-import type { SubmissionResponse } from '../api/tasks';
+import { useUpload } from '../hooks/useSubmission';
 import { TaskMap } from './TasksPage';
 
 function fmtFileSize(bytes: number) {
@@ -19,11 +19,13 @@ function fmtTime(seconds: number | null) {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-  return `${m}:${String(s).padStart(2,'0')}`;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function fmtPts(n: number) { return Math.round(n).toString(); }
+function fmtPts(n: number) {
+  return Math.round(n).toString();
+}
 
 function ScoreResult({ result }: { result: SubmissionResponse }) {
   if ('errorCode' in result) {
@@ -38,15 +40,17 @@ function ScoreResult({ result }: { result: SubmissionResponse }) {
             </div>
           </div>
         </div>
-        <div style={{
-          background: 'rgba(224,82,82,0.08)',
-          border: '1px solid rgba(224,82,82,0.2)',
-          borderRadius: 'var(--r)',
-          padding: '12px 16px',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 13,
-          color: 'var(--danger)',
-        }}>
+        <div
+          style={{
+            background: 'rgba(224,82,82,0.08)',
+            border: '1px solid rgba(224,82,82,0.2)',
+            borderRadius: 'var(--r)',
+            padding: '12px 16px',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 13,
+            color: 'var(--danger)',
+          }}
+        >
           {result.errorMessage}
         </div>
       </div>
@@ -99,9 +103,7 @@ function ScoreResult({ result }: { result: SubmissionResponse }) {
       )}
 
       {result.timePointsProvisional && (
-        <div className="provisional-note">
-          ⏳ Time points are provisional — will be updated once the task closes
-        </div>
+        <div className="provisional-note">⏳ Time points are provisional — will be updated once the task closes</div>
       )}
 
       {result.allAttempts.length > 1 && (
@@ -132,7 +134,7 @@ export default function UploadPage() {
     enabled: !!user,
   });
 
-  const openSeasons = (seasonsData?.seasons ?? []).filter(s => s.status === 'open');
+  const openSeasons = (seasonsData?.seasons ?? []).filter((s) => s.status === 'open');
 
   // Fetch tasks for the selected season
   const { data: tasksData, isLoading: tasksLoading } = useQuery({
@@ -193,7 +195,9 @@ export default function UploadPage() {
         <div style={{ fontSize: 14, color: 'var(--text2)', fontFamily: 'var(--font-mono)', marginBottom: 24 }}>
           You need to be logged in to submit flights
         </div>
-        <button className="btn btn-primary" onClick={login}>Continue with Google</button>
+        <button className="btn btn-primary" onClick={login}>
+          Continue with Google
+        </button>
       </div>
     );
   }
@@ -212,7 +216,9 @@ export default function UploadPage() {
           <>
             <ScoreResult result={result} />
             <div style={{ marginTop: 20, display: 'flex', gap: 10 }}>
-              <button className="btn btn-primary" onClick={handleReset}>Upload Another</button>
+              <button className="btn btn-primary" onClick={handleReset}>
+                Upload Another
+              </button>
             </div>
           </>
         ) : (
@@ -220,18 +226,32 @@ export default function UploadPage() {
             {/* Drop zone */}
             <div
               className={`upload-zone${drag ? ' drag-over' : ''}`}
-              onDragEnter={() => { dragDepthRef.current++; setDrag(true); }}
-              onDragOver={e => e.preventDefault()}
-              onDragLeave={() => { dragDepthRef.current--; if (dragDepthRef.current === 0) setDrag(false); }}
-              onDrop={e => { e.preventDefault(); dragDepthRef.current = 0; setDrag(false); handleFile(e.dataTransfer.files[0]); }}
-              onClick={() => { if (fileRef.current) fileRef.current.value = ''; fileRef.current?.click(); }}
+              onDragEnter={() => {
+                dragDepthRef.current++;
+                setDrag(true);
+              }}
+              onDragOver={(e) => e.preventDefault()}
+              onDragLeave={() => {
+                dragDepthRef.current--;
+                if (dragDepthRef.current === 0) setDrag(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                dragDepthRef.current = 0;
+                setDrag(false);
+                handleFile(e.dataTransfer.files[0]);
+              }}
+              onClick={() => {
+                if (fileRef.current) fileRef.current.value = '';
+                fileRef.current?.click();
+              }}
             >
               <input
                 ref={fileRef}
                 type="file"
                 accept=".igc"
                 style={{ display: 'none' }}
-                onChange={e => handleFile(e.target.files?.[0])}
+                onChange={(e) => handleFile(e.target.files?.[0])}
               />
               {file ? (
                 <div>
@@ -243,7 +263,11 @@ export default function UploadPage() {
                   <button
                     className="btn btn-ghost"
                     style={{ marginTop: 12, fontSize: 12 }}
-                    onClick={e => { e.stopPropagation(); setFile(null); reset(); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFile(null);
+                      reset();
+                    }}
                   >
                     ✕ Remove
                   </button>
@@ -260,16 +284,18 @@ export default function UploadPage() {
 
             {/* Error */}
             {status === 'error' && error && (
-              <div style={{
-                marginTop: 12,
-                padding: '10px 14px',
-                background: 'rgba(224,82,82,0.08)',
-                border: '1px solid rgba(224,82,82,0.2)',
-                borderRadius: 'var(--r)',
-                fontSize: 13,
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--danger)',
-              }}>
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: '10px 14px',
+                  background: 'rgba(224,82,82,0.08)',
+                  border: '1px solid rgba(224,82,82,0.2)',
+                  borderRadius: 'var(--r)',
+                  fontSize: 13,
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--danger)',
+                }}
+              >
                 {error}
               </div>
             )}
@@ -279,24 +305,36 @@ export default function UploadPage() {
               <div className="fade-in" style={{ marginTop: 24 }}>
                 {/* Season picker */}
                 <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: 10 }}>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      letterSpacing: '0.15em',
+                      textTransform: 'uppercase',
+                      color: 'var(--text3)',
+                      fontFamily: 'var(--font-mono)',
+                      marginBottom: 10,
+                    }}
+                  >
                     Select Season
                   </div>
                   {seasonsLoading ? (
                     <div style={{ height: 48, borderRadius: 'var(--r)' }} className="shimmer" />
                   ) : openSeasons.length === 0 ? (
-                    <div style={{
-                      padding: '0.75rem 1rem',
-                      border: '1px solid var(--border)',
-                      borderRadius: 'var(--r)',
-                      fontSize: 13,
-                      color: 'var(--text2)',
-                    }}>
+                    <div
+                      style={{
+                        padding: '0.75rem 1rem',
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--r)',
+                        fontSize: 13,
+                        color: 'var(--text2)',
+                      }}
+                    >
                       No open seasons. Ask your league admin to open a season.
                     </div>
                   ) : (
                     <div className="task-select-list">
-                      {openSeasons.map(s => (
+                      {openSeasons.map((s) => (
                         <div
                           key={s.id}
                           className={`task-select-item${selectedSeasonId === s.id ? ' sel' : ''}`}
@@ -307,7 +345,14 @@ export default function UploadPage() {
                         >
                           <div>
                             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{s.name}</div>
-                            <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text3)', marginTop: 2 }}>
+                            <div
+                              style={{
+                                fontSize: 11,
+                                fontFamily: 'var(--font-mono)',
+                                color: 'var(--text3)',
+                                marginTop: 2,
+                              }}
+                            >
                               {new Date(s.startDate).toLocaleDateString()} – {new Date(s.endDate).toLocaleDateString()}
                             </div>
                           </div>
@@ -320,15 +365,17 @@ export default function UploadPage() {
 
                 {/* Registration check */}
                 {selectedSeasonId && !regLoading && !isRegistered && (
-                  <div style={{
-                    padding: '10px 14px',
-                    marginBottom: 16,
-                    background: 'rgba(234,179,8,0.08)',
-                    border: '1px solid rgba(234,179,8,0.3)',
-                    borderRadius: 'var(--r)',
-                    fontSize: 13,
-                    color: '#92400e',
-                  }}>
+                  <div
+                    style={{
+                      padding: '10px 14px',
+                      marginBottom: 16,
+                      background: 'rgba(234,179,8,0.08)',
+                      border: '1px solid rgba(234,179,8,0.3)',
+                      borderRadius: 'var(--r)',
+                      fontSize: 13,
+                      color: '#92400e',
+                    }}
+                  >
                     You are not registered for this season.{' '}
                     <strong>Go to My Seasons to register before uploading.</strong>
                   </div>
@@ -337,7 +384,17 @@ export default function UploadPage() {
                 {/* Task picker — only when registered */}
                 {selectedSeasonId && isRegistered && (
                   <>
-                    <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: 10 }}>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        letterSpacing: '0.15em',
+                        textTransform: 'uppercase',
+                        color: 'var(--text3)',
+                        fontFamily: 'var(--font-mono)',
+                        marginBottom: 10,
+                      }}
+                    >
                       Select Task
                     </div>
                     {tasksLoading ? (
@@ -345,8 +402,8 @@ export default function UploadPage() {
                     ) : (
                       <div className="task-select-list">
                         {tasks
-                          .filter(t => !t.scoresFrozenAt && new Date(t.closeDate) > new Date())
-                          .map(t => (
+                          .filter((t) => !t.scoresFrozenAt && new Date(t.closeDate) > new Date())
+                          .map((t) => (
                             <div
                               key={t.id}
                               className={`task-select-item${selectedTaskId === t.id ? ' sel' : ''}`}
@@ -354,7 +411,14 @@ export default function UploadPage() {
                             >
                               <div>
                                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{t.name}</div>
-                                <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text3)', marginTop: 2 }}>
+                                <div
+                                  style={{
+                                    fontSize: 11,
+                                    fontFamily: 'var(--font-mono)',
+                                    color: 'var(--text3)',
+                                    marginTop: 2,
+                                  }}
+                                >
                                   Closes {new Date(t.closeDate).toLocaleString()}
                                 </div>
                               </div>
@@ -363,7 +427,7 @@ export default function UploadPage() {
                               </div>
                             </div>
                           ))}
-                        {tasks.filter(t => !t.scoresFrozenAt && new Date(t.closeDate) > new Date()).length === 0 && (
+                        {tasks.filter((t) => !t.scoresFrozenAt && new Date(t.closeDate) > new Date()).length === 0 && (
                           <div style={{ padding: '0.75rem 1rem', fontSize: 13, color: 'var(--text2)' }}>
                             No open tasks in this season.
                           </div>
@@ -378,10 +442,27 @@ export default function UploadPage() {
             {/* Task map — shown when a task is selected */}
             {selectedTaskId && taskDetail?.task?.turnpoints?.length ? (
               <div className="fade-in" style={{ marginTop: 24 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: 10 }}>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    letterSpacing: '0.15em',
+                    textTransform: 'uppercase',
+                    color: 'var(--text3)',
+                    fontFamily: 'var(--font-mono)',
+                    marginBottom: 10,
+                  }}
+                >
                   Task Map
                 </div>
-                <div style={{ height: 340, borderRadius: 'var(--r)', overflow: 'hidden', border: '1px solid var(--border)' }}>
+                <div
+                  style={{
+                    height: 340,
+                    borderRadius: 'var(--r)',
+                    overflow: 'hidden',
+                    border: '1px solid var(--border)',
+                  }}
+                >
                   <TaskMap turnpoints={taskDetail.task.turnpoints} />
                 </div>
               </div>
@@ -399,7 +480,15 @@ export default function UploadPage() {
                       {status === 'processing' ? (
                         <div className="progress-fill" />
                       ) : (
-                        <div style={{ height: '100%', width: `${progress}%`, background: 'var(--gold)', borderRadius: 2, transition: 'width 0.2s' }} />
+                        <div
+                          style={{
+                            height: '100%',
+                            width: `${progress}%`,
+                            background: 'var(--gold)',
+                            borderRadius: 2,
+                            transition: 'width 0.2s',
+                          }}
+                        />
                       )}
                     </div>
                   </div>

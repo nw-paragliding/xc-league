@@ -2,15 +2,15 @@
 // SeasonPage — Results: Overall score matrix + per-task breakdown tabs
 // =============================================================================
 
-import { useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
-import { useTasks } from '../hooks/useTasks';
-import { useStandings } from '../hooks/useStandings';
+import { useState } from 'react';
+import type { StandingsEntry } from '../api/standings';
+import type { LeaderboardEntry, Task } from '../api/tasks';
+import { tasksApi } from '../api/tasks';
 import { useAuth } from '../hooks/useAuth';
 import { useLeague } from '../hooks/useLeague';
-import { tasksApi } from '../api/tasks';
-import type { LeaderboardEntry, Task } from '../api/tasks';
-import type { StandingsEntry } from '../api/standings';
+import { useStandings } from '../hooks/useStandings';
+import { useTasks } from '../hooks/useTasks';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -18,8 +18,8 @@ import type { StandingsEntry } from '../api/standings';
 
 function fmtTime(s: number | null) {
   if (!s) return '—';
-  const h   = Math.floor(s / 3600);
-  const m   = Math.floor((s % 3600) / 60);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
   if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
   return `${m}:${String(sec).padStart(2, '0')}`;
@@ -50,18 +50,21 @@ const TD: React.CSSProperties = {
 function RankBadge({ rank }: { rank: number }) {
   const top = rank <= 3;
   return (
-    <span style={{
-      display: 'inline-flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: 22, height: 22,
-      borderRadius: 4,
-      fontSize: 11,
-      fontWeight: 700,
-      fontFamily: 'var(--font-mono)',
-      background: top ? 'rgba(59,130,246,0.15)' : 'transparent',
-      color: top ? 'var(--accent)' : 'var(--text3)',
-    }}>
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 22,
+        height: 22,
+        borderRadius: 4,
+        fontSize: 11,
+        fontWeight: 700,
+        fontFamily: 'var(--font-mono)',
+        background: top ? 'rgba(59,130,246,0.15)' : 'transparent',
+        color: top ? 'var(--accent)' : 'var(--text3)',
+      }}
+    >
       {rank}
     </span>
   );
@@ -70,11 +73,11 @@ function RankBadge({ rank }: { rank: number }) {
 function PilotCell({ name, isMe }: { name: string; isMe: boolean }) {
   return (
     <td style={TD}>
-      <span style={{ fontWeight: isMe ? 700 : 400, color: isMe ? 'var(--accent)' : 'var(--text)' }}>
-        {name}
-      </span>
+      <span style={{ fontWeight: isMe ? 700 : 400, color: isMe ? 'var(--accent)' : 'var(--text)' }}>{name}</span>
       {isMe && (
-        <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--accent)', fontFamily: 'var(--font-mono)', opacity: 0.7 }}>
+        <span
+          style={{ marginLeft: 6, fontSize: 10, color: 'var(--accent)', fontFamily: 'var(--font-mono)', opacity: 0.7 }}
+        >
           you
         </span>
       )}
@@ -115,10 +118,10 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
 
 interface OverallTabProps {
   standings: StandingsEntry[];
-  tasks:     Task[];
-  scoreMap:  Map<string, Map<string, number>>;
+  tasks: Task[];
+  scoreMap: Map<string, Map<string, number>>;
   maxByTask: Record<string, number>;
-  myId:      string | undefined;
+  myId: string | undefined;
 }
 
 function OverallTab({ standings, tasks, scoreMap, maxByTask, myId }: OverallTabProps) {
@@ -138,14 +141,16 @@ function OverallTab({ standings, tasks, scoreMap, maxByTask, myId }: OverallTabP
             <th style={{ ...TH, width: 36 }}>#</th>
             <th style={{ ...TH, minWidth: 160 }}>Pilot</th>
             <th style={{ ...TH, textAlign: 'right', paddingRight: 24, whiteSpace: 'nowrap' }}>Total</th>
-            {tasks.map(t => (
+            {tasks.map((t) => (
               <th key={t.id} style={{ ...TH, textAlign: 'center', width: 80 }}>
-                <div style={{
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  maxWidth: 80,
-                }}>
+                <div
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: 80,
+                  }}
+                >
                   {t.name}
                 </div>
               </th>
@@ -153,11 +158,13 @@ function OverallTab({ standings, tasks, scoreMap, maxByTask, myId }: OverallTabP
           </tr>
         </thead>
         <tbody>
-          {standings.map(row => {
+          {standings.map((row) => {
             const isMe = row.pilotId === myId;
             return (
               <tr key={row.pilotId} style={{ background: isMe ? 'rgba(59,130,246,0.07)' : undefined }}>
-                <td style={TD}><RankBadge rank={row.rank} /></td>
+                <td style={TD}>
+                  <RankBadge rank={row.rank} />
+                </td>
                 <PilotCell name={row.pilotName} isMe={isMe} />
 
                 <td style={{ ...TD, textAlign: 'right', paddingRight: 24 }}>
@@ -166,23 +173,25 @@ function OverallTab({ standings, tasks, scoreMap, maxByTask, myId }: OverallTabP
                   </span>
                 </td>
 
-                {tasks.map(task => {
-                  const pts   = scoreMap.get(task.id)?.get(row.pilotId);
-                  const max   = maxByTask[task.id] ?? 1;
+                {tasks.map((task) => {
+                  const pts = scoreMap.get(task.id)?.get(row.pilotId);
+                  const max = maxByTask[task.id] ?? 1;
                   const ratio = pts != null ? pts / max : 0;
                   return (
                     <td key={task.id} style={{ ...TD, textAlign: 'center', width: 80 }}>
                       {pts != null ? (
-                        <span style={{
-                          display: 'inline-block',
-                          padding: '2px 7px',
-                          borderRadius: 4,
-                          fontFamily: 'var(--font-mono)',
-                          fontWeight: 600,
-                          fontSize: 12,
-                          background: `rgba(59,130,246,${(0.07 + ratio * 0.25).toFixed(2)})`,
-                          color: ratio >= 0.5 ? '#93c5fd' : 'var(--text2)',
-                        }}>
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            padding: '2px 7px',
+                            borderRadius: 4,
+                            fontFamily: 'var(--font-mono)',
+                            fontWeight: 600,
+                            fontSize: 12,
+                            background: `rgba(59,130,246,${(0.07 + ratio * 0.25).toFixed(2)})`,
+                            color: ratio >= 0.5 ? '#93c5fd' : 'var(--text2)',
+                          }}
+                        >
                           {Math.round(pts)}
                         </span>
                       ) : (
@@ -205,9 +214,9 @@ function OverallTab({ standings, tasks, scoreMap, maxByTask, myId }: OverallTabP
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface TaskTabProps {
-  entries:   LeaderboardEntry[];
+  entries: LeaderboardEntry[];
   isLoading: boolean;
-  myId:      string | undefined;
+  myId: string | undefined;
 }
 
 function TaskTab({ entries, isLoading, myId }: TaskTabProps) {
@@ -229,7 +238,7 @@ function TaskTab({ entries, isLoading, myId }: TaskTabProps) {
     );
   }
 
-  const anyFlagged = entries.some(e => e.hasFlaggedCrossings);
+  const anyFlagged = entries.some((e) => e.hasFlaggedCrossings);
 
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -248,18 +257,21 @@ function TaskTab({ entries, isLoading, myId }: TaskTabProps) {
           </tr>
         </thead>
         <tbody>
-          {entries.map(e => {
+          {entries.map((e) => {
             const isMe = e.pilotId === myId;
             return (
               <tr key={e.pilotId} style={{ background: isMe ? 'rgba(59,130,246,0.07)' : undefined }}>
-                <td style={TD}><RankBadge rank={e.rank} /></td>
+                <td style={TD}>
+                  <RankBadge rank={e.rank} />
+                </td>
                 <PilotCell name={e.pilotName} isMe={isMe} />
 
                 <td style={{ ...TD, textAlign: 'center' }}>
-                  {e.reachedGoal
-                    ? <span style={{ color: '#5db87a', fontWeight: 700, fontSize: 15 }}>✓</span>
-                    : <span style={{ color: 'var(--text3)', fontSize: 15 }}>✗</span>
-                  }
+                  {e.reachedGoal ? (
+                    <span style={{ color: '#5db87a', fontWeight: 700, fontSize: 15 }}>✓</span>
+                  ) : (
+                    <span style={{ color: 'var(--text3)', fontSize: 15 }}>✗</span>
+                  )}
                 </td>
 
                 <td style={{ ...TD, textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--text2)' }}>
@@ -305,20 +317,20 @@ function TaskTab({ entries, isLoading, myId }: TaskTabProps) {
 export default function SeasonPage() {
   const [activeTab, setActiveTab] = useState<'overall' | string>('overall');
 
-  const { user }                                       = useAuth();
-  const { leagueSlug, seasonId }                       = useLeague();
-  const { data: tasks,        isLoading: tasksLoading } = useTasks();
+  const { user } = useAuth();
+  const { leagueSlug, seasonId } = useLeague();
+  const { data: tasks, isLoading: tasksLoading } = useTasks();
   const { data: standingsData, isLoading: standingsLoading } = useStandings();
 
-  const standings      = standingsData?.standings ?? [];
-  const season         = standingsData?.season;
-  const publishedTasks = (tasks ?? []).filter(t => t.status === 'published');
+  const standings = standingsData?.standings ?? [];
+  const season = standingsData?.season;
+  const publishedTasks = (tasks ?? []).filter((t) => t.status === 'published');
 
   // Fetch all task leaderboards in parallel (shared by both Overall and task tabs)
   const leaderboardQueries = useQueries({
-    queries: publishedTasks.map(task => ({
-      queryKey:  ['leaderboard', leagueSlug, seasonId, task.id],
-      queryFn:   () => tasksApi.leaderboard(leagueSlug, seasonId, task.id),
+    queries: publishedTasks.map((task) => ({
+      queryKey: ['leaderboard', leagueSlug, seasonId, task.id],
+      queryFn: () => tasksApi.leaderboard(leagueSlug, seasonId, task.id),
       staleTime: 60 * 1000,
     })),
   });
@@ -335,15 +347,17 @@ export default function SeasonPage() {
 
   // Per-task max score for heat-map intensity
   const maxByTask: Record<string, number> = {};
-  publishedTasks.forEach(task => {
+  publishedTasks.forEach((task) => {
     let max = 0;
-    scoreMap.get(task.id)?.forEach(v => { if (v > max) max = v; });
+    scoreMap.get(task.id)?.forEach((v) => {
+      if (v > max) max = v;
+    });
     maxByTask[task.id] = max || 1;
   });
 
-  const isLoading      = tasksLoading || standingsLoading;
-  const activeTaskIdx  = publishedTasks.findIndex(t => t.id === activeTab);
-  const activeQuery    = activeTaskIdx >= 0 ? leaderboardQueries[activeTaskIdx] : null;
+  const isLoading = tasksLoading || standingsLoading;
+  const activeTaskIdx = publishedTasks.findIndex((t) => t.id === activeTab);
+  const activeQuery = activeTaskIdx >= 0 ? leaderboardQueries[activeTaskIdx] : null;
 
   return (
     <div className="fade-in" style={{ height: '100%', overflowY: 'auto' }}>
@@ -353,20 +367,24 @@ export default function SeasonPage() {
         <div style={{ color: 'var(--text2)', fontSize: 14, marginTop: 4 }}>
           {season
             ? `${season.name} · ${standings.length} pilot${standings.length !== 1 ? 's' : ''} · ${publishedTasks.length} task${publishedTasks.length !== 1 ? 's' : ''}`
-            : isLoading ? 'Loading…' : 'No active season'}
+            : isLoading
+              ? 'Loading…'
+              : 'No active season'}
         </div>
       </div>
 
       <div className="page-body">
         {/* Tab bar */}
-        <div style={{
-          display: 'flex',
-          borderBottom: '1px solid var(--border)',
-          marginBottom: 24,
-          overflowX: 'auto',
-        }}>
+        <div
+          style={{
+            display: 'flex',
+            borderBottom: '1px solid var(--border)',
+            marginBottom: 24,
+            overflowX: 'auto',
+          }}
+        >
           <TabButton label="Overall" active={activeTab === 'overall'} onClick={() => setActiveTab('overall')} />
-          {publishedTasks.map(task => (
+          {publishedTasks.map((task) => (
             <TabButton
               key={task.id}
               label={task.name}

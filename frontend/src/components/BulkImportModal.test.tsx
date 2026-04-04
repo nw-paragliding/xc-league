@@ -2,9 +2,9 @@
 // BulkImportModal.test.tsx
 // =============================================================================
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import BulkImportModal from './BulkImportModal';
 
 // ── API mock ──────────────────────────────────────────────────────────────────
@@ -22,9 +22,9 @@ import { leagueApi } from '../api/leagues';
 
 const PREVIEW_RESPONSE = {
   tasks: [
-    { index: 0, name: 'Apr Drag Race',  turnpointCount: 4, turnpoints: [] },
-    { index: 1, name: 'May Highlands',  turnpointCount: 4, turnpoints: [] },
-    { index: 2, name: 'Jun Squawking',  turnpointCount: 6, turnpoints: [] },
+    { index: 0, name: 'Apr Drag Race', turnpointCount: 4, turnpoints: [] },
+    { index: 1, name: 'May Highlands', turnpointCount: 4, turnpoints: [] },
+    { index: 2, name: 'Jun Squawking', turnpointCount: 6, turnpoints: [] },
   ],
 };
 
@@ -34,9 +34,9 @@ function makeCupFile(name = 'season.cup') {
 
 const DEFAULT_PROPS = {
   leagueSlug: 'nwxc',
-  seasonId:   'season-123',
-  onSuccess:  vi.fn(),
-  onClose:    vi.fn(),
+  seasonId: 'season-123',
+  onSuccess: vi.fn(),
+  onClose: vi.fn(),
 };
 
 function renderModal(props = DEFAULT_PROPS) {
@@ -82,9 +82,7 @@ describe('BulkImportModal', () => {
       await userEvent.upload(input, makeCupFile());
 
       await waitFor(() => {
-        expect(leagueApi.cupPreview).toHaveBeenCalledWith(
-          'nwxc', 'season-123', expect.any(File),
-        );
+        expect(leagueApi.cupPreview).toHaveBeenCalledWith('nwxc', 'season-123', expect.any(File));
       });
     });
 
@@ -145,7 +143,7 @@ describe('BulkImportModal', () => {
     it('all tasks are selected by default', async () => {
       await goToConfigureStep();
       const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[];
-      expect(checkboxes.every(cb => cb.checked)).toBe(true);
+      expect(checkboxes.every((cb) => cb.checked)).toBe(true);
     });
 
     it('import button reflects selected count', async () => {
@@ -227,7 +225,7 @@ describe('BulkImportModal', () => {
       await userEvent.click(screen.getByRole('button', { name: /Import 2 Tasks/i }));
 
       await waitFor(() => {
-        const [,, , payload] = vi.mocked(leagueApi.bulkImport).mock.calls[0];
+        const [, , , payload] = vi.mocked(leagueApi.bulkImport).mock.calls[0];
         expect(payload).toHaveLength(2);
         expect(payload.map((t: any) => t.index)).not.toContain(0);
       });
@@ -244,8 +242,8 @@ describe('BulkImportModal', () => {
       await userEvent.click(screen.getByRole('button', { name: /Import 3 Tasks/i }));
 
       await waitFor(() => {
-        const [,, , payload] = vi.mocked(leagueApi.bulkImport).mock.calls[0];
-        const first = (payload as any[]).find(t => t.index === 0);
+        const [, , , payload] = vi.mocked(leagueApi.bulkImport).mock.calls[0];
+        const first = (payload as any[]).find((t) => t.index === 0);
         expect(first.name).toBe('Spring Opener');
       });
     });

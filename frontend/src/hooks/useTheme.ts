@@ -1,4 +1,4 @@
-import { useState, useLayoutEffect, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 
 type Theme = 'light' | 'dark';
 
@@ -13,7 +13,9 @@ function getInitialTheme(): Theme {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored === 'light' || stored === 'dark') return stored;
-  } catch { /* localStorage unavailable */ }
+  } catch {
+    /* localStorage unavailable */
+  }
   return getSystemTheme();
 }
 
@@ -38,7 +40,9 @@ export function useTheme() {
         const stored = localStorage.getItem(STORAGE_KEY);
         if (stored === 'light' || stored === 'dark') return;
         if (stored !== null) localStorage.removeItem(STORAGE_KEY);
-      } catch { /* */ }
+      } catch {
+        /* */
+      }
       setTheme(mq.matches ? 'light' : 'dark');
     };
     mq.addEventListener('change', handler);
@@ -46,9 +50,13 @@ export function useTheme() {
   }, []);
 
   const toggle = useCallback(() => {
-    setTheme(prev => {
+    setTheme((prev) => {
       const next = prev === 'dark' ? 'light' : 'dark';
-      try { localStorage.setItem(STORAGE_KEY, next); } catch { /* */ }
+      try {
+        localStorage.setItem(STORAGE_KEY, next);
+      } catch {
+        /* */
+      }
       return next;
     });
   }, []);

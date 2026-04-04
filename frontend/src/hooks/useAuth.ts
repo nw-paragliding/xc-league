@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { authApi, initiateGoogleLogin, type User } from '../api/auth';
 
@@ -14,10 +14,14 @@ export const AUTH_KEY = ['auth', 'me'] as const;
 export function useAuth() {
   const queryClient = useQueryClient();
 
-  const { data: user, isLoading, isFetched } = useQuery({
+  const {
+    data: user,
+    isLoading,
+    isFetched,
+  } = useQuery({
     queryKey: AUTH_KEY,
-    queryFn:  authApi.me,
-    retry:    false,
+    queryFn: authApi.me,
+    retry: false,
     staleTime: 5 * 60 * 1000, // 5 min — re-check user occasionally
   });
 
@@ -49,13 +53,13 @@ export function useAuth() {
   });
 
   return {
-    user:      user ?? null,
+    user: user ?? null,
     isLoading,
     isFetched,
     isLoggedIn: user != null,
-    login:      initiateGoogleLogin,
-    logout:     () => logoutMutation.mutate(),
-    updateMe:   updateMeMutation.mutate,
+    login: initiateGoogleLogin,
+    logout: () => logoutMutation.mutate(),
+    updateMe: updateMeMutation.mutate,
   };
 }
 

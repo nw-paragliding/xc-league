@@ -1,6 +1,6 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { leagueApi, type Season, type CreateSeasonInput } from '../api/leagues';
+import { type CreateSeasonInput, leagueApi, type Season } from '../api/leagues';
 import { useLeague } from '../hooks/useLeague';
 
 export default function SeasonManagementPage() {
@@ -10,7 +10,11 @@ export default function SeasonManagementPage() {
   const [editingSeason, setEditingSeason] = useState<Season | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const { data, isLoading, error: queryError } = useQuery({
+  const {
+    data,
+    isLoading,
+    error: queryError,
+  } = useQuery({
     queryKey: ['leagues', leagueSlug, 'seasons'],
     queryFn: () => leagueApi.listSeasons(leagueSlug),
   });
@@ -84,13 +88,15 @@ export default function SeasonManagementPage() {
   if (queryError) {
     return (
       <div style={{ padding: '2rem' }}>
-        <div style={{
-          padding: '1rem',
-          background: '#fee',
-          border: '1px solid #fcc',
-          borderRadius: 8,
-          color: '#c00'
-        }}>
+        <div
+          style={{
+            padding: '1rem',
+            background: '#fee',
+            border: '1px solid #fcc',
+            borderRadius: 8,
+            color: '#c00',
+          }}
+        >
           Error loading seasons: {queryError.message}
         </div>
       </div>
@@ -101,14 +107,12 @@ export default function SeasonManagementPage() {
 
   return (
     <div style={{ padding: '2rem', maxWidth: 1200, margin: '0 auto' }}>
-      <header style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <header
+        style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}
+      >
         <div>
-          <h1 style={{ fontSize: '2rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-            Season Management
-          </h1>
-          <p style={{ color: 'var(--text2)' }}>
-            Create and manage competition seasons for {leagueSlug}
-          </p>
+          <h1 style={{ fontSize: '2rem', fontWeight: 600, marginBottom: '0.5rem' }}>Season Management</h1>
+          <p style={{ color: 'var(--text2)' }}>Create and manage competition seasons for {leagueSlug}</p>
         </div>
         <button
           onClick={() => setIsCreating(true)}
@@ -120,7 +124,7 @@ export default function SeasonManagementPage() {
             color: 'white',
             cursor: 'pointer',
             fontSize: '1rem',
-            fontWeight: 500
+            fontWeight: 500,
           }}
         >
           + New Season
@@ -128,18 +132,20 @@ export default function SeasonManagementPage() {
       </header>
 
       {error && (
-        <div style={{
-          marginBottom: '1rem',
-          padding: '0.75rem 1rem',
-          background: '#fee',
-          border: '1px solid #fcc',
-          borderRadius: 6,
-          color: '#c00',
-          fontSize: '0.875rem',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between'
-        }}>
+        <div
+          style={{
+            marginBottom: '1rem',
+            padding: '0.75rem 1rem',
+            background: '#fee',
+            border: '1px solid #fcc',
+            borderRadius: 6,
+            color: '#c00',
+            fontSize: '0.875rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
           <span>{error}</span>
           <button
             onClick={() => setError(null)}
@@ -150,7 +156,7 @@ export default function SeasonManagementPage() {
               cursor: 'pointer',
               fontSize: '1.25rem',
               padding: 0,
-              lineHeight: 1
+              lineHeight: 1,
             }}
           >
             ×
@@ -178,11 +184,13 @@ export default function SeasonManagementPage() {
       )}
 
       {/* Seasons List */}
-      <div style={{
-        border: '1px solid var(--border)',
-        borderRadius: 8,
-        overflow: 'hidden'
-      }}>
+      <div
+        style={{
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          overflow: 'hidden',
+        }}
+      >
         {seasons.length === 0 ? (
           <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text2)' }}>
             No seasons yet. Create your first season to get started.
@@ -196,47 +204,51 @@ export default function SeasonManagementPage() {
                 borderBottom: i < seasons.length - 1 ? '1px solid var(--border)' : 'none',
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'space-between'
+                justifyContent: 'space-between',
               }}
             >
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-                  <span style={{ fontWeight: 600, fontSize: '1.125rem' }}>
-                    {season.name}
-                  </span>
+                  <span style={{ fontWeight: 600, fontSize: '1.125rem' }}>{season.name}</span>
                   {season.status === 'draft' && (
-                    <span style={{
-                      padding: '0.25rem 0.5rem',
-                      background: '#e0e0e0',
-                      color: '#666',
-                      borderRadius: 4,
-                      fontSize: '0.75rem',
-                      fontWeight: 500
-                    }}>
+                    <span
+                      style={{
+                        padding: '0.25rem 0.5rem',
+                        background: '#e0e0e0',
+                        color: '#666',
+                        borderRadius: 4,
+                        fontSize: '0.75rem',
+                        fontWeight: 500,
+                      }}
+                    >
                       DRAFT
                     </span>
                   )}
                   {season.status === 'open' && (
-                    <span style={{
-                      padding: '0.25rem 0.5rem',
-                      background: '#d1fae5',
-                      color: '#065f46',
-                      borderRadius: 4,
-                      fontSize: '0.75rem',
-                      fontWeight: 500
-                    }}>
+                    <span
+                      style={{
+                        padding: '0.25rem 0.5rem',
+                        background: '#d1fae5',
+                        color: '#065f46',
+                        borderRadius: 4,
+                        fontSize: '0.75rem',
+                        fontWeight: 500,
+                      }}
+                    >
                       OPEN
                     </span>
                   )}
                   {season.status === 'closed' && (
-                    <span style={{
-                      padding: '0.25rem 0.5rem',
-                      background: '#fee',
-                      color: '#991b1b',
-                      borderRadius: 4,
-                      fontSize: '0.75rem',
-                      fontWeight: 500
-                    }}>
+                    <span
+                      style={{
+                        padding: '0.25rem 0.5rem',
+                        background: '#fee',
+                        color: '#991b1b',
+                        borderRadius: 4,
+                        fontSize: '0.75rem',
+                        fontWeight: 500,
+                      }}
+                    >
                       CLOSED
                     </span>
                   )}
@@ -249,7 +261,8 @@ export default function SeasonManagementPage() {
                 </div>
                 {season.taskCount !== undefined && (
                   <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginTop: '0.25rem' }}>
-                    {season.taskCount} task{season.taskCount !== 1 ? 's' : ''} • {season.registeredPilotCount || 0} pilot{season.registeredPilotCount !== 1 ? 's' : ''}
+                    {season.taskCount} task{season.taskCount !== 1 ? 's' : ''} • {season.registeredPilotCount || 0}{' '}
+                    pilot{season.registeredPilotCount !== 1 ? 's' : ''}
                   </div>
                 )}
               </div>
@@ -270,7 +283,7 @@ export default function SeasonManagementPage() {
                       color: '#065f46',
                       cursor: 'pointer',
                       fontSize: '0.875rem',
-                      fontWeight: 500
+                      fontWeight: 500,
                     }}
                   >
                     Open Season
@@ -279,7 +292,11 @@ export default function SeasonManagementPage() {
                 {season.status === 'open' && (
                   <button
                     onClick={() => {
-                      if (confirm(`Close season "${season.name}"? This will freeze all task scores and prevent new submissions. This cannot be undone.`)) {
+                      if (
+                        confirm(
+                          `Close season "${season.name}"? This will freeze all task scores and prevent new submissions. This cannot be undone.`,
+                        )
+                      ) {
                         closeMutation.mutate(season.id);
                       }
                     }}
@@ -292,7 +309,7 @@ export default function SeasonManagementPage() {
                       color: '#991b1b',
                       cursor: 'pointer',
                       fontSize: '0.875rem',
-                      fontWeight: 500
+                      fontWeight: 500,
                     }}
                   >
                     Close Season
@@ -309,7 +326,7 @@ export default function SeasonManagementPage() {
                       background: 'var(--bg1)',
                       color: 'var(--text1)',
                       cursor: 'pointer',
-                      fontSize: '0.875rem'
+                      fontSize: '0.875rem',
                     }}
                   >
                     Edit
@@ -330,7 +347,7 @@ export default function SeasonManagementPage() {
                       background: 'var(--bg1)',
                       color: '#c00',
                       cursor: 'pointer',
-                      fontSize: '0.875rem'
+                      fontSize: '0.875rem',
                     }}
                   >
                     Delete
@@ -375,13 +392,15 @@ function SeasonForm({ season, onSubmit, onCancel, isSubmitting }: SeasonFormProp
   };
 
   return (
-    <div style={{
-      marginBottom: '2rem',
-      padding: '1.5rem',
-      border: '1px solid var(--border)',
-      borderRadius: 8,
-      background: 'var(--bg2)'
-    }}>
+    <div
+      style={{
+        marginBottom: '2rem',
+        padding: '1.5rem',
+        border: '1px solid var(--border)',
+        borderRadius: 8,
+        background: 'var(--bg2)',
+      }}
+    >
       <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem' }}>
         {season ? 'Edit Season' : 'Create New Season'}
       </h2>
@@ -404,7 +423,7 @@ function SeasonForm({ season, onSubmit, onCancel, isSubmitting }: SeasonFormProp
                 borderRadius: 4,
                 fontSize: '0.875rem',
                 background: 'var(--bg1)',
-                color: 'var(--text1)'
+                color: 'var(--text1)',
               }}
             />
           </div>
@@ -423,7 +442,7 @@ function SeasonForm({ season, onSubmit, onCancel, isSubmitting }: SeasonFormProp
                 borderRadius: 4,
                 fontSize: '0.875rem',
                 background: 'var(--bg1)',
-                color: 'var(--text1)'
+                color: 'var(--text1)',
               }}
             >
               <option value="XC">Cross Country (XC)</option>
@@ -449,7 +468,7 @@ function SeasonForm({ season, onSubmit, onCancel, isSubmitting }: SeasonFormProp
                 borderRadius: 4,
                 fontSize: '0.875rem',
                 background: 'var(--bg1)',
-                color: 'var(--text1)'
+                color: 'var(--text1)',
               }}
             />
           </div>
@@ -469,7 +488,7 @@ function SeasonForm({ season, onSubmit, onCancel, isSubmitting }: SeasonFormProp
                 borderRadius: 4,
                 fontSize: '0.875rem',
                 background: 'var(--bg1)',
-                color: 'var(--text1)'
+                color: 'var(--text1)',
               }}
             />
           </div>
@@ -479,9 +498,7 @@ function SeasonForm({ season, onSubmit, onCancel, isSubmitting }: SeasonFormProp
           <summary style={{ cursor: 'pointer', fontWeight: 500 }}>Advanced GAP Settings</summary>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginTop: '1rem' }}>
             <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem' }}>
-                Nominal Distance (km)
-              </label>
+              <label style={{ display: 'block', marginBottom: '0.5rem' }}>Nominal Distance (km)</label>
               <input
                 type="number"
                 step="0.1"
@@ -494,14 +511,12 @@ function SeasonForm({ season, onSubmit, onCancel, isSubmitting }: SeasonFormProp
                   borderRadius: 4,
                   fontSize: '0.875rem',
                   background: 'var(--bg1)',
-                  color: 'var(--text1)'
+                  color: 'var(--text1)',
                 }}
               />
             </div>
             <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem' }}>
-                Nominal Time (seconds)
-              </label>
+              <label style={{ display: 'block', marginBottom: '0.5rem' }}>Nominal Time (seconds)</label>
               <input
                 type="number"
                 value={nominalTimeS}
@@ -513,14 +528,12 @@ function SeasonForm({ season, onSubmit, onCancel, isSubmitting }: SeasonFormProp
                   borderRadius: 4,
                   fontSize: '0.875rem',
                   background: 'var(--bg1)',
-                  color: 'var(--text1)'
+                  color: 'var(--text1)',
                 }}
               />
             </div>
             <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem' }}>
-                Nominal Goal Ratio
-              </label>
+              <label style={{ display: 'block', marginBottom: '0.5rem' }}>Nominal Goal Ratio</label>
               <input
                 type="number"
                 step="0.01"
@@ -533,7 +546,7 @@ function SeasonForm({ season, onSubmit, onCancel, isSubmitting }: SeasonFormProp
                   borderRadius: 4,
                   fontSize: '0.875rem',
                   background: 'var(--bg1)',
-                  color: 'var(--text1)'
+                  color: 'var(--text1)',
                 }}
               />
             </div>
@@ -551,7 +564,7 @@ function SeasonForm({ season, onSubmit, onCancel, isSubmitting }: SeasonFormProp
               borderRadius: 4,
               background: 'var(--bg1)',
               cursor: 'pointer',
-              fontSize: '0.875rem'
+              fontSize: '0.875rem',
             }}
           >
             Cancel
@@ -567,7 +580,7 @@ function SeasonForm({ season, onSubmit, onCancel, isSubmitting }: SeasonFormProp
               color: 'white',
               cursor: isSubmitting || !name || !startDate || !endDate ? 'not-allowed' : 'pointer',
               fontSize: '0.875rem',
-              fontWeight: 500
+              fontWeight: 500,
             }}
           >
             {isSubmitting ? 'Saving...' : season ? 'Update Season' : 'Create Season'}

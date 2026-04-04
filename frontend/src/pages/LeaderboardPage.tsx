@@ -1,14 +1,14 @@
-import { useState, useEffect } from 'react';
-import { useTasks, useLeaderboard } from '../hooks/useTasks';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
+import { useLeaderboard, useTasks } from '../hooks/useTasks';
 
 function fmtTime(seconds: number | null) {
   if (!seconds) return '—';
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-  return `${m}:${String(s).padStart(2,'0')}`;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 function SkeletonRow() {
@@ -36,7 +36,7 @@ export default function LeaderboardPage() {
   }, [tasks, selectedTaskId]);
 
   const { data: lb, isLoading: lbLoading, isFetching } = useLeaderboard(selectedTaskId);
-  const task = lb?.task ?? tasks?.find(t => t.id === selectedTaskId);
+  const task = lb?.task ?? tasks?.find((t) => t.id === selectedTaskId);
 
   return (
     <div className="fade-in">
@@ -46,7 +46,9 @@ export default function LeaderboardPage() {
           <div className="page-subtitle">
             {isFetching && !lbLoading
               ? 'Refreshing…'
-              : task ? `${task.pilotCount} pilots · ${task.goalCount} in goal` : 'Select a task'}
+              : task
+                ? `${task.pilotCount} pilots · ${task.goalCount} in goal`
+                : 'Select a task'}
           </div>
         </div>
       </div>
@@ -55,13 +57,13 @@ export default function LeaderboardPage() {
         {/* Task pills */}
         {tasksLoading ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
-            {[1,2,3].map(i => (
+            {[1, 2, 3].map((i) => (
               <div key={i} className="shimmer" style={{ height: 62, borderRadius: 8 }} />
             ))}
           </div>
         ) : (
           <div className="task-list">
-            {(tasks ?? []).map(t => (
+            {(tasks ?? []).map((t) => (
               <div
                 key={t.id}
                 className={`task-pill${t.id === selectedTaskId ? ' selected' : ''}`}
@@ -120,45 +122,55 @@ export default function LeaderboardPage() {
             <tbody>
               {lbLoading
                 ? Array.from({ length: 6 }).map((_, i) => <SkeletonRow key={i} />)
-                : (lb?.entries ?? []).map(row => (
-                  <tr key={row.pilotId} className={`lb-row${row.pilotId === user?.id ? ' me' : ''}`}>
-                    <td>
-                      <span className={`rank-num${row.rank <= 3 ? ' top' : ''}`}>{row.rank}</span>
-                    </td>
-                    <td>
-                      <span className={`pilot-name${row.pilotId === user?.id ? ' me' : ''}`}>
-                        {row.pilotName}
-                      </span>
-                      {row.pilotId === user?.id && (
-                        <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--gold)', fontFamily: 'var(--font-mono)' }}>you</span>
-                      )}
-                    </td>
-                    <td className="right">
-                      <span className="mono" style={{ fontSize: 12 }}>{row.distanceFlownKm.toFixed(1)} km</span>
-                    </td>
-                    <td className="right">
-                      <span className="time-str">{fmtTime(row.taskTimeS)}</span>
-                    </td>
-                    <td className="right"><span className="pts">{Math.round(row.distancePoints)}</span></td>
-                    <td className="right">
-                      <span className="pts">
-                        {row.timePoints > 0
-                          ? Math.round(row.timePoints)
-                          : <span className="pts dim">—</span>}
-                      </span>
-                    </td>
-                    <td className="right">
-                      <span className="pts total">{Math.round(row.totalPoints)}</span>
-                    </td>
-                    <td>
-                      {row.reachedGoal && <span className="badge badge-goal">goal</span>}
-                      {row.hasFlaggedCrossings && (
-                        <span className="badge badge-flag" style={{ marginLeft: 4 }}>⚑</span>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              }
+                : (lb?.entries ?? []).map((row) => (
+                    <tr key={row.pilotId} className={`lb-row${row.pilotId === user?.id ? ' me' : ''}`}>
+                      <td>
+                        <span className={`rank-num${row.rank <= 3 ? ' top' : ''}`}>{row.rank}</span>
+                      </td>
+                      <td>
+                        <span className={`pilot-name${row.pilotId === user?.id ? ' me' : ''}`}>{row.pilotName}</span>
+                        {row.pilotId === user?.id && (
+                          <span
+                            style={{
+                              marginLeft: 6,
+                              fontSize: 10,
+                              color: 'var(--gold)',
+                              fontFamily: 'var(--font-mono)',
+                            }}
+                          >
+                            you
+                          </span>
+                        )}
+                      </td>
+                      <td className="right">
+                        <span className="mono" style={{ fontSize: 12 }}>
+                          {row.distanceFlownKm.toFixed(1)} km
+                        </span>
+                      </td>
+                      <td className="right">
+                        <span className="time-str">{fmtTime(row.taskTimeS)}</span>
+                      </td>
+                      <td className="right">
+                        <span className="pts">{Math.round(row.distancePoints)}</span>
+                      </td>
+                      <td className="right">
+                        <span className="pts">
+                          {row.timePoints > 0 ? Math.round(row.timePoints) : <span className="pts dim">—</span>}
+                        </span>
+                      </td>
+                      <td className="right">
+                        <span className="pts total">{Math.round(row.totalPoints)}</span>
+                      </td>
+                      <td>
+                        {row.reachedGoal && <span className="badge badge-goal">goal</span>}
+                        {row.hasFlaggedCrossings && (
+                          <span className="badge badge-flag" style={{ marginLeft: 4 }}>
+                            ⚑
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
             </tbody>
           </table>
         </div>

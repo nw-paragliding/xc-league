@@ -9,29 +9,29 @@
 // =============================================================================
 
 import 'dotenv/config';
-import Fastify from 'fastify';
-import fastifyStatic from '@fastify/static';
 import fastifyCookie from '@fastify/cookie';
-import fastifyMultipart from '@fastify/multipart';
 import fastifyCors from '@fastify/cors';
+import fastifyMultipart from '@fastify/multipart';
 import fastifyRateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
 import Database from 'better-sqlite3';
+import Fastify from 'fastify';
+import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { readFileSync, readdirSync } from 'fs';
+import { authPlugin, loadAuthConfig } from './auth';
+import { bootstrapWorker, rebuildTaskResults, SQLiteJobQueue } from './job-queue';
 import { dropRedundantLeagueIdColumns } from './migration-helpers';
-import { loadAuthConfig, authPlugin } from './auth';
-import { SQLiteJobQueue, bootstrapWorker, rebuildTaskResults } from './job-queue';
 
 // =============================================================================
 // CONSTANTS
 // =============================================================================
 
-const PORT        = parseInt(process.env['PORT'] ?? '3000', 10);
-const DB_PATH     = process.env['DB_PATH'] ?? './league.db';
-const IS_PROD     = process.env['NODE_ENV'] === 'production';
+const PORT = parseInt(process.env['PORT'] ?? '3000', 10);
+const DB_PATH = process.env['DB_PATH'] ?? './league.db';
+const IS_PROD = process.env['NODE_ENV'] === 'production';
 // In production the built frontend sits next to server.js in dist/
 // In development Vite serves the frontend on its own port (proxied via vite.config.ts)
-const STATIC_DIR  = join(__dirname, IS_PROD ? '../client' : '../public');
+const STATIC_DIR = join(__dirname, IS_PROD ? '../client' : '../public');
 
 const MAX_IGC_SIZE_BYTES = 5 * 1024 * 1024; // 5MB — matches upload handler
 
@@ -49,7 +49,10 @@ function runMigrations(db: Database.Database): void {
   `);
 
   const applied = new Set(
-    db.prepare('SELECT name FROM migrations').all().map((r: any) => r.name as string),
+    db
+      .prepare('SELECT name FROM migrations')
+      .all()
+      .map((r: any) => r.name as string),
   );
 
   const INITIAL = '0001_initial_schema';
@@ -62,7 +65,13 @@ function runMigrations(db: Database.Database): void {
 
   const migrationsDir = join(__dirname, 'migrations');
   let files: string[] = [];
-  try { files = readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort(); } catch { /* no dir */ }
+  try {
+    files = readdirSync(migrationsDir)
+      .filter((f) => f.endsWith('.sql'))
+      .sort();
+  } catch {
+    /* no dir */
+  }
 
   for (const file of files) {
     const name = file.replace('.sql', '');
@@ -91,25 +100,27 @@ async function main() {
   const authConfig = loadAuthConfig();
 
   // ── Job queue + worker ─────────────────────────────────────────────────────
-  const queue  = new SQLiteJobQueue(db);
+  const queue = new SQLiteJobQueue(db);
   const worker = bootstrapWorker(db, queue);
   worker.start();
 
   // ── Backfill task_results for any tasks that have attempts but no results ──
   // Handles uploads that happened before the materialised-view logic was added.
-  const orphanedTasks = db.prepare(
-    `SELECT DISTINCT fa.task_id
+  const orphanedTasks = db
+    .prepare(
+      `SELECT DISTINCT fa.task_id
      FROM flight_attempts fa
      LEFT JOIN task_results tr ON tr.task_id = fa.task_id
      WHERE tr.id IS NULL AND fa.deleted_at IS NULL`,
-  ).all() as Array<{ task_id: string }>;
+    )
+    .all() as Array<{ task_id: string }>;
 
   for (const { task_id } of orphanedTasks) {
     rebuildTaskResults(db, task_id);
     // Enqueue standings rebuild for the season this task belongs to
-    const row = db.prepare(
-      `SELECT t.season_id, t.league_id FROM tasks t WHERE t.id = ?`,
-    ).get(task_id) as { season_id: string; league_id: string } | undefined;
+    const row = db.prepare(`SELECT t.season_id, t.league_id FROM tasks t WHERE t.id = ?`).get(task_id) as
+      | { season_id: string; league_id: string }
+      | undefined;
     if (row) {
       queue.enqueue('REBUILD_STANDINGS', { seasonId: row.season_id, leagueId: row.league_id });
     }
@@ -119,10 +130,12 @@ async function main() {
   const app = Fastify({
     logger: {
       level: IS_PROD ? 'info' : 'debug',
-      transport: IS_PROD ? undefined : {
-        target: 'pino-pretty',
-        options: { colorize: true },
-      },
+      transport: IS_PROD
+        ? undefined
+        : {
+            target: 'pino-pretty',
+            options: { colorize: true },
+          },
     },
   });
 
@@ -134,8 +147,8 @@ async function main() {
   // Multipart — required for IGC file upload; enforce 5MB limit here
   await app.register(fastifyMultipart, {
     limits: {
-      fileSize:  MAX_IGC_SIZE_BYTES,
-      files:     1,      // only one file per upload request
+      fileSize: MAX_IGC_SIZE_BYTES,
+      files: 1, // only one file per upload request
       fieldSize: 500 * 1024, // bulk-import sends task config JSON (can be large)
     },
   });
@@ -143,14 +156,14 @@ async function main() {
   // CORS — only needed if frontend is on a different origin (dev without proxy)
   // In production same-origin, so this is a no-op safety net
   await app.register(fastifyCors, {
-    origin:      IS_PROD ? false : 'http://localhost:5173',
-    credentials: true,   // allow cookies cross-origin in dev
+    origin: IS_PROD ? false : 'http://localhost:5173',
+    credentials: true, // allow cookies cross-origin in dev
   });
 
   // Rate limiting — global default + stricter limits on auth/upload routes
   await app.register(fastifyRateLimit, {
-    global:     true,
-    max:        200,
+    global: true,
+    max: 200,
     timeWindow: '1 minute',
     // Skip rate limiting in test/dev to avoid flaky tests
     skipOnError: true,
@@ -181,12 +194,12 @@ async function main() {
   //   the wildcard route is skipped so Vite handles the frontend.
   if (IS_PROD) {
     await app.register(fastifyStatic, {
-      root:       join(__dirname, 'client'),
-      prefix:     '/',
+      root: join(__dirname, 'client'),
+      prefix: '/',
       // Don't serve index.html automatically for unknown paths —
       // we handle that in the wildcard route below so we can
       // distinguish between API 404s and frontend route 404s
-      index:      false,
+      index: false,
       // Cache static assets aggressively (Vite fingerprints filenames)
       setHeaders: (res, path) => {
         if (path.includes('/assets/')) {
@@ -226,9 +239,7 @@ async function main() {
     app.setNotFoundHandler((request, reply) => {
       // Only serve index.html for GET requests that aren't API calls
       if (request.method === 'GET' && !request.url.startsWith('/api/')) {
-        return reply
-          .header('Cache-Control', 'no-cache')
-          .sendFile('index.html', join(__dirname, 'client'));
+        return reply.header('Cache-Control', 'no-cache').sendFile('index.html', join(__dirname, 'client'));
       }
       // Real API 404
       reply.status(404).send({
@@ -247,7 +258,7 @@ async function main() {
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT',  () => shutdown('SIGINT'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 
   // ── Start ──────────────────────────────────────────────────────────────────
   try {

@@ -7,29 +7,21 @@
  *
  * URL structure: /leagues/:leagueSlug/...
  */
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, type ReactNode, useContext } from 'react';
 import { useParams } from 'react-router-dom';
 
 interface LeagueContextValue {
   leagueSlug: string;
-  seasonId:   string;
+  seasonId: string;
 }
 
 const LeagueContext = createContext<LeagueContextValue>({
   leagueSlug: 'alps-xc-2025',
-  seasonId:   'season-1',
+  seasonId: 'season-1',
 });
 
-export function LeagueProvider({
-  leagueSlug,
-  seasonId,
-  children,
-}: LeagueContextValue & { children: ReactNode }) {
-  return (
-    <LeagueContext.Provider value={{ leagueSlug, seasonId }}>
-      {children}
-    </LeagueContext.Provider>
-  );
+export function LeagueProvider({ leagueSlug, seasonId, children }: LeagueContextValue & { children: ReactNode }) {
+  return <LeagueContext.Provider value={{ leagueSlug, seasonId }}>{children}</LeagueContext.Provider>;
 }
 
 /**
@@ -43,6 +35,6 @@ export function useLeague(): LeagueContextValue {
   const params = useParams<{ leagueSlug?: string; seasonId?: string }>();
   return {
     leagueSlug: params.leagueSlug ?? ctx.leagueSlug,
-    seasonId:   params.seasonId   ?? ctx.seasonId,
+    seasonId: params.seasonId ?? ctx.seasonId,
   };
 }

@@ -12,9 +12,9 @@
 
 import 'dotenv/config';
 import Database from 'better-sqlite3';
-import { readFileSync, readdirSync } from 'fs';
-import { join } from 'path';
 import { randomUUID } from 'crypto';
+import { readdirSync, readFileSync } from 'fs';
+import { join } from 'path';
 import { dropRedundantLeagueIdColumns } from './migration-helpers';
 
 const DB_PATH = process.env['DB_PATH'] ?? './league.db';
@@ -36,7 +36,10 @@ db.exec(`
 `);
 
 const applied = new Set(
-  db.prepare('SELECT name FROM migrations').all().map((r: any) => r.name as string),
+  db
+    .prepare('SELECT name FROM migrations')
+    .all()
+    .map((r: any) => r.name as string),
 );
 
 // ---- Migration 0001: initial schema ----
@@ -59,7 +62,7 @@ const MIGRATIONS_DIR = join(__dirname, 'migrations');
 let migrationFiles: string[] = [];
 try {
   migrationFiles = readdirSync(MIGRATIONS_DIR)
-    .filter(f => f.endsWith('.sql'))
+    .filter((f) => f.endsWith('.sql'))
     .sort();
 } catch {
   // Directory doesn't exist yet — no additional migrations
@@ -92,9 +95,9 @@ function bootstrapSuperAdmin() {
   }
 
   // Check if the bootstrap email user exists and whether they're already a super admin
-  const user = db.prepare(
-    `SELECT id, email, is_super_admin FROM users WHERE email = ? AND deleted_at IS NULL`
-  ).get(bootstrapEmail) as { id: string; email: string; is_super_admin: number } | undefined;
+  const user = db
+    .prepare(`SELECT id, email, is_super_admin FROM users WHERE email = ? AND deleted_at IS NULL`)
+    .get(bootstrapEmail) as { id: string; email: string; is_super_admin: number } | undefined;
 
   if (!user) {
     console.warn(`[migrate] Bootstrap super admin email ${bootstrapEmail} not found - user must sign in first`);
@@ -107,14 +110,12 @@ function bootstrapSuperAdmin() {
   }
 
   // Promote to super admin
-  db.prepare(
-    `UPDATE users SET is_super_admin = 1, updated_at = datetime('now') WHERE id = ?`
-  ).run(user.id);
+  db.prepare(`UPDATE users SET is_super_admin = 1, updated_at = datetime('now') WHERE id = ?`).run(user.id);
 
   // Log the bootstrap action
   db.prepare(
     `INSERT INTO admin_audit_log (id, actor_user_id, target_user_id, action, created_at)
-     VALUES (?, ?, ?, 'BOOTSTRAP_SUPER_ADMIN', datetime('now'))`
+     VALUES (?, ?, ?, 'BOOTSTRAP_SUPER_ADMIN', datetime('now'))`,
   ).run(randomUUID(), user.id, user.id);
 
   console.log(`[migrate] ✅ Bootstrapped super admin: ${bootstrapEmail}`);
