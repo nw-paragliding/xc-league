@@ -1,9 +1,9 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { leagueApi, type Task, type CreateTaskInput } from '../api/leagues';
-import { useLeague } from '../hooks/useLeague';
-import TaskImportModal from '../components/TaskImportModal';
+import { type CreateTaskInput, leagueApi, type Task } from '../api/leagues';
 import TaskExportModal from '../components/TaskExportModal';
+import TaskImportModal from '../components/TaskImportModal';
+import { useLeague } from '../hooks/useLeague';
 
 export default function TaskManagementPage() {
   const { leagueSlug } = useLeague();
@@ -51,7 +51,6 @@ export default function TaskManagementPage() {
     },
   });
 
-
   const publishMutation = useMutation({
     mutationFn: (taskId: string) => leagueApi.publishTask(leagueSlug, selectedSeasonId!, taskId),
     onSuccess: () => {
@@ -76,7 +75,7 @@ export default function TaskManagementPage() {
 
   const seasons = seasonsData?.seasons || [];
   const tasks = tasksData?.tasks || [];
-  const selectedSeason = seasons.find(s => s.id === selectedSeasonId);
+  const selectedSeason = seasons.find((s) => s.id === selectedSeasonId);
 
   if (seasonsLoading) {
     return (
@@ -89,27 +88,25 @@ export default function TaskManagementPage() {
   return (
     <div style={{ padding: '2rem', maxWidth: 1200, margin: '0 auto' }}>
       <header style={{ marginBottom: '2rem' }}>
-        <h1 style={{ fontSize: '2rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-          Task Management
-        </h1>
-        <p style={{ color: 'var(--text2)' }}>
-          Create and manage tasks for competition seasons
-        </p>
+        <h1 style={{ fontSize: '2rem', fontWeight: 600, marginBottom: '0.5rem' }}>Task Management</h1>
+        <p style={{ color: 'var(--text2)' }}>Create and manage tasks for competition seasons</p>
       </header>
 
       {error && (
-        <div style={{
-          marginBottom: '1rem',
-          padding: '0.75rem 1rem',
-          background: '#fee',
-          border: '1px solid #fcc',
-          borderRadius: 6,
-          color: '#c00',
-          fontSize: '0.875rem',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between'
-        }}>
+        <div
+          style={{
+            marginBottom: '1rem',
+            padding: '0.75rem 1rem',
+            background: '#fee',
+            border: '1px solid #fcc',
+            borderRadius: 6,
+            color: '#c00',
+            fontSize: '0.875rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
           <span>{error}</span>
           <button
             onClick={() => setError(null)}
@@ -120,7 +117,7 @@ export default function TaskManagementPage() {
               cursor: 'pointer',
               fontSize: '1.25rem',
               padding: 0,
-              lineHeight: 1
+              lineHeight: 1,
             }}
           >
             ×
@@ -130,18 +127,18 @@ export default function TaskManagementPage() {
 
       {/* Season Selector */}
       <div style={{ marginBottom: '2rem' }}>
-        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
-          Select Season
-        </label>
+        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>Select Season</label>
         {seasons.length === 0 ? (
-          <div style={{
-            padding: '1rem',
-            border: '1px solid var(--border)',
-            borderRadius: 4,
-            background: 'var(--bg2)',
-            color: 'var(--text2)',
-            fontSize: '0.875rem'
-          }}>
+          <div
+            style={{
+              padding: '1rem',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              background: 'var(--bg2)',
+              color: 'var(--text2)',
+              fontSize: '0.875rem',
+            }}
+          >
             No seasons available. Create a season first in Season Management.
           </div>
         ) : (
@@ -155,11 +152,11 @@ export default function TaskManagementPage() {
               borderRadius: 4,
               fontSize: '1rem',
               background: 'var(--bg1)',
-              color: 'var(--text1)'
+              color: 'var(--text1)',
             }}
           >
             <option value="">-- Select a season --</option>
-            {seasons.map(season => (
+            {seasons.map((season) => (
               <option key={season.id} value={season.id}>
                 {season.name} ({new Date(season.startDate).getFullYear()})
               </option>
@@ -172,9 +169,7 @@ export default function TaskManagementPage() {
         <>
           {/* Create Task Buttons */}
           <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>
-              Tasks for {selectedSeason?.name}
-            </h2>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Tasks for {selectedSeason?.name}</h2>
             <button
               onClick={() => setIsImporting(true)}
               style={{
@@ -199,7 +194,9 @@ export default function TaskManagementPage() {
               seasonId={selectedSeasonId}
               onSuccess={() => {
                 setIsImporting(false);
-                queryClient.invalidateQueries({ queryKey: ['leagues', leagueSlug, 'seasons', selectedSeasonId, 'tasks'] });
+                queryClient.invalidateQueries({
+                  queryKey: ['leagues', leagueSlug, 'seasons', selectedSeasonId, 'tasks'],
+                });
               }}
               onClose={() => setIsImporting(false)}
             />
@@ -219,11 +216,13 @@ export default function TaskManagementPage() {
           {tasksLoading ? (
             <div className="shimmer" style={{ width: '100%', height: 200 }} />
           ) : (
-            <div style={{
-              border: '1px solid var(--border)',
-              borderRadius: 8,
-              overflow: 'hidden'
-            }}>
+            <div
+              style={{
+                border: '1px solid var(--border)',
+                borderRadius: 8,
+                overflow: 'hidden',
+              }}
+            >
               {tasks.length === 0 ? (
                 <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text2)' }}>
                   No tasks yet. Create your first task to get started.
@@ -238,49 +237,61 @@ export default function TaskManagementPage() {
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      background: task.scoresFrozenAt ? 'var(--bg2)' : 'transparent'
+                      background: task.scoresFrozenAt ? 'var(--bg2)' : 'transparent',
                     }}
                   >
                     <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                        <span style={{ fontWeight: 600, fontSize: '1.125rem' }}>
-                          {task.name}
-                        </span>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.5rem',
+                          marginBottom: '0.5rem',
+                          flexWrap: 'wrap',
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, fontSize: '1.125rem' }}>{task.name}</span>
                         {/* Status badge */}
                         {task.status === 'published' ? (
-                          <span style={{
-                            padding: '0.125rem 0.5rem',
-                            background: '#dcfce7',
-                            color: '#166534',
-                            borderRadius: 4,
-                            fontSize: '0.75rem',
-                            fontWeight: 600,
-                            letterSpacing: '0.05em'
-                          }}>
+                          <span
+                            style={{
+                              padding: '0.125rem 0.5rem',
+                              background: '#dcfce7',
+                              color: '#166534',
+                              borderRadius: 4,
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                              letterSpacing: '0.05em',
+                            }}
+                          >
                             PUBLISHED
                           </span>
                         ) : (
-                          <span style={{
-                            padding: '0.125rem 0.5rem',
-                            background: '#f3f4f6',
-                            color: '#6b7280',
-                            borderRadius: 4,
-                            fontSize: '0.75rem',
-                            fontWeight: 600,
-                            letterSpacing: '0.05em'
-                          }}>
+                          <span
+                            style={{
+                              padding: '0.125rem 0.5rem',
+                              background: '#f3f4f6',
+                              color: '#6b7280',
+                              borderRadius: 4,
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                              letterSpacing: '0.05em',
+                            }}
+                          >
                             DRAFT
                           </span>
                         )}
                         {task.scoresFrozenAt && (
-                          <span style={{
-                            padding: '0.125rem 0.5rem',
-                            background: '#e0f2fe',
-                            color: '#0369a1',
-                            borderRadius: 4,
-                            fontSize: '0.75rem',
-                            fontWeight: 500
-                          }}>
+                          <span
+                            style={{
+                              padding: '0.125rem 0.5rem',
+                              background: '#e0f2fe',
+                              color: '#0369a1',
+                              borderRadius: 4,
+                              fontSize: '0.75rem',
+                              fontWeight: 500,
+                            }}
+                          >
                             FROZEN
                           </span>
                         )}
@@ -297,11 +308,13 @@ export default function TaskManagementPage() {
                         {new Date(task.openDate).toLocaleString()} - {new Date(task.closeDate).toLocaleString()}
                       </div>
                       <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginTop: '0.25rem' }}>
-                        {(task.turnpointCount ?? 0) > 0
-                          ? `${task.turnpointCount} turnpoints`
-                          : <span style={{ color: '#c00' }}>No turnpoints — import a task file to enable publishing</span>
-                        }
-                        {(task.pilotCount ?? 0) > 0 && ` • ${task.pilotCount} submission${task.pilotCount !== 1 ? 's' : ''}`}
+                        {(task.turnpointCount ?? 0) > 0 ? (
+                          `${task.turnpointCount} turnpoints`
+                        ) : (
+                          <span style={{ color: '#c00' }}>No turnpoints — import a task file to enable publishing</span>
+                        )}
+                        {(task.pilotCount ?? 0) > 0 &&
+                          ` • ${task.pilotCount} submission${task.pilotCount !== 1 ? 's' : ''}`}
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -322,7 +335,7 @@ export default function TaskManagementPage() {
                             color: '#166534',
                             cursor: 'pointer',
                             fontSize: '0.875rem',
-                            fontWeight: 500
+                            fontWeight: 500,
                           }}
                         >
                           Publish
@@ -343,7 +356,7 @@ export default function TaskManagementPage() {
                             background: 'var(--bg1)',
                             color: 'var(--text2)',
                             cursor: 'pointer',
-                            fontSize: '0.875rem'
+                            fontSize: '0.875rem',
                           }}
                         >
                           Unpublish
@@ -363,7 +376,7 @@ export default function TaskManagementPage() {
                               background: 'var(--bg1)',
                               color: 'var(--text1)',
                               cursor: 'pointer',
-                              fontSize: '0.875rem'
+                              fontSize: '0.875rem',
                             }}
                           >
                             Edit
@@ -382,7 +395,7 @@ export default function TaskManagementPage() {
                               background: 'var(--bg1)',
                               color: '#c00',
                               cursor: 'pointer',
-                              fontSize: '0.875rem'
+                              fontSize: '0.875rem',
                             }}
                           >
                             Delete
@@ -416,11 +429,7 @@ export default function TaskManagementPage() {
 
           {/* Export Modal */}
           {exportingTask && selectedSeasonId && (
-            <TaskExportModal
-              task={exportingTask}
-              leagueSlug={leagueSlug}
-              onClose={() => setExportingTask(null)}
-            />
+            <TaskExportModal task={exportingTask} leagueSlug={leagueSlug} onClose={() => setExportingTask(null)} />
           )}
         </>
       )}
@@ -439,13 +448,13 @@ function TaskForm({ task, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
   const [name, setName] = useState(task?.name || '');
   const [description, setDescription] = useState(task?.description || '');
   const [taskType, setTaskType] = useState<'RACE_TO_GOAL' | 'OPEN_DISTANCE'>(task?.taskType || 'RACE_TO_GOAL');
-  
+
   // Format datetime-local input values (YYYY-MM-DDTHH:mm)
   const formatDateTimeLocal = (isoString?: string) => {
     if (!isoString) return '';
     return isoString.slice(0, 16); // Takes YYYY-MM-DDTHH:mm from ISO string
   };
-  
+
   const [openDate, setOpenDate] = useState(formatDateTimeLocal(task?.openDate) || '');
   const [closeDate, setCloseDate] = useState(formatDateTimeLocal(task?.closeDate) || '');
 
@@ -461,13 +470,15 @@ function TaskForm({ task, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
   };
 
   return (
-    <div style={{
-      marginBottom: '2rem',
-      padding: '1.5rem',
-      border: '1px solid var(--border)',
-      borderRadius: 8,
-      background: 'var(--bg2)'
-    }}>
+    <div
+      style={{
+        marginBottom: '2rem',
+        padding: '1.5rem',
+        border: '1px solid var(--border)',
+        borderRadius: 8,
+        background: 'var(--bg2)',
+      }}
+    >
       <h3 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '1rem' }}>
         {task ? 'Edit Task' : 'Create New Task'}
       </h3>
@@ -489,7 +500,7 @@ function TaskForm({ task, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
               borderRadius: 4,
               fontSize: '0.875rem',
               background: 'var(--bg1)',
-              color: 'var(--text1)'
+              color: 'var(--text1)',
             }}
           />
         </div>
@@ -511,7 +522,7 @@ function TaskForm({ task, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
               fontSize: '0.875rem',
               background: 'var(--bg1)',
               color: 'var(--text1)',
-              resize: 'vertical'
+              resize: 'vertical',
             }}
           />
         </div>
@@ -531,7 +542,7 @@ function TaskForm({ task, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
               borderRadius: 4,
               fontSize: '0.875rem',
               background: 'var(--bg1)',
-              color: 'var(--text1)'
+              color: 'var(--text1)',
             }}
           >
             <option value="RACE_TO_GOAL">Race to Goal</option>
@@ -597,7 +608,7 @@ function TaskForm({ task, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
               borderRadius: 4,
               background: 'var(--bg1)',
               cursor: 'pointer',
-              fontSize: '0.875rem'
+              fontSize: '0.875rem',
             }}
           >
             Cancel
@@ -613,7 +624,7 @@ function TaskForm({ task, onSubmit, onCancel, isSubmitting }: TaskFormProps) {
               color: 'white',
               cursor: isSubmitting || !name || !openDate || !closeDate ? 'not-allowed' : 'pointer',
               fontSize: '0.875rem',
-              fontWeight: 500
+              fontWeight: 500,
             }}
           >
             {isSubmitting ? 'Saving...' : task ? 'Update Task' : 'Create Task'}

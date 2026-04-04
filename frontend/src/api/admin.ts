@@ -35,25 +35,20 @@ export interface LeagueSummary {
 
 export const adminApi = {
   /** List all users (super admin only) */
-  listUsers: () =>
-    api.get<{ users: User[] }>('/admin/users'),
+  listUsers: () => api.get<{ users: User[] }>('/admin/users'),
 
   /** List all leagues (super admin only) */
-  listLeagues: () =>
-    api.get<{ leagues: LeagueSummary[] }>('/admin/leagues'),
+  listLeagues: () => api.get<{ leagues: LeagueSummary[] }>('/admin/leagues'),
 
   /** Soft-delete a league (super admin only) */
-  deleteLeague: (leagueSlug: string) =>
-    api.delete<{ message: string }>(`/admin/leagues/${leagueSlug}`),
-  
+  deleteLeague: (leagueSlug: string) => api.delete<{ message: string }>(`/admin/leagues/${leagueSlug}`),
+
   /** Promote user to super admin */
-  promoteToSuperAdmin: (userId: string) =>
-    api.post<{ message: string }>(`/admin/users/${userId}/promote`),
-  
+  promoteToSuperAdmin: (userId: string) => api.post<{ message: string }>(`/admin/users/${userId}/promote`),
+
   /** Demote super admin to regular user */
-  demoteFromSuperAdmin: (userId: string) =>
-    api.post<{ message: string }>(`/admin/users/${userId}/demote`),
-  
+  demoteFromSuperAdmin: (userId: string) => api.post<{ message: string }>(`/admin/users/${userId}/demote`),
+
   /** Get admin audit log */
   getAuditLog: (limit = 100, offset = 0) =>
     api.get<{ logs: AuditLogEntry[] }>('/admin/audit-log', { params: { limit, offset } }),

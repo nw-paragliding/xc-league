@@ -7,20 +7,20 @@
 //   /leagues/:leagueSlug/:page → named page within a league
 // =============================================================================
 
-import { useState, useEffect } from 'react';
-import { Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { leagueApi } from './api/leagues';
+import UserMenuPopout from './components/UserMenuPopout';
 import { useAuth } from './hooks/useAuth';
 import { LeagueProvider } from './hooks/useLeague';
-import { leagueApi } from './api/leagues';
-import HomePage             from './pages/HomePage';
-import ProfilePage          from './pages/ProfilePage';
-import SuperAdminPage       from './pages/SuperAdminPage';
-import CreateLeaguePage     from './pages/CreateLeaguePage';
-import LeagueSettingsPage   from './pages/LeagueSettingsPage';
-import OnboardingPage       from './pages/OnboardingPage';
-import LeaguesListPage      from './pages/LeaguesListPage';
-import UserMenuPopout       from './components/UserMenuPopout';
+import CreateLeaguePage from './pages/CreateLeaguePage';
+import HomePage from './pages/HomePage';
+import LeagueSettingsPage from './pages/LeagueSettingsPage';
+import LeaguesListPage from './pages/LeaguesListPage';
+import OnboardingPage from './pages/OnboardingPage';
+import ProfilePage from './pages/ProfilePage';
+import SuperAdminPage from './pages/SuperAdminPage';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // League layout — full-width content for a specific league
@@ -45,7 +45,7 @@ function LeagueLayout() {
   }
 
   const seasons = seasonsData?.seasons ?? [];
-  const activeSeason = seasons.find(s => s.status === 'open') ?? seasons[0];
+  const activeSeason = seasons.find((s) => s.status === 'open') ?? seasons[0];
   const seasonId = activeSeason?.id ?? 'season-1';
 
   return (
@@ -62,12 +62,19 @@ function LeagueShell({ leagueSlug }: { leagueSlug: string }) {
 
   // Check league admin status
   useEffect(() => {
-    if (!user) { setIsLeagueAdmin(false); return; }
-    if (user.isAdmin) { setIsLeagueAdmin(true); return; }
+    if (!user) {
+      setIsLeagueAdmin(false);
+      return;
+    }
+    if (user.isAdmin) {
+      setIsLeagueAdmin(true);
+      return;
+    }
 
-    leagueApi.listMembers(leagueSlug)
-      .then(data => {
-        const membership = data.members.find(m => m.userId === user.id);
+    leagueApi
+      .listMembers(leagueSlug)
+      .then((data) => {
+        const membership = data.members.find((m) => m.userId === user.id);
         setIsLeagueAdmin(membership?.role === 'admin');
       })
       .catch(() => setIsLeagueAdmin(false));
@@ -81,15 +88,18 @@ function LeagueShell({ leagueSlug }: { leagueSlug: string }) {
       {/* Full-width main content */}
       <main className="main" style={{ padding: 0 }}>
         <Routes>
-          <Route index                  element={<HomePage />} />
-          <Route path="tasks"           element={<HomePage />} />
-          <Route path="season"          element={<HomePage />} />
-          <Route path="profile"         element={<ProfilePage />} />
-          <Route path="super-admin"     element={<SuperAdminPage />} />
-          <Route path="create-league"   element={<CreateLeaguePage onSuccess={() => navigate(`/leagues/${leagueSlug}`)} />} />
+          <Route index element={<HomePage />} />
+          <Route path="tasks" element={<HomePage />} />
+          <Route path="season" element={<HomePage />} />
+          <Route path="profile" element={<ProfilePage />} />
+          <Route path="super-admin" element={<SuperAdminPage />} />
+          <Route
+            path="create-league"
+            element={<CreateLeaguePage onSuccess={() => navigate(`/leagues/${leagueSlug}`)} />}
+          />
           <Route path="league-settings" element={<LeagueSettingsPage />} />
           {/* Catch-all: redirect unknown sub-paths to home */}
-          <Route path="*"               element={<Navigate to={`/leagues/${leagueSlug}`} replace />} />
+          <Route path="*" element={<Navigate to={`/leagues/${leagueSlug}`} replace />} />
         </Routes>
       </main>
     </div>

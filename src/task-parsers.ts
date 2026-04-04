@@ -10,21 +10,21 @@
 // =============================================================================
 
 export interface ParsedTurnpoint {
-  name:       string;
-  latitude:   number;  // WGS84 decimal degrees
-  longitude:  number;  // WGS84 decimal degrees
-  radius_m:   number;  // cylinder / observation zone radius in metres
-  type:       'SSS' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE' | 'CYLINDER';
-  goalLineBearingDeg?: number;  // GOAL_LINE only
+  name: string;
+  latitude: number; // WGS84 decimal degrees
+  longitude: number; // WGS84 decimal degrees
+  radius_m: number; // cylinder / observation zone radius in metres
+  type: 'SSS' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE' | 'CYLINDER';
+  goalLineBearingDeg?: number; // GOAL_LINE only
 }
 
 export interface ParsedTask {
-  name?:        string;
-  taskType?:    'RACE_TO_GOAL' | 'OPEN_DISTANCE';
-  turnpoints:   ParsedTurnpoint[];
+  name?: string;
+  taskType?: 'RACE_TO_GOAL' | 'OPEN_DISTANCE';
+  turnpoints: ParsedTurnpoint[];
   /** Raw file content preserved for re-export */
-  rawContent:   string;
-  format:       'xctsk' | 'cup';
+  rawContent: string;
+  format: 'xctsk' | 'cup';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,23 +54,23 @@ export interface ParsedTask {
 // ── JSON (.xctsk v1) ──────────────────────────────────────────────────────────
 
 interface XctskJsonWaypoint {
-  name:        string;
-  lat:         number;
-  lon:         number;
+  name: string;
+  lat: number;
+  lon: number;
   altSmoothed?: number;
   description?: string;
 }
 
 interface XctskJsonTurnpoint {
   waypoint: XctskJsonWaypoint;
-  radius:   number;
+  radius: number;
   /** Only present for special waypoints: 'SSS' | 'ESS' | 'GOAL' */
-  type?:    string;
+  type?: string;
 }
 
 interface XctskJsonV1 {
-  version:    number;
-  taskType?:  string;  // 'CLASSIC' | 'FREE_FLIGHT' | 'OPEN_DISTANCE' | …
+  version: number;
+  taskType?: string; // 'CLASSIC' | 'FREE_FLIGHT' | 'OPEN_DISTANCE' | …
   turnpoints: XctskJsonTurnpoint[];
 }
 
@@ -94,8 +94,8 @@ function parseXctskJson(content: string): ParsedTask {
   //   - any TP with type === 'ESS'   = ESS
   //   - any TP with type === 'SSS'   = SSS (explicit override)
   // Find first and last untyped indices so we can assign SSS / Goal:
-  const firstUntyped = tps.findIndex(tp => !tp.type);
-  const lastUntyped  = tps.length - 1 - [...tps].reverse().findIndex(tp => !tp.type);
+  const firstUntyped = tps.findIndex((tp) => !tp.type);
+  const lastUntyped = tps.length - 1 - [...tps].reverse().findIndex((tp) => !tp.type);
 
   const turnpoints: ParsedTurnpoint[] = tps.map((tp, idx) => {
     const { waypoint, radius } = tp;
@@ -118,16 +118,16 @@ function parseXctskJson(content: string): ParsedTask {
     }
 
     return {
-      name:      waypoint.name || `TP${idx + 1}`,
-      latitude:  lat,
+      name: waypoint.name || `TP${idx + 1}`,
+      latitude: lat,
       longitude: lon,
-      radius_m:  typeof radius === 'number' && radius > 0 ? radius : 400,
+      radius_m: typeof radius === 'number' && radius > 0 ? radius : 400,
       type,
     };
   });
 
   // If no explicit goal was assigned (e.g. all TPs were typed), mark last as goal
-  const hasGoal = turnpoints.some(tp => tp.type === 'GOAL_CYLINDER' || tp.type === 'GOAL_LINE');
+  const hasGoal = turnpoints.some((tp) => tp.type === 'GOAL_CYLINDER' || tp.type === 'GOAL_LINE');
   if (!hasGoal && turnpoints.length > 1) {
     turnpoints[turnpoints.length - 1].type = 'GOAL_CYLINDER';
   }
@@ -157,8 +157,8 @@ function parseXctskXml(content: string): ParsedTask {
   const sssIdxMatch = /<sss[^/]*index="(\d+)"/i.exec(content);
   const essIdxMatch = /<ess[^/]*index="(\d+)"/i.exec(content);
   const goalIdxMatch = /<goal[^/]*index="(\d+)"/i.exec(content);
-  const sssIdx  = sssIdxMatch  ? parseInt(sssIdxMatch[1])  : null;
-  const essIdx  = essIdxMatch  ? parseInt(essIdxMatch[1])  : null;
+  const sssIdx = sssIdxMatch ? parseInt(sssIdxMatch[1]) : null;
+  const essIdx = essIdxMatch ? parseInt(essIdxMatch[1]) : null;
   const goalIdx = goalIdxMatch ? parseInt(goalIdxMatch[1]) : null;
 
   // Extract all <turnpoint ...> blocks
@@ -196,7 +196,7 @@ function parseXctskXml(content: string): ParsedTask {
     else if (idx === essIdx) type = 'ESS';
     else if (idx === goalIdx) {
       const ozTypeMatch = ozMatch ? attr(ozMatch[1], 'type') : null;
-      type = (ozTypeMatch?.toLowerCase() === 'line') ? 'GOAL_LINE' : 'GOAL_CYLINDER';
+      type = ozTypeMatch?.toLowerCase() === 'line' ? 'GOAL_LINE' : 'GOAL_CYLINDER';
     }
 
     turnpoints.push({ name, latitude: lat, longitude: lon, radius_m, type });
@@ -283,9 +283,9 @@ function splitCupLine(line: string): string[] {
 
 /** Internal structure for a task parsed from the Related Tasks section */
 interface RawCupTask {
-  name:      string;
-  wpNames:   string[];
-  obszones:  Map<number, { style: number; r1: number; isEss: boolean }>;
+  name: string;
+  wpNames: string[];
+  obszones: Map<number, { style: number; r1: number; isEss: boolean }>;
 }
 
 /**
@@ -299,7 +299,10 @@ interface RawCupTask {
  * '???' entries (takeoff / landing placeholders) are skipped.
  */
 export function parseCupAll(content: string): ParsedTask[] {
-  const lines = content.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const lines = content
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
 
   const waypointMap = new Map<string, { lat: number; lon: number }>();
   const rawTasks: RawCupTask[] = [];
@@ -328,7 +331,9 @@ export function parseCupAll(content: string): ParsedTask[] {
           if (name) waypointMap.set(name, { lat, lon });
           if (code && code !== name) waypointMap.set(code, { lat, lon });
         }
-      } catch { /* skip malformed lines */ }
+      } catch {
+        /* skip malformed lines */
+      }
     } else {
       if (/^Options,/i.test(line)) continue;
 
@@ -337,13 +342,13 @@ export function parseCupAll(content: string): ParsedTask[] {
       if (ozMatch && currentTask) {
         const idx = parseInt(ozMatch[1]);
         const props = ozMatch[2];
-        const styleMatch  = /Style=(\d+)/i.exec(props);
-        const r1Match     = /R1=(\d+)m/i.exec(props);
-        const speedMatch  = /SpeedStyle=(\d+)/i.exec(props);
+        const styleMatch = /Style=(\d+)/i.exec(props);
+        const r1Match = /R1=(\d+)m/i.exec(props);
+        const speedMatch = /SpeedStyle=(\d+)/i.exec(props);
         currentTask.obszones.set(idx, {
-          style:  styleMatch ? parseInt(styleMatch[1]) : 1,
-          r1:     r1Match    ? parseInt(r1Match[1])    : 400,
-          isEss:  speedMatch !== null,
+          style: styleMatch ? parseInt(styleMatch[1]) : 1,
+          r1: r1Match ? parseInt(r1Match[1]) : 400,
+          isEss: speedMatch !== null,
         });
         continue;
       }
@@ -366,38 +371,36 @@ export function parseCupAll(content: string): ParsedTask[] {
     }
   }
 
-  return rawTasks.map(task => {
+  return rawTasks.map((task) => {
     const turnpoints: ParsedTurnpoint[] = task.wpNames.map((wpName, idx) => {
       const coord = waypointMap.get(wpName);
-      const oz    = task.obszones.get(idx);
+      const oz = task.obszones.get(idx);
 
       let type: ParsedTurnpoint['type'];
       if (oz) {
-        if (oz.style === 2)    type = 'SSS';
+        if (oz.style === 2) type = 'SSS';
         else if (oz.style === 3) type = 'GOAL_CYLINDER';
-        else if (oz.isEss)     type = 'ESS';
-        else                   type = 'CYLINDER';
+        else if (oz.isEss) type = 'ESS';
+        else type = 'CYLINDER';
       } else {
-        type = idx === 0 ? 'SSS'
-             : idx === task.wpNames.length - 1 ? 'GOAL_CYLINDER'
-             : 'CYLINDER';
+        type = idx === 0 ? 'SSS' : idx === task.wpNames.length - 1 ? 'GOAL_CYLINDER' : 'CYLINDER';
       }
 
       return {
-        name:      wpName,
-        latitude:  coord?.lat ?? 0,
+        name: wpName,
+        latitude: coord?.lat ?? 0,
         longitude: coord?.lon ?? 0,
-        radius_m:  oz?.r1 ?? 400,
+        radius_m: oz?.r1 ?? 400,
         type,
       };
     });
 
     return {
-      name:       task.name,
-      taskType:   'RACE_TO_GOAL',
+      name: task.name,
+      taskType: 'RACE_TO_GOAL',
       turnpoints,
       rawContent: content,
-      format:     'cup',
+      format: 'cup',
     };
   });
 }
@@ -417,6 +420,6 @@ export function parseCup(content: string): ParsedTask {
 export function parseTaskFile(content: string, filename: string): ParsedTask {
   const ext = filename.split('.').pop()?.toLowerCase();
   if (ext === 'xctsk') return parseXctsk(content);
-  if (ext === 'cup')   return parseCup(content);
+  if (ext === 'cup') return parseCup(content);
   throw new Error(`Unsupported file format: .${ext}. Supported formats: .xctsk, .cup`);
 }

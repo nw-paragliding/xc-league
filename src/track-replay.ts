@@ -19,16 +19,16 @@
 //     progressively rather than blocking on the full payload.
 // =============================================================================
 
-import { parseAndValidate } from './pipeline';
 import type { Fix } from './pipeline';
+import { parseAndValidate } from './pipeline';
 
 // =============================================================================
 // INLINE STUBS — replaced by real Fastify types in your project
 // =============================================================================
 
 interface FastifyRequest {
-  params:     unknown;
-  user:       { userId: string; isAdmin: boolean } | null;
+  params: unknown;
+  user: { userId: string; isAdmin: boolean } | null;
   membership: { role: 'ADMIN' | 'PILOT' | 'SPECTATOR' } | null;
 }
 interface FastifyReply {
@@ -47,10 +47,10 @@ interface FastifyReply {
  * Altitude is GPS altitude in metres (pressure alt omitted — less useful for display).
  */
 interface ReplayFix {
-  t:   number;   // Unix ms
-  lat: number;   // WGS84 decimal degrees
-  lng: number;   // WGS84 decimal degrees
-  alt: number;   // GPS altitude metres
+  t: number; // Unix ms
+  lat: number; // WGS84 decimal degrees
+  lng: number; // WGS84 decimal degrees
+  alt: number; // GPS altitude metres
 }
 
 /**
@@ -58,39 +58,39 @@ interface ReplayFix {
  * Returned in sequence order so the frontend can animate them in order.
  */
 interface ReplayCrossing {
-  turnpointId:    string;
-  turnpointName:  string;
-  sequenceIndex:  number;
-  crossingTimeMs: number;    // Unix ms — interpolated crossing time from pipeline
-  type:           string;    // 'SSS' | 'CYLINDER' | 'GOAL_CYLINDER' | 'GOAL_LINE' | etc.
-  radiusM:        number;
-  latitude:       number;
-  longitude:      number;
+  turnpointId: string;
+  turnpointName: string;
+  sequenceIndex: number;
+  crossingTimeMs: number; // Unix ms — interpolated crossing time from pipeline
+  type: string; // 'SSS' | 'CYLINDER' | 'GOAL_CYLINDER' | 'GOAL_LINE' | etc.
+  radiusM: number;
+  latitude: number;
+  longitude: number;
   /** Hike & fly only — whether the crossing was confirmed as ground speed */
-  groundConfirmed:      boolean;
-  groundCheckRequired:  boolean;
+  groundConfirmed: boolean;
+  groundCheckRequired: boolean;
 }
 
 interface TrackReplayResponse {
-  submissionId:  string;
-  taskId:        string;
-  pilotId:       string;
-  pilotName:     string;
-  flightDate:    string;          // 'YYYY-MM-DD'
-  fixes:         ReplayFix[];
-  crossings:     ReplayCrossing[];
+  submissionId: string;
+  taskId: string;
+  pilotId: string;
+  pilotName: string;
+  flightDate: string; // 'YYYY-MM-DD'
+  fixes: ReplayFix[];
+  crossings: ReplayCrossing[];
   /** Bounds for initial map viewport */
   bounds: {
     north: number;
     south: number;
-    east:  number;
-    west:  number;
+    east: number;
+    west: number;
   };
   meta: {
-    fixCount:       number;
-    durationS:      number | null;  // last fix time - first fix time in seconds
-    reachedGoal:    boolean;
-    totalPoints:    number;         // from best attempt for this submission
+    fixCount: number;
+    durationS: number | null; // last fix time - first fix time in seconds
+    reachedGoal: boolean;
+    totalPoints: number; // from best attempt for this submission
   };
 }
 
@@ -98,11 +98,7 @@ interface TrackReplayResponse {
 // HANDLER
 // =============================================================================
 
-export async function handleTrackReplay(
-  request: any,
-  reply:   any,
-  db:      Database,
-): Promise<void> {
+export async function handleTrackReplay(request: any, reply: any, db: Database): Promise<void> {
   const { submissionId } = request.params as { submissionId: string };
   const userId = request.user?.userId ?? null;
 
@@ -128,7 +124,8 @@ export async function handleTrackReplay(
   );
 
   if (!submission) {
-    reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Submission not found' } }); return;
+    reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Submission not found' } });
+    return;
   }
 
   // ── 2. Access control ─────────────────────────────────────────────────────
@@ -140,17 +137,18 @@ export async function handleTrackReplay(
   //     Reason: live track access before close would let pilots see if a
   //     competitor reached goal and adjust their own submission strategy.
 
-  const isOwn   = userId === submission.pilotId;
+  const isOwn = userId === submission.pilotId;
   const isAdmin = request.user?.isAdmin || request.membership?.role === 'ADMIN';
   const taskClosed = submission.scoresFrozenAt !== null;
 
   if (!isOwn && !isAdmin && !taskClosed) {
     reply.status(403).send({
       error: {
-        code:    'TASK_STILL_OPEN',
+        code: 'TASK_STILL_OPEN',
         message: "Other pilots' tracks are not visible until the task closes",
       },
-    }); return;
+    });
+    return;
   }
 
   // ── 3. Check submission was actually processed ────────────────────────────
@@ -158,10 +156,11 @@ export async function handleTrackReplay(
   if (submission.status !== 'PROCESSED') {
     reply.status(422).send({
       error: {
-        code:    'SUBMISSION_NOT_PROCESSED',
+        code: 'SUBMISSION_NOT_PROCESSED',
         message: `Submission status is '${submission.status}' — track not available`,
       },
-    }); return;
+    });
+    return;
   }
 
   // ── 4. Re-parse IGC from BLOB ─────────────────────────────────────────────
@@ -177,10 +176,11 @@ export async function handleTrackReplay(
     // Should never happen — we already validated on submission — but handle defensively
     reply.status(500).send({
       error: {
-        code:    'IGC_REPARSE_FAILED',
+        code: 'IGC_REPARSE_FAILED',
         message: 'Failed to re-parse IGC file. Please contact support.',
       },
-    }); return;
+    });
+    return;
   }
 
   const { fixes, flightDate } = parseResult.value;
@@ -219,45 +219,44 @@ export async function handleTrackReplay(
 
   // ── 7. Build response ─────────────────────────────────────────────────────
 
-  const replayFixes: ReplayFix[] = fixes.map(fix => ({
-    t:   fix.timestamp,
+  const replayFixes: ReplayFix[] = fixes.map((fix) => ({
+    t: fix.timestamp,
     lat: fix.lat,
     lng: fix.lng,
     alt: fix.gpsAlt,
   }));
 
-  const crossings: ReplayCrossing[] = crossingRows.map(row => ({
-    turnpointId:         row.turnpointId,
-    turnpointName:       row.turnpointName,
-    sequenceIndex:       row.sequenceIndex,
-    crossingTimeMs:      new Date(row.crossingTime).getTime(),
-    type:                row.type,
-    radiusM:             row.radiusM,
-    latitude:            row.latitude,
-    longitude:           row.longitude,
-    groundConfirmed:     Boolean(row.groundConfirmed),
+  const crossings: ReplayCrossing[] = crossingRows.map((row) => ({
+    turnpointId: row.turnpointId,
+    turnpointName: row.turnpointName,
+    sequenceIndex: row.sequenceIndex,
+    crossingTimeMs: new Date(row.crossingTime).getTime(),
+    type: row.type,
+    radiusM: row.radiusM,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    groundConfirmed: Boolean(row.groundConfirmed),
     groundCheckRequired: Boolean(row.groundCheckRequired),
   }));
 
   const bounds = computeBounds(fixes);
 
   const firstFixTime = fixes[0]?.timestamp ?? null;
-  const lastFixTime  = fixes[fixes.length - 1]?.timestamp ?? null;
-  const durationS    = firstFixTime !== null && lastFixTime !== null
-    ? Math.round((lastFixTime - firstFixTime) / 1000)
-    : null;
+  const lastFixTime = fixes[fixes.length - 1]?.timestamp ?? null;
+  const durationS =
+    firstFixTime !== null && lastFixTime !== null ? Math.round((lastFixTime - firstFixTime) / 1000) : null;
 
   const response: TrackReplayResponse = {
-    submissionId:  submission.id,
-    taskId:        submission.taskId,
-    pilotId:       submission.pilotId,
-    pilotName:     submission.pilotName,
-    flightDate:    flightDate,
-    fixes:         replayFixes,
+    submissionId: submission.id,
+    taskId: submission.taskId,
+    pilotId: submission.pilotId,
+    pilotName: submission.pilotName,
+    flightDate: flightDate,
+    fixes: replayFixes,
     crossings,
     bounds,
     meta: {
-      fixCount:    fixes.length,
+      fixCount: fixes.length,
       durationS,
       reachedGoal: Boolean(bestAttempt?.reachedGoal),
       totalPoints: bestAttempt?.totalPoints ?? 0,
@@ -267,10 +266,7 @@ export async function handleTrackReplay(
   // Set cache headers — track data never changes after submission is processed
   // 1 hour for own/admin views; 24 hours for public views (task closed)
   const maxAge = isOwn || isAdmin ? 3600 : 86400;
-  reply
-    .header('Cache-Control', `private, max-age=${maxAge}`)
-    .status(200)
-    .send(response);
+  reply.header('Cache-Control', `private, max-age=${maxAge}`).status(200).send(response);
 }
 
 // =============================================================================
@@ -279,21 +275,24 @@ export async function handleTrackReplay(
 
 /** Compute tight bounding box over all fixes for initial map viewport */
 function computeBounds(fixes: Fix[]): TrackReplayResponse['bounds'] {
-  let north = -90, south = 90, east = -180, west = 180;
+  let north = -90,
+    south = 90,
+    east = -180,
+    west = 180;
   for (const fix of fixes) {
     if (fix.lat > north) north = fix.lat;
     if (fix.lat < south) south = fix.lat;
-    if (fix.lng > east)  east  = fix.lng;
-    if (fix.lng < west)  west  = fix.lng;
+    if (fix.lng > east) east = fix.lng;
+    if (fix.lng < west) west = fix.lng;
   }
   // Add a small margin so the track doesn't sit right at the viewport edge
   const latPad = (north - south) * 0.05;
-  const lngPad = (east  - west)  * 0.05;
+  const lngPad = (east - west) * 0.05;
   return {
     north: north + latPad,
     south: south - latPad,
-    east:  east  + lngPad,
-    west:  west  - lngPad,
+    east: east + lngPad,
+    west: west - lngPad,
   };
 }
 
@@ -302,33 +301,33 @@ function computeBounds(fixes: Fix[]): TrackReplayResponse['bounds'] {
 // =============================================================================
 
 interface SubmissionRow {
-  id:            string;
-  taskId:        string;
-  pilotId:       string;
-  igcData:       unknown;    // Buffer from better-sqlite3
-  igcDate:       string | null;
-  status:        string;
+  id: string;
+  taskId: string;
+  pilotId: string;
+  igcData: unknown; // Buffer from better-sqlite3
+  igcDate: string | null;
+  status: string;
   bestAttemptId: string;
-  pilotName:     string;
+  pilotName: string;
   taskCloseDate: string;
   scoresFrozenAt: string | null;
 }
 
 interface CrossingRow {
-  turnpointId:         string;
-  sequenceIndex:       number;
-  crossingTime:        string;   // ISO 8601 UTC
-  groundCheckRequired: number;   // SQLite integer boolean
-  groundConfirmed:     number;
-  turnpointName:       string;
-  type:                string;
-  radiusM:             number;
-  latitude:            number;
-  longitude:           number;
+  turnpointId: string;
+  sequenceIndex: number;
+  crossingTime: string; // ISO 8601 UTC
+  groundCheckRequired: number; // SQLite integer boolean
+  groundConfirmed: number;
+  turnpointName: string;
+  type: string;
+  radiusM: number;
+  latitude: number;
+  longitude: number;
 }
 
 interface BestAttemptRow {
-  reachedGoal: number;   // SQLite integer boolean
+  reachedGoal: number; // SQLite integer boolean
   totalPoints: number;
 }
 

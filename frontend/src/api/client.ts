@@ -25,12 +25,7 @@ async function parseError(res: Response): Promise<ApiError> {
     if (typeof err === 'string') {
       return new ApiError(res.status, 'ERROR', err);
     }
-    return new ApiError(
-      res.status,
-      err?.code ?? 'UNKNOWN_ERROR',
-      err?.message ?? res.statusText,
-      err?.detail,
-    );
+    return new ApiError(res.status, err?.code ?? 'UNKNOWN_ERROR', err?.message ?? res.statusText, err?.detail);
   } catch {
     return new ApiError(res.status, 'PARSE_ERROR', res.statusText);
   }
@@ -41,10 +36,7 @@ interface RequestOptions extends Omit<RequestInit, 'body'> {
   params?: Record<string, string | number | boolean | undefined>;
 }
 
-export async function apiFetch<T>(
-  path: string,
-  options: RequestOptions = {},
-): Promise<T> {
+export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { body, params, headers: extraHeaders, ...rest } = options;
 
   // Build URL with query params
@@ -85,14 +77,12 @@ export async function apiFetch<T>(
 
 // Convenience methods
 export const api = {
-  get:    <T>(path: string, options?: RequestOptions) =>
-    apiFetch<T>(path, { ...options, method: 'GET' }),
-  post:   <T>(path: string, body?: unknown, options?: RequestOptions) =>
+  get: <T>(path: string, options?: RequestOptions) => apiFetch<T>(path, { ...options, method: 'GET' }),
+  post: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     apiFetch<T>(path, { ...options, method: 'POST', body }),
-  put:    <T>(path: string, body?: unknown, options?: RequestOptions) =>
+  put: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     apiFetch<T>(path, { ...options, method: 'PUT', body }),
-  patch:  <T>(path: string, body?: unknown, options?: RequestOptions) =>
+  patch: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     apiFetch<T>(path, { ...options, method: 'PATCH', body }),
-  delete: <T>(path: string, options?: RequestOptions) =>
-    apiFetch<T>(path, { ...options, method: 'DELETE' }),
+  delete: <T>(path: string, options?: RequestOptions) => apiFetch<T>(path, { ...options, method: 'DELETE' }),
 };

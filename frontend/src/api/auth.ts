@@ -1,15 +1,15 @@
 import { api } from './client';
 
 export interface User {
-  id:                  string;
-  email:               string;
-  displayName:         string;
-  avatarUrl:           string | null;
-  isAdmin:             boolean;
-  windRating:          string | null;
-  gliderManufacturer:  string | null;
-  gliderModel:         string | null;
-  gliderWeightRating:  number | null;
+  id: string;
+  email: string;
+  displayName: string;
+  avatarUrl: string | null;
+  isAdmin: boolean;
+  windRating: string | null;
+  gliderManufacturer: string | null;
+  gliderModel: string | null;
+  gliderWeightRating: number | null;
 }
 
 export interface MeResponse {
@@ -17,11 +17,11 @@ export interface MeResponse {
 }
 
 export interface UpdateMeBody {
-  displayName?:        string;
-  avatarUrl?:          string | null;
-  windRating?:         string | null;
+  displayName?: string;
+  avatarUrl?: string | null;
+  windRating?: string | null;
   gliderManufacturer?: string | null;
-  gliderModel?:        string | null;
+  gliderModel?: string | null;
   gliderWeightRating?: number | null;
 }
 
@@ -43,13 +43,10 @@ export const authApi = {
     }
   },
 
-  updateMe: (body: UpdateMeBody) =>
-    api.patch<MeResponse>('/auth/me', body),
+  updateMe: (body: UpdateMeBody) => api.patch<MeResponse>('/auth/me', body),
 
-  logout: () =>
-    api.post<void>('/auth/logout'),
+  logout: () => api.post<void>('/auth/logout'),
 
   /** Immediately invalidate all tokens for a user (own tokens if no userId). */
-  revoke: (userId?: string) =>
-    api.post<void>('/auth/revoke', userId ? { userId } : {}),
+  revoke: (userId?: string) => api.post<void>('/auth/revoke', userId ? { userId } : {}),
 };

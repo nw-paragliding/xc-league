@@ -5,22 +5,21 @@
 // Auth is bypassed in test mode via x-test-user-id header.
 // =============================================================================
 
-import { describe, it, expect, beforeEach } from 'vitest';
 import Fastify from 'fastify';
-
-import { getTestDb, resetTestDb } from '../setup';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { authPlugin, loadAuthConfig } from '../../src/auth';
+import { registerLeagueRoutes } from '../../src/routes/leagues';
+import { buildXctrackDeepLink, type ExportTask, encodeXctskZ } from '../../src/task-exporters';
+import { parseCup, parseXctsk } from '../../src/task-parsers';
 import {
-  setupTestDatabase,
-  createTestUser,
-  createTestLeague,
   addLeagueMember,
+  createTestLeague,
   createTestSeason,
   createTestTask,
+  createTestUser,
+  setupTestDatabase,
 } from '../helpers';
-import { registerLeagueRoutes } from '../../src/routes/leagues';
-import { authPlugin, loadAuthConfig } from '../../src/auth';
-import { parseXctsk, parseCup } from '../../src/task-parsers';
-import { buildXctrackDeepLink, encodeXctskZ, type ExportTask } from '../../src/task-exporters';
+import { getTestDb, resetTestDb } from '../setup';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixtures
@@ -28,20 +27,21 @@ import { buildXctrackDeepLink, encodeXctskZ, type ExportTask } from '../../src/t
 
 // Real task file from ~/Downloads/25_August_NWXC.xctsk
 // 7 turnpoints: SSS (TLK-6K), 4 cylinders, ESS (SQT-5K), GOAL (TLZ-5K)
-const XCTSK_REAL = '{"version":1,"turnpoints":[{"waypoint":{"altSmoothed":744,"lat":47.511400000000002,"name":"TLK-6K","description":"TLK-6K","lon":-121.99095000000001},"radius":400},{"waypoint":{"altSmoothed":-99999999,"lat":47.547830000000005,"name":"GRN-6K","description":"GRN-6K","lon":-121.98338000000001},"radius":400},{"waypoint":{"altSmoothed":40,"lat":47.543680000000002,"name":"GRV-5K","description":"GRV-5K","lon":-122.03038000000001},"radius":400},{"waypoint":{"altSmoothed":680,"lat":47.497580000000006,"name":"TM-6K","description":"TM-6K","lon":-121.99038000000002},"radius":1000},{"waypoint":{"altSmoothed":156,"lat":47.532330000000002,"name":"HPT-6K","description":"HPT-6K","lon":-121.98115000000001},"radius":1000},{"type":"ESS","waypoint":{"altSmoothed":621,"lat":47.504330000000003,"name":"SQT-5K","description":"SQT-5K","lon":-122.04750000000001},"radius":1000},{"waypoint":{"altSmoothed":55,"lat":47.500800000000005,"name":"TLZ-5K","description":"TLZ-5K","lon":-122.02190000000002},"radius":400}],"taskType":"CLASSIC"}';
+const XCTSK_REAL =
+  '{"version":1,"turnpoints":[{"waypoint":{"altSmoothed":744,"lat":47.511400000000002,"name":"TLK-6K","description":"TLK-6K","lon":-121.99095000000001},"radius":400},{"waypoint":{"altSmoothed":-99999999,"lat":47.547830000000005,"name":"GRN-6K","description":"GRN-6K","lon":-121.98338000000001},"radius":400},{"waypoint":{"altSmoothed":40,"lat":47.543680000000002,"name":"GRV-5K","description":"GRV-5K","lon":-122.03038000000001},"radius":400},{"waypoint":{"altSmoothed":680,"lat":47.497580000000006,"name":"TM-6K","description":"TM-6K","lon":-121.99038000000002},"radius":1000},{"waypoint":{"altSmoothed":156,"lat":47.532330000000002,"name":"HPT-6K","description":"HPT-6K","lon":-121.98115000000001},"radius":1000},{"type":"ESS","waypoint":{"altSmoothed":621,"lat":47.504330000000003,"name":"SQT-5K","description":"SQT-5K","lon":-122.04750000000001},"radius":1000},{"waypoint":{"altSmoothed":55,"lat":47.500800000000005,"name":"TLZ-5K","description":"TLZ-5K","lon":-122.02190000000002},"radius":400}],"taskType":"CLASSIC"}';
 
 /** Minimal JSON .xctsk (XCTrack v1 format) — 7 turnpoints, ESS typed */
 const XCTSK_JSON = JSON.stringify({
   version: 1,
   taskType: 'CLASSIC',
   turnpoints: [
-    { waypoint: { name: 'TLK-6K', lat: 47.5114, lon: -121.9910, altSmoothed: 744 }, radius: 400 },
-    { waypoint: { name: 'GRN-6K', lat: 47.5478, lon: -121.9834, altSmoothed: 0   }, radius: 400 },
-    { waypoint: { name: 'GRV-5K', lat: 47.5437, lon: -122.0304, altSmoothed: 40  }, radius: 400 },
-    { waypoint: { name: 'TM-6K',  lat: 47.4976, lon: -121.9904, altSmoothed: 680 }, radius: 1000 },
+    { waypoint: { name: 'TLK-6K', lat: 47.5114, lon: -121.991, altSmoothed: 744 }, radius: 400 },
+    { waypoint: { name: 'GRN-6K', lat: 47.5478, lon: -121.9834, altSmoothed: 0 }, radius: 400 },
+    { waypoint: { name: 'GRV-5K', lat: 47.5437, lon: -122.0304, altSmoothed: 40 }, radius: 400 },
+    { waypoint: { name: 'TM-6K', lat: 47.4976, lon: -121.9904, altSmoothed: 680 }, radius: 1000 },
     { waypoint: { name: 'HPT-6K', lat: 47.5323, lon: -121.9812, altSmoothed: 156 }, radius: 1000 },
     { waypoint: { name: 'SQT-5K', lat: 47.5043, lon: -122.0475, altSmoothed: 621 }, radius: 1000, type: 'ESS' },
-    { waypoint: { name: 'TLZ-5K', lat: 47.5008, lon: -122.0219, altSmoothed: 55  }, radius: 400 },
+    { waypoint: { name: 'TLZ-5K', lat: 47.5008, lon: -122.0219, altSmoothed: 55 }, radius: 400 },
   ],
 });
 
@@ -96,8 +96,6 @@ function makeFilePayload(content: string, filename: string) {
 async function buildTestApp(db: ReturnType<typeof getTestDb>) {
   const app = Fastify();
 
-
-
   await app.register(import('@fastify/multipart'), { limits: { fileSize: 5 * 1024 * 1024 } });
   await app.register(authPlugin, { config: loadAuthConfig(), db });
   await registerLeagueRoutes(app, { db, queue: null as any });
@@ -137,7 +135,7 @@ describe('parseXctsk — JSON format (v1)', () => {
 
   it('preserves explicit ESS type', () => {
     const result = parseXctsk(XCTSK_JSON);
-    const ess = result.turnpoints.find(tp => tp.type === 'ESS');
+    const ess = result.turnpoints.find((tp) => tp.type === 'ESS');
     expect(ess?.name).toBe('SQT-5K');
   });
 
@@ -152,7 +150,7 @@ describe('parseXctsk — JSON format (v1)', () => {
     const result = parseXctsk(XCTSK_JSON);
     const sss = result.turnpoints[0];
     expect(sss.latitude).toBeCloseTo(47.5114, 4);
-    expect(sss.longitude).toBeCloseTo(-121.9910, 4);
+    expect(sss.longitude).toBeCloseTo(-121.991, 4);
   });
 
   it('preserves radii', () => {
@@ -257,8 +255,7 @@ describe('Task Import API — POST /leagues/:slug/seasons/:seasonId/tasks/import
     app = await buildTestApp(db);
   });
 
-  const importUrl = () =>
-    `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/import`;
+  const importUrl = () => `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/import`;
 
   // ── JSON .xctsk ─────────────────────────────────────────────────────────
 
@@ -388,9 +385,7 @@ describe('Task Import API — POST /leagues/:slug/seasons/:seasonId/tasks/import
   it('rejects a file with fewer than 2 turnpoints', async () => {
     const tinyTask = JSON.stringify({
       version: 1,
-      turnpoints: [
-        { waypoint: { name: 'ONLY', lat: 47.5, lon: -122.0 }, radius: 400 },
-      ],
+      turnpoints: [{ waypoint: { name: 'ONLY', lat: 47.5, lon: -122.0 }, radius: 400 }],
     });
     const { payload } = makeFilePayload(tinyTask, 'tiny.xctsk');
 
@@ -565,7 +560,7 @@ describe('parseXctsk — 25_August_NWXC.xctsk (real file)', () => {
 
   it('preserves explicit ESS on SQT-5K', () => {
     const result = parseXctsk(XCTSK_REAL);
-    const ess = result.turnpoints.find(tp => tp.type === 'ESS');
+    const ess = result.turnpoints.find((tp) => tp.type === 'ESS');
     expect(ess?.name).toBe('SQT-5K');
     expect(ess?.radius_m).toBe(1000);
   });
@@ -589,14 +584,14 @@ describe('parseXctsk — 25_August_NWXC.xctsk (real file)', () => {
     const result = parseXctsk(XCTSK_REAL);
     const sss = result.turnpoints[0];
     expect(sss.latitude).toBeCloseTo(47.5114, 4);
-    expect(sss.longitude).toBeCloseTo(-121.9910, 3);
+    expect(sss.longitude).toBeCloseTo(-121.991, 3);
   });
 
   it('preserves radii (TM-6K and HPT-6K are 1000m)', () => {
     const result = parseXctsk(XCTSK_REAL);
     expect(result.turnpoints[3].radius_m).toBe(1000); // TM-6K
     expect(result.turnpoints[4].radius_m).toBe(1000); // HPT-6K
-    expect(result.turnpoints[0].radius_m).toBe(400);  // TLK-6K
+    expect(result.turnpoints[0].radius_m).toBe(400); // TLK-6K
   });
 });
 
@@ -750,23 +745,22 @@ describe('buildXctrackDeepLink — XCTSK v2 format', () => {
 
 describe('encodeXctskZ — polyline coordinate encoding', () => {
   it('produces a non-empty string', () => {
-    expect(encodeXctskZ(-121.9910, 47.5114, 0, 400).length).toBeGreaterThan(0);
+    expect(encodeXctskZ(-121.991, 47.5114, 0, 400).length).toBeGreaterThan(0);
   });
 
   it('produces different z values for different coordinates', () => {
-    const z1 = encodeXctskZ(-121.9910, 47.5114, 0, 400);
+    const z1 = encodeXctskZ(-121.991, 47.5114, 0, 400);
     const z2 = encodeXctskZ(-122.0475, 47.5043, 0, 1000);
     expect(z1).not.toBe(z2);
   });
 
   it('same inputs always produce the same output (deterministic)', () => {
-    expect(encodeXctskZ(-121.9910, 47.5114, 0, 400))
-      .toBe(encodeXctskZ(-121.9910, 47.5114, 0, 400));
+    expect(encodeXctskZ(-121.991, 47.5114, 0, 400)).toBe(encodeXctskZ(-121.991, 47.5114, 0, 400));
   });
 
   it('radius difference is reflected in z string', () => {
-    const z400  = encodeXctskZ(-121.9910, 47.5114, 0, 400);
-    const z1000 = encodeXctskZ(-121.9910, 47.5114, 0, 1000);
+    const z400 = encodeXctskZ(-121.991, 47.5114, 0, 400);
+    const z1000 = encodeXctskZ(-121.991, 47.5114, 0, 1000);
     expect(z400).not.toBe(z1000);
   });
 
@@ -809,7 +803,8 @@ describe('encodeXctskZ — polyline coordinate encoding', () => {
 // The reference QR was generated by FlySkHy with actual altitudes.
 // Our implementation uses alt=0 (not stored in DB), so z strings will differ
 // in the altitude component but lon/lat/radius must match.
-const REFERENCE_QR = 'XCTSK:{"taskType":"CLASSIC","version":2,"t":[{"z":"ljqgVgq~`Hom@_X","n":"TLK-6K","d":"TLK-6K","t":2,"o":{"a1":180}},{"z":"b{ogV}teaH|nov}D_X","n":"GRN-6K","d":"GRN-6K","o":{"a1":180}},{"z":"z`ygV_{daHoA_X","n":"GRV-5K","d":"GRV-5K","o":{"a1":180}},{"z":"zfqgV{z{`Hoi@o}@","n":"TM-6K","d":"TM-6K","o":{"a1":180}},{"z":"dmogVatbaHwHo}@","n":"HPT-6K","d":"HPT-6K","o":{"a1":180}},{"z":"zk|gVae}`Hye@o}@","n":"SQT-5K","d":"SQT-5K","t":3,"o":{"a1":180}},{"z":"zkwgV_o|`HmB_X","n":"TLZ-5K","d":"TLZ-5K","o":{"a1":180}}],"s":{"g":[],"d":1,"t":1},"o":{"v":2}}';
+const REFERENCE_QR =
+  'XCTSK:{"taskType":"CLASSIC","version":2,"t":[{"z":"ljqgVgq~`Hom@_X","n":"TLK-6K","d":"TLK-6K","t":2,"o":{"a1":180}},{"z":"b{ogV}teaH|nov}D_X","n":"GRN-6K","d":"GRN-6K","o":{"a1":180}},{"z":"z`ygV_{daHoA_X","n":"GRV-5K","d":"GRV-5K","o":{"a1":180}},{"z":"zfqgV{z{`Hoi@o}@","n":"TM-6K","d":"TM-6K","o":{"a1":180}},{"z":"dmogVatbaHwHo}@","n":"HPT-6K","d":"HPT-6K","o":{"a1":180}},{"z":"zk|gVae}`Hye@o}@","n":"SQT-5K","d":"SQT-5K","t":3,"o":{"a1":180}},{"z":"zkwgV_o|`HmB_X","n":"TLZ-5K","d":"TLZ-5K","o":{"a1":180}}],"s":{"g":[],"d":1,"t":1},"o":{"v":2}}';
 
 describe('QR roundtrip — 25_August_NWXC.xctsk → XCTSK QR', () => {
   const parsed = parseXctsk(XCTSK_REAL);
@@ -828,7 +823,7 @@ describe('QR roundtrip — 25_August_NWXC.xctsk → XCTSK QR', () => {
   };
 
   const refObj = JSON.parse(REFERENCE_QR.slice('XCTSK:'.length));
-  const ourQr  = buildXctrackDeepLink(exportTask);
+  const ourQr = buildXctrackDeepLink(exportTask);
   const ourObj = JSON.parse(ourQr.slice('XCTSK:'.length));
 
   it('produces XCTSK: prefix', () => {
@@ -882,7 +877,7 @@ describe('QR roundtrip — 25_August_NWXC.xctsk → XCTSK QR', () => {
 
   it('radius portion of z matches reference (last 2-3 chars)', () => {
     // 400m radius encodes as "_X" (2 chars), 1000m as "o}@" (3 chars)
-    const r400  = '_X';
+    const r400 = '_X';
     const r1000 = 'o}@';
     // TLK-6K, GRN-6K, GRV-5K, TLZ-5K = 400m; TM-6K, HPT-6K, SQT-5K = 1000m
     expect(ourObj.t[0].z.endsWith(r400)).toBe(true);
@@ -916,11 +911,11 @@ describe('QR roundtrip — 25_August_NWXC.xctsk → XCTSK QR', () => {
 /** Build an ExportTask with N evenly-spaced turnpoints around a central point. */
 function makeLargeExportTask(turnpointCount: number): ExportTask {
   const turnpoints = Array.from({ length: turnpointCount }, (_, i) => ({
-    name:          `TP${String(i).padStart(2, '0')}`,
-    latitude:      47.5 + i * 0.01,
-    longitude:     -122.0 + i * 0.01,
-    radius_m:      400,
-    type:          i === 0 ? 'SSS' : i === turnpointCount - 1 ? 'GOAL_CYLINDER' : 'CYLINDER',
+    name: `TP${String(i).padStart(2, '0')}`,
+    latitude: 47.5 + i * 0.01,
+    longitude: -122.0 + i * 0.01,
+    radius_m: 400,
+    type: i === 0 ? 'SSS' : i === turnpointCount - 1 ? 'GOAL_CYLINDER' : 'CYLINDER',
     sequenceIndex: i,
   }));
   return { id: 'test', name: 'Large Task', taskType: 'RACE_TO_GOAL', turnpoints };
@@ -1085,10 +1080,12 @@ describe('GOAL_LINE import — goal_line_bearing_deg persistence', () => {
     const { task } = JSON.parse(res.body);
 
     // Check DB directly — goal_line_bearing_deg should be non-null for the GOAL_LINE TP
-    const goalTp = db.prepare(
-      `SELECT type, goal_line_bearing_deg FROM turnpoints
-       WHERE task_id = ? AND type = 'GOAL_LINE'`
-    ).get(task.id) as any;
+    const goalTp = db
+      .prepare(
+        `SELECT type, goal_line_bearing_deg FROM turnpoints
+       WHERE task_id = ? AND type = 'GOAL_LINE'`,
+      )
+      .get(task.id) as any;
 
     expect(goalTp).toBeTruthy();
     expect(goalTp.goal_line_bearing_deg).not.toBeNull();
@@ -1096,10 +1093,12 @@ describe('GOAL_LINE import — goal_line_bearing_deg persistence', () => {
     expect(goalTp.goal_line_bearing_deg).toBeLessThan(360);
 
     // Non-GOAL_LINE turnpoints should have null bearing
-    const otherTps = db.prepare(
-      `SELECT type, goal_line_bearing_deg FROM turnpoints
-       WHERE task_id = ? AND type != 'GOAL_LINE'`
-    ).all(task.id) as any[];
+    const otherTps = db
+      .prepare(
+        `SELECT type, goal_line_bearing_deg FROM turnpoints
+       WHERE task_id = ? AND type != 'GOAL_LINE'`,
+      )
+      .all(task.id) as any[];
     for (const tp of otherTps) {
       expect(tp.goal_line_bearing_deg).toBeNull();
     }

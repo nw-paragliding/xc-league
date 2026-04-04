@@ -2,25 +2,24 @@
 // Standings + Leaderboard API — Integration Tests
 // =============================================================================
 
-import { describe, it, expect, beforeEach } from 'vitest';
 import Fastify from 'fastify';
-
-import { getTestDb, resetTestDb } from '../setup';
-import {
-  setupTestDatabase,
-  createTestUser,
-  createTestLeague,
-  addLeagueMember,
-  createTestSeason,
-  createTestTask,
-  createTestSubmission,
-  createTestAttempt,
-  createTestTaskResult,
-  createTestSeasonStanding,
-} from '../helpers';
-import { registerLeagueRoutes } from '../../src/routes/leagues';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { authPlugin, loadAuthConfig } from '../../src/auth';
 import { rebuildTaskResults } from '../../src/job-queue';
+import { registerLeagueRoutes } from '../../src/routes/leagues';
+import {
+  addLeagueMember,
+  createTestAttempt,
+  createTestLeague,
+  createTestSeason,
+  createTestSeasonStanding,
+  createTestSubmission,
+  createTestTask,
+  createTestTaskResult,
+  createTestUser,
+  setupTestDatabase,
+} from '../helpers';
+import { getTestDb, resetTestDb } from '../setup';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test fixture setup
@@ -36,16 +35,16 @@ let task: ReturnType<typeof createTestTask>;
 
 beforeEach(async () => {
   resetTestDb();
-  db  = getTestDb();
+  db = getTestDb();
   setupTestDatabase(db);
 
-  pilot  = createTestUser(db, { displayName: 'Alice Smith' });
+  pilot = createTestUser(db, { displayName: 'Alice Smith' });
   pilot2 = createTestUser(db, { displayName: 'Bob Jones' });
   league = createTestLeague(db, { slug: 'test-league' });
   season = createTestSeason(db, league.id);
-  task   = createTestTask(db, season.id, league.id, { name: 'Task 1' });
+  task = createTestTask(db, season.id, league.id, { name: 'Task 1' });
 
-  addLeagueMember(db, league.id, pilot.id,  'pilot');
+  addLeagueMember(db, league.id, pilot.id, 'pilot');
   addLeagueMember(db, league.id, pilot2.id, 'pilot');
 
   app = Fastify();
@@ -72,8 +71,18 @@ describe('GET standings', () => {
   });
 
   it('returns pilots sorted by rank with correct fields', async () => {
-    createTestSeasonStanding(db, season.id, pilot.id,  league.id, { rank: 1, totalPoints: 800, tasksFlown: 2, tasksWithGoal: 1 });
-    createTestSeasonStanding(db, season.id, pilot2.id, league.id, { rank: 2, totalPoints: 500, tasksFlown: 1, tasksWithGoal: 0 });
+    createTestSeasonStanding(db, season.id, pilot.id, league.id, {
+      rank: 1,
+      totalPoints: 800,
+      tasksFlown: 2,
+      tasksWithGoal: 1,
+    });
+    createTestSeasonStanding(db, season.id, pilot2.id, league.id, {
+      rank: 2,
+      totalPoints: 500,
+      tasksFlown: 1,
+      tasksWithGoal: 0,
+    });
 
     const res = await app.inject({ method: 'GET', url: url(), headers: { 'x-test-user-id': pilot.id } });
 
@@ -96,8 +105,8 @@ describe('GET standings', () => {
 
   it('returns 404 for an unknown season', async () => {
     const res = await app.inject({
-      method:  'GET',
-      url:     `/leagues/${league.slug}/seasons/nonexistent-id/standings`,
+      method: 'GET',
+      url: `/leagues/${league.slug}/seasons/nonexistent-id/standings`,
       headers: { 'x-test-user-id': pilot.id },
     });
 
@@ -131,13 +140,41 @@ describe('GET leaderboard', () => {
 
   it('returns entries sorted by rank with all required fields', async () => {
     // Seed a submission + attempts so we have valid best_attempt_id FKs
-    const sub1 = createTestSubmission(db, task.id, pilot.id,  league.id);
+    const sub1 = createTestSubmission(db, task.id, pilot.id, league.id);
     const sub2 = createTestSubmission(db, task.id, pilot2.id, league.id);
-    const att1 = createTestAttempt(db, sub1, task.id, pilot.id,  league.id, { reachedGoal: true,  taskTimeS: 4200, distanceFlownKm: 42.3, distancePoints: 714, timePoints: 133, totalPoints: 847 });
-    const att2 = createTestAttempt(db, sub2, task.id, pilot2.id, league.id, { reachedGoal: false, distanceFlownKm: 18.6, distancePoints: 268, timePoints: 0,   totalPoints: 268 });
+    const att1 = createTestAttempt(db, sub1, task.id, pilot.id, league.id, {
+      reachedGoal: true,
+      taskTimeS: 4200,
+      distanceFlownKm: 42.3,
+      distancePoints: 714,
+      timePoints: 133,
+      totalPoints: 847,
+    });
+    const att2 = createTestAttempt(db, sub2, task.id, pilot2.id, league.id, {
+      reachedGoal: false,
+      distanceFlownKm: 18.6,
+      distancePoints: 268,
+      timePoints: 0,
+      totalPoints: 268,
+    });
 
-    createTestTaskResult(db, task.id, pilot.id,  league.id, att1, { rank: 1, reachedGoal: true,  taskTimeS: 4200, distanceFlownKm: 42.3, distancePoints: 714, timePoints: 133, totalPoints: 847 });
-    createTestTaskResult(db, task.id, pilot2.id, league.id, att2, { rank: 2, reachedGoal: false, distanceFlownKm: 18.6, distancePoints: 268, timePoints: 0,   totalPoints: 268 });
+    createTestTaskResult(db, task.id, pilot.id, league.id, att1, {
+      rank: 1,
+      reachedGoal: true,
+      taskTimeS: 4200,
+      distanceFlownKm: 42.3,
+      distancePoints: 714,
+      timePoints: 133,
+      totalPoints: 847,
+    });
+    createTestTaskResult(db, task.id, pilot2.id, league.id, att2, {
+      rank: 2,
+      reachedGoal: false,
+      distanceFlownKm: 18.6,
+      distancePoints: 268,
+      timePoints: 0,
+      totalPoints: 268,
+    });
 
     const res = await app.inject({ method: 'GET', url: url(), headers: { 'x-test-user-id': pilot.id } });
 
@@ -164,8 +201,8 @@ describe('GET leaderboard', () => {
 
   it('returns 404 for an unknown task', async () => {
     const res = await app.inject({
-      method:  'GET',
-      url:     `/leagues/${league.slug}/seasons/${season.id}/tasks/nonexistent-id/leaderboard`,
+      method: 'GET',
+      url: `/leagues/${league.slug}/seasons/${season.id}/tasks/nonexistent-id/leaderboard`,
       headers: { 'x-test-user-id': pilot.id },
     });
 
@@ -194,7 +231,12 @@ describe('rebuildTaskResults', () => {
   it('picks goal attempt over non-goal when pilot has multiple attempts', () => {
     const sub = createTestSubmission(db, task.id, pilot.id, league.id);
     createTestAttempt(db, sub, task.id, pilot.id, league.id, { reachedGoal: false, totalPoints: 200, attemptIndex: 0 });
-    createTestAttempt(db, sub, task.id, pilot.id, league.id, { reachedGoal: true,  totalPoints: 847, attemptIndex: 1, taskTimeS: 3600 });
+    createTestAttempt(db, sub, task.id, pilot.id, league.id, {
+      reachedGoal: true,
+      totalPoints: 847,
+      attemptIndex: 1,
+      taskTimeS: 3600,
+    });
 
     rebuildTaskResults(db, task.id);
 
@@ -205,10 +247,14 @@ describe('rebuildTaskResults', () => {
   });
 
   it('ranks pilots correctly: goal pilot ranks above non-goal', () => {
-    const sub1 = createTestSubmission(db, task.id, pilot.id,  league.id);
+    const sub1 = createTestSubmission(db, task.id, pilot.id, league.id);
     const sub2 = createTestSubmission(db, task.id, pilot2.id, league.id);
-    createTestAttempt(db, sub1, task.id, pilot.id,  league.id, { reachedGoal: false, totalPoints: 400 });
-    createTestAttempt(db, sub2, task.id, pilot2.id, league.id, { reachedGoal: true,  totalPoints: 800, taskTimeS: 3600 });
+    createTestAttempt(db, sub1, task.id, pilot.id, league.id, { reachedGoal: false, totalPoints: 400 });
+    createTestAttempt(db, sub2, task.id, pilot2.id, league.id, {
+      reachedGoal: true,
+      totalPoints: 800,
+      taskTimeS: 3600,
+    });
 
     rebuildTaskResults(db, task.id);
 

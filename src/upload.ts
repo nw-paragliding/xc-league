@@ -12,18 +12,12 @@
 //  - RESCORE_TASK enqueued only when pilot reached goal (time pts provisional)
 // =============================================================================
 
-import { createHash }         from 'crypto';
-import { randomUUID }         from 'crypto';
-import type { FastifyRequest as FastifyRequestBase, FastifyReply } from 'fastify';
-import type { Database }      from 'better-sqlite3';
-import {
-  runPipeline,
-  formatPipelineError,
-  type PipelineInput,
-  type TurnpointDef,
-} from './pipeline';
-import { rebuildTaskResults, type SQLiteJobQueue, type RescoreTaskPayload } from './job-queue';
-import { requireAuth }    from './auth';
+import type { Database } from 'better-sqlite3';
+import { createHash, randomUUID } from 'crypto';
+import type { FastifyReply, FastifyRequest as FastifyRequestBase } from 'fastify';
+import { requireAuth } from './auth';
+import { type RescoreTaskPayload, rebuildTaskResults, type SQLiteJobQueue } from './job-queue';
+import { formatPipelineError, type PipelineInput, runPipeline, type TurnpointDef } from './pipeline';
 
 // =============================================================================
 // TYPES
@@ -31,30 +25,30 @@ import { requireAuth }    from './auth';
 
 interface UploadRouteParams {
   leagueSlug: string;
-  seasonId:   string;
-  taskId:     string;
+  seasonId: string;
+  taskId: string;
 }
 
 interface TaskRow {
-  id:               string;
-  league_id:        string;
-  season_id:        string;
-  name:             string;
-  status:           string;
-  open_date:        string;
-  close_date:       string;
+  id: string;
+  league_id: string;
+  season_id: string;
+  name: string;
+  status: string;
+  open_date: string;
+  close_date: string;
   scores_frozen_at: string | null;
-  task_type:        string | null;
+  task_type: string | null;
 }
 
 interface TurnpointRow {
-  id:                   string;
-  sequence_index:       number;
-  name:                 string;
-  latitude:             number;
-  longitude:            number;
-  radius_m:             number;
-  type:                 string;
+  id: string;
+  sequence_index: number;
+  name: string;
+  latitude: number;
+  longitude: number;
+  radius_m: number;
+  type: string;
   goal_line_bearing_deg: number | null;
 }
 
@@ -63,7 +57,7 @@ interface TurnpointRow {
 // =============================================================================
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
-const IGC_MAGIC    = 'A';
+const IGC_MAGIC = 'A';
 
 // =============================================================================
 // ROUTE HANDLER
@@ -76,38 +70,42 @@ const IGC_MAGIC    = 'A';
  */
 export async function handleIgcUpload(
   request: FastifyRequestBase<{ Params: UploadRouteParams }>,
-  reply:   FastifyReply,
-  db:      Database,
-  queue:   SQLiteJobQueue,
+  reply: FastifyReply,
+  db: Database,
+  queue: SQLiteJobQueue,
 ): Promise<void> {
   requireAuth(request as any, reply);
 
-  const userId   = (request as any).user!.userId;
-  const league   = (request as any).league!;
+  const userId = (request as any).user!.userId;
+  const league = (request as any).league!;
   const { taskId, seasonId } = request.params;
 
   // Auto-join: add user as pilot member if not already in the league
-  const existingMembership = db.prepare(
-    `SELECT id FROM league_memberships
-     WHERE league_id = ? AND user_id = ? AND left_at IS NULL AND deleted_at IS NULL`
-  ).get(league.id, userId);
+  const existingMembership = db
+    .prepare(
+      `SELECT id FROM league_memberships
+     WHERE league_id = ? AND user_id = ? AND left_at IS NULL AND deleted_at IS NULL`,
+    )
+    .get(league.id, userId);
   if (!existingMembership) {
     db.prepare(
       `INSERT INTO league_memberships (id, league_id, user_id, role, joined_at, created_at, updated_at)
-       VALUES (?, ?, ?, 'pilot', datetime('now'), datetime('now'), datetime('now'))`
+       VALUES (?, ?, ?, 'pilot', datetime('now'), datetime('now'), datetime('now'))`,
     ).run(randomUUID(), league.id, userId);
   }
 
   // ── Resolve task ───────────────────────────────────────────────────────────
-  const task = db.prepare(
-    `SELECT t.*
+  const task = db
+    .prepare(
+      `SELECT t.*
      FROM tasks t
      JOIN seasons s ON s.id = t.season_id
      WHERE t.id = ?
        AND t.season_id = ?
        AND s.league_id = ?
        AND t.deleted_at IS NULL`,
-  ).get(taskId, seasonId, league.id) as TaskRow | undefined;
+    )
+    .get(taskId, seasonId, league.id) as TaskRow | undefined;
 
   if (!task) {
     return reply.status(404).send({ error: { code: 'TASK_NOT_FOUND', message: 'Task not found' } });
@@ -116,7 +114,7 @@ export async function handleIgcUpload(
   if (task.status !== 'published') {
     return reply.status(409).send({
       error: {
-        code:    'TASK_NOT_OPEN',
+        code: 'TASK_NOT_OPEN',
         message: `Task is not published — submissions are not accepted`,
       },
     });
@@ -182,9 +180,9 @@ export async function handleIgcUpload(
   // ── Duplicate detection ────────────────────────────────────────────────────
   const sha256 = createHash('sha256').update(fileBuffer).digest('hex');
 
-  const duplicate = db.prepare(
-    `SELECT id FROM flight_submissions WHERE task_id = ? AND user_id = ? AND igc_sha256 = ? LIMIT 1`,
-  ).get(taskId, userId, sha256);
+  const duplicate = db
+    .prepare(`SELECT id FROM flight_submissions WHERE task_id = ? AND user_id = ? AND igc_sha256 = ? LIMIT 1`)
+    .get(taskId, userId, sha256);
 
   if (duplicate) {
     return reply.status(409).send({
@@ -193,12 +191,14 @@ export async function handleIgcUpload(
   }
 
   // ── Load task turnpoints ───────────────────────────────────────────────────
-  const turnpointRows = db.prepare(
-    `SELECT id, sequence_index, name, latitude, longitude, radius_m, type, goal_line_bearing_deg
+  const turnpointRows = db
+    .prepare(
+      `SELECT id, sequence_index, name, latitude, longitude, radius_m, type, goal_line_bearing_deg
      FROM turnpoints
      WHERE task_id = ? AND deleted_at IS NULL
      ORDER BY sequence_index ASC`,
-  ).all(taskId) as TurnpointRow[];
+    )
+    .all(taskId) as TurnpointRow[];
 
   if (turnpointRows.length < 2) {
     return reply.status(422).send({
@@ -206,29 +206,31 @@ export async function handleIgcUpload(
     });
   }
 
-  const turnpointDefs: TurnpointDef[] = turnpointRows.map(tp => ({
-    id:                tp.id,
-    sequenceIndex:     tp.sequence_index,
-    lat:               tp.latitude,
-    lng:               tp.longitude,
-    radiusM:           tp.radius_m,
-    type:              tp.type as TurnpointDef['type'],
+  const turnpointDefs: TurnpointDef[] = turnpointRows.map((tp) => ({
+    id: tp.id,
+    sequenceIndex: tp.sequence_index,
+    lat: tp.latitude,
+    lng: tp.longitude,
+    radiusM: tp.radius_m,
+    type: tp.type as TurnpointDef['type'],
     goalLineBearingDeg: tp.goal_line_bearing_deg ?? undefined,
   }));
 
   // ── Load existing goal times and best distance ─────────────────────────────
-  const goalTimeRows = db.prepare(
-    `SELECT task_time_s FROM flight_attempts
+  const goalTimeRows = db
+    .prepare(
+      `SELECT task_time_s FROM flight_attempts
      WHERE task_id = ? AND reached_goal = 1 AND deleted_at IS NULL`,
-  ).all(taskId) as Array<{ task_time_s: number }>;
-  const existingGoalTimesS = goalTimeRows
-    .filter(r => r.task_time_s != null)
-    .map(r => r.task_time_s);
+    )
+    .all(taskId) as Array<{ task_time_s: number }>;
+  const existingGoalTimesS = goalTimeRows.filter((r) => r.task_time_s != null).map((r) => r.task_time_s);
 
-  const bestDistRow = db.prepare(
-    `SELECT MAX(distance_flown_km) AS best FROM flight_attempts
+  const bestDistRow = db
+    .prepare(
+      `SELECT MAX(distance_flown_km) AS best FROM flight_attempts
      WHERE task_id = ? AND deleted_at IS NULL`,
-  ).get(taskId) as { best: number | null };
+    )
+    .get(taskId) as { best: number | null };
   const taskBestDistanceKm = bestDistRow.best ?? 0;
 
   // ── Build pipeline input ───────────────────────────────────────────────────
@@ -244,14 +246,12 @@ export async function handleIgcUpload(
   };
 
   // ── Run pipeline ───────────────────────────────────────────────────────────
-  const scoresFrozenAt = task.scores_frozen_at
-    ? new Date(task.scores_frozen_at).getTime()
-    : null;
+  const scoresFrozenAt = task.scores_frozen_at ? new Date(task.scores_frozen_at).getTime() : null;
 
   const pipelineResult = await runPipeline(
     pipelineInput,
-    task.open_date.slice(0, 10),   // YYYY-MM-DD
-    task.close_date.slice(0, 10),  // YYYY-MM-DD
+    task.open_date.slice(0, 10), // YYYY-MM-DD
+    task.close_date.slice(0, 10), // YYYY-MM-DD
     scoresFrozenAt,
     taskBestDistanceKm,
   );
@@ -267,7 +267,7 @@ export async function handleIgcUpload(
   const best = scoredAttempts[bestAttemptIndex];
 
   // ── Persist submission + attempts ──────────────────────────────────────────
-  const nowIso       = new Date().toISOString();
+  const nowIso = new Date().toISOString();
   const submissionId = randomUUID();
 
   // Pre-generate attempt IDs
@@ -284,9 +284,17 @@ export async function handleIgcUpload(
         submitted_at, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PROCESSED', ?, ?, ?)
     `).run(
-      submissionId, taskId, userId, task.league_id,
-      fileBuffer, originalFilename, fileBuffer.length, sha256,
-      nowIso, nowIso, nowIso,
+      submissionId,
+      taskId,
+      userId,
+      task.league_id,
+      fileBuffer,
+      originalFilename,
+      fileBuffer.length,
+      sha256,
+      nowIso,
+      nowIso,
+      nowIso,
     );
 
     // Insert all scored attempts
@@ -294,13 +302,9 @@ export async function handleIgcUpload(
       const attempt = scoredAttempts[i];
       const attemptId = attemptIds[i];
 
-      const sssCrossingTime  = new Date(attempt.sssCrossing.crossingTime).toISOString();
-      const essCrossingTime  = attempt.essCrossing
-        ? new Date(attempt.essCrossing.crossingTime).toISOString()
-        : null;
-      const goalCrossingTime = attempt.goalCrossing
-        ? new Date(attempt.goalCrossing.crossingTime).toISOString()
-        : null;
+      const sssCrossingTime = new Date(attempt.sssCrossing.crossingTime).toISOString();
+      const essCrossingTime = attempt.essCrossing ? new Date(attempt.essCrossing.crossingTime).toISOString() : null;
+      const goalCrossingTime = attempt.goalCrossing ? new Date(attempt.goalCrossing.crossingTime).toISOString() : null;
 
       db.prepare(`
         INSERT INTO flight_attempts (
@@ -312,8 +316,13 @@ export async function handleIgcUpload(
           created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        attemptId, submissionId, taskId, userId,
-        sssCrossingTime, essCrossingTime, goalCrossingTime,
+        attemptId,
+        submissionId,
+        taskId,
+        userId,
+        sssCrossingTime,
+        essCrossingTime,
+        goalCrossingTime,
         attempt.taskTimeS !== null ? Math.round(attempt.taskTimeS) : null,
         attempt.reachedGoal ? 1 : 0,
         attempt.lastTurnpointIndex,
@@ -323,7 +332,8 @@ export async function handleIgcUpload(
         attempt.totalPoints,
         attempt.hasFlaggedCrossings ? 1 : 0,
         attempt.attemptIndex,
-        nowIso, nowIso,
+        nowIso,
+        nowIso,
       );
 
       // Insert individual TP crossings
@@ -335,20 +345,22 @@ export async function handleIgcUpload(
             created_at, updated_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
-          randomUUID(), attemptId, crossing.turnpointId, crossing.sequenceIndex,
+          randomUUID(),
+          attemptId,
+          crossing.turnpointId,
+          crossing.sequenceIndex,
           new Date(crossing.crossingTime).toISOString(),
           crossing.groundCheckRequired ? 1 : 0,
           crossing.groundConfirmed ? 1 : 0,
           crossing.detectedMaxSpeedKmh,
-          nowIso, nowIso,
+          nowIso,
+          nowIso,
         );
       }
     }
 
     // Link best attempt to submission
-    db.prepare(
-      `UPDATE flight_submissions SET best_attempt_id = ? WHERE id = ?`,
-    ).run(bestAttemptId, submissionId);
+    db.prepare(`UPDATE flight_submissions SET best_attempt_id = ? WHERE id = ?`).run(bestAttemptId, submissionId);
 
     // Immediately materialise task_results for this task so leaderboard is live
     rebuildTaskResults(db, taskId);
@@ -364,38 +376,40 @@ export async function handleIgcUpload(
   }
 
   // ── Response ───────────────────────────────────────────────────────────────
-  const row = db.prepare(
-    `SELECT fs.id, fs.status, fs.igc_filename, fs.igc_size_bytes, fs.submitted_at, fs.igc_date,
+  const row = db
+    .prepare(
+      `SELECT fs.id, fs.status, fs.igc_filename, fs.igc_size_bytes, fs.submitted_at, fs.igc_date,
             fa.attempt_index, fa.reached_goal, fa.distance_flown_km, fa.task_time_s,
             fa.distance_points, fa.time_points, fa.total_points,
             fa.has_flagged_crossings, fa.last_turnpoint_index
      FROM flight_submissions fs
      LEFT JOIN flight_attempts fa ON fa.id = fs.best_attempt_id
      WHERE fs.id = ?`,
-  ).get(submissionId) as any;
+    )
+    .get(submissionId) as any;
 
   const bestAttempt = {
-    attemptIndex:        row.attempt_index ?? 0,
-    reachedGoal:         Boolean(row.reached_goal),
-    distanceFlownKm:     row.distance_flown_km ?? 0,
-    taskTimeS:           row.task_time_s ?? null,
-    distancePoints:      row.distance_points ?? 0,
-    timePoints:          row.time_points ?? 0,
-    totalPoints:         row.total_points ?? 0,
+    attemptIndex: row.attempt_index ?? 0,
+    reachedGoal: Boolean(row.reached_goal),
+    distanceFlownKm: row.distance_flown_km ?? 0,
+    taskTimeS: row.task_time_s ?? null,
+    distancePoints: row.distance_points ?? 0,
+    timePoints: row.time_points ?? 0,
+    totalPoints: row.total_points ?? 0,
     hasFlaggedCrossings: Boolean(row.has_flagged_crossings),
-    turnpointsCrossed:   row.last_turnpoint_index ?? 0,
+    turnpointsCrossed: row.last_turnpoint_index ?? 0,
   };
 
   reply.status(201).send({
     submission: {
-      id:                    row.id,
-      status:                row.status,
-      submittedAt:           row.submitted_at,
-      igcFilename:           row.igc_filename,
-      igcSizeBytes:          row.igc_size_bytes,
-      igcDate:               row.igc_date ?? null,
+      id: row.id,
+      status: row.status,
+      submittedAt: row.submitted_at,
+      igcFilename: row.igc_filename,
+      igcSizeBytes: row.igc_size_bytes,
+      igcDate: row.igc_date ?? null,
       bestAttempt,
-      allAttempts:           [bestAttempt],
+      allAttempts: [bestAttempt],
       timePointsProvisional: best.reachedGoal,
     },
   });
@@ -413,37 +427,44 @@ export async function handleIgcUpload(
  */
 export async function handleIgcDownload(
   request: FastifyRequestBase<{ Params: UploadRouteParams & { submissionId: string } }>,
-  reply:   FastifyReply,
-  db:      Database,
+  reply: FastifyReply,
+  db: Database,
 ): Promise<void> {
   requireAuth(request as any, reply);
 
   const { submissionId } = request.params;
 
-  const row = db.prepare(`
+  const row = db
+    .prepare(`
     SELECT s.user_id, s.igc_data, s.igc_filename, t.scores_frozen_at
     FROM flight_submissions s
     JOIN tasks t ON t.id = s.task_id
     WHERE s.id = ?
       AND s.deleted_at IS NULL
-  `).get(submissionId) as { user_id: string; igc_data: Buffer; igc_filename: string; scores_frozen_at: string | null } | undefined;
+  `)
+    .get(submissionId) as
+    | { user_id: string; igc_data: Buffer; igc_filename: string; scores_frozen_at: string | null }
+    | undefined;
 
   if (!row) {
     return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Submission not found' } });
   }
 
-  const isOwner  = row.user_id === (request as any).user!.userId;
+  const isOwner = row.user_id === (request as any).user!.userId;
   const isFrozen = row.scores_frozen_at !== null;
 
   if (!isOwner && !isFrozen) {
     return reply.status(403).send({
-      error: { code: 'SCORES_NOT_FROZEN', message: "Other pilots' IGC files are hidden until task scores are finalised" },
+      error: {
+        code: 'SCORES_NOT_FROZEN',
+        message: "Other pilots' IGC files are hidden until task scores are finalised",
+      },
     });
   }
 
   reply
     .header('Content-Type', 'application/octet-stream')
-    .header('Content-Disposition', `attachment; filename="${row.igc_filename.replace(/[^\w.\-]/g, '_')}"`)
+    .header('Content-Disposition', `attachment; filename="${row.igc_filename.replace(/[^\w.-]/g, '_')}"`)
     .header('Content-Length', row.igc_data.length)
     .header('Cache-Control', isFrozen ? 'public, max-age=86400' : 'private, no-cache')
     .send(row.igc_data);

@@ -7,9 +7,13 @@
 // =============================================================================
 
 import {
-  optimiseRoute, computePartialDistanceKm, computeDistancePoints, computeTimePoints,
+  type Cylinder,
+  computeDistancePoints,
+  computePartialDistanceKm,
+  computeTimePoints,
   MAX_POINTS,
-  type OptimisedRoute, type Cylinder,
+  type OptimisedRoute,
+  optimiseRoute,
 } from './shared/task-engine';
 
 // =============================================================================
@@ -18,13 +22,13 @@ import {
 
 /** A single GPS fix from a B record */
 export interface Fix {
-  timestamp: number;        // Unix ms, UTC — derived from HFDTE + B record time
-  lat: number;              // WGS84 decimal degrees
-  lng: number;              // WGS84 decimal degrees
-  gpsAlt: number;           // metres
-  pressureAlt: number;      // metres
-  valid: boolean;           // IGC validity flag (A = valid, V = invalid)
-  gspKmh: number | null;    // ground speed km/h from GSP extension if present; else null
+  timestamp: number; // Unix ms, UTC — derived from HFDTE + B record time
+  lat: number; // WGS84 decimal degrees
+  lng: number; // WGS84 decimal degrees
+  gpsAlt: number; // metres
+  pressureAlt: number; // metres
+  valid: boolean; // IGC validity flag (A = valid, V = invalid)
+  gspKmh: number | null; // ground speed km/h from GSP extension if present; else null
   derivedSpeedKmh: number | null; // computed from distance to previous fix / time delta
 }
 
@@ -32,12 +36,12 @@ export interface Fix {
 export interface CylinderCrossing {
   turnpointId: string;
   sequenceIndex: number;
-  crossingTime: number;       // interpolated Unix ms
-  segmentStartFix: Fix;       // fix before crossing
-  segmentEndFix: Fix;         // fix after crossing
+  crossingTime: number; // interpolated Unix ms
+  segmentStartFix: Fix; // fix before crossing
+  segmentEndFix: Fix; // fix after crossing
   groundCheckRequired: boolean;
-  detectedMaxSpeedKmh: number | null;  // max speed in 60s window around crossing
-  groundConfirmed: boolean;   // true if speed check passed or not required
+  detectedMaxSpeedKmh: number | null; // max speed in 60s window around crossing
+  groundConfirmed: boolean; // true if speed check passed or not required
 }
 
 /** One complete or partial task attempt extracted from a track */
@@ -46,21 +50,19 @@ export interface ScoredAttempt {
   sssCrossing: CylinderCrossing;
   essCrossing: CylinderCrossing | null;
   goalCrossing: CylinderCrossing | null;
-  turnpointCrossings: CylinderCrossing[];   // all TPs achieved in order, including SSS/ESS/goal
+  turnpointCrossings: CylinderCrossing[]; // all TPs achieved in order, including SSS/ESS/goal
   reachedGoal: boolean;
   lastTurnpointIndex: number;
-  taskTimeS: number | null;                 // ESS time - SSS time in seconds; null if no ESS
+  taskTimeS: number | null; // ESS time - SSS time in seconds; null if no ESS
   distanceFlownKm: number;
   distancePoints: number;
-  timePoints: number;                       // 0 until task field is known; set by scorer
+  timePoints: number; // 0 until task field is known; set by scorer
   totalPoints: number;
   hasFlaggedCrossings: boolean;
 }
 
 /** Result type — all pipeline stages return this */
-export type Result<T, E> =
-  | { ok: true; value: T }
-  | { ok: false; error: E };
+export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
 
 function ok<T>(value: T): Result<T, never> {
   return { ok: true, value };
@@ -70,23 +72,22 @@ function err<E>(error: E): Result<never, E> {
   return { ok: false, error };
 }
 
-
 // =============================================================================
 // STAGE 0: RAW INPUT
 // =============================================================================
 
 export interface PipelineInput {
-  igcText: string;           // raw file contents
+  igcText: string; // raw file contents
   task: TaskDefinition;
   existingGoalTimes: number[]; // task times (seconds) of all pilots who already reached goal
-                               // used to compute time points for this submission
+  // used to compute time points for this submission
   competitionType: 'XC' | 'HIKE_AND_FLY';
 }
 
 export interface TaskDefinition {
   id: string;
-  turnpoints: TurnpointDef[];  // ordered: [SSS, TP1, TP2, ..., ESS/goal]
-  closeDate: number;           // Unix ms — used to check if scoring is frozen
+  turnpoints: TurnpointDef[]; // ordered: [SSS, TP1, TP2, ..., ESS/goal]
+  closeDate: number; // Unix ms — used to check if scoring is frozen
 }
 
 export interface TurnpointDef {
@@ -96,9 +97,8 @@ export interface TurnpointDef {
   lng: number;
   radiusM: number;
   type: 'SSS' | 'CYLINDER' | 'AIR_OR_GROUND' | 'GROUND_ONLY' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE';
-  goalLineBearingDeg?: number;  // GOAL_LINE only
+  goalLineBearingDeg?: number; // GOAL_LINE only
 }
-
 
 // =============================================================================
 // STAGE 1: PARSE & VALIDATE
@@ -107,16 +107,16 @@ export interface TurnpointDef {
 // =============================================================================
 
 export type ParseError =
-  | { code: 'MISSING_DATE_HEADER';    message: string }
-  | { code: 'NO_VALID_FIXES';         message: string }
-  | { code: 'NON_MONOTONIC_TIME';     message: string; atTimestamp: number }
-  | { code: 'INSUFFICIENT_DURATION';  message: string; durationS: number }
-  | { code: 'PARSE_FAILURE';          message: string; detail: unknown };
+  | { code: 'MISSING_DATE_HEADER'; message: string }
+  | { code: 'NO_VALID_FIXES'; message: string }
+  | { code: 'NON_MONOTONIC_TIME'; message: string; atTimestamp: number }
+  | { code: 'INSUFFICIENT_DURATION'; message: string; durationS: number }
+  | { code: 'PARSE_FAILURE'; message: string; detail: unknown };
 
 export interface ParsedTrack {
-  flightDate: string;    // 'YYYY-MM-DD' from HFDTE
-  fixes: Fix[];          // validated, monotonic, with derivedSpeedKmh populated
-  gapCount: number;      // number of gaps > 5 minutes between fixes (informational)
+  flightDate: string; // 'YYYY-MM-DD' from HFDTE
+  fixes: Fix[]; // validated, monotonic, with derivedSpeedKmh populated
+  gapCount: number; // number of gaps > 5 minutes between fixes (informational)
 }
 
 /**
@@ -213,7 +213,6 @@ export function parseAndValidate(igcText: string): Result<ParsedTrack, ParseErro
   return ok({ flightDate, fixes, gapCount });
 }
 
-
 // =============================================================================
 // STAGE 2: DATE VALIDATION
 // =============================================================================
@@ -237,14 +236,14 @@ export function validateFlightDate(
   }
 
   // Compare YYYY-MM-DD strings lexicographically (safe for ISO date format)
-  const openDay  = taskOpenDate.slice(0, 10);
+  const openDay = taskOpenDate.slice(0, 10);
   const closeDay = taskCloseDate.slice(0, 10);
 
   if (track.flightDate < openDay || track.flightDate > closeDay) {
     return err({
       code: 'FLIGHT_DATE_OUTSIDE_TASK_WINDOW',
       flightDate: track.flightDate,
-      taskOpen:  openDay,
+      taskOpen: openDay,
       taskClose: closeDay,
     });
   }
@@ -252,24 +251,22 @@ export function validateFlightDate(
   return ok(track);
 }
 
-
 // =============================================================================
 // STAGE 3: ATTEMPT DETECTION
 // =============================================================================
 
-export type AttemptDetectionError =
-  | { code: 'NO_SSS_CROSSING'; message: string };
+export type AttemptDetectionError = { code: 'NO_SSS_CROSSING'; message: string };
 
 export interface AttemptTrace {
   attemptIndex: number;
   sssCrossing: CylinderCrossing;
   essCrossing: CylinderCrossing | null;
   goalCrossing: CylinderCrossing | null;
-  turnpointCrossings: CylinderCrossing[];  // all achieved TPs in order (includes SSS, ESS, goal)
+  turnpointCrossings: CylinderCrossing[]; // all achieved TPs in order (includes SSS, ESS, goal)
   reachedGoal: boolean;
   lastTurnpointIndex: number;
-  taskTimeS: number | null;     // (ESS or goal crossing time - SSS crossing time) / 1000
-  distanceFlownKm: number;      // populated by calculateDistances (initialised to 0 here)
+  taskTimeS: number | null; // (ESS or goal crossing time - SSS crossing time) / 1000
+  distanceFlownKm: number; // populated by calculateDistances (initialised to 0 here)
 }
 
 /**
@@ -279,10 +276,7 @@ export interface AttemptTrace {
  *   - Greedily match remaining TPs forward using segment-circle intersection
  *   - Build an AttemptTrace per SSS crossing
  */
-export function detectAttempts(
-  fixes: Fix[],
-  task: TaskDefinition,
-): Result<AttemptTrace[], AttemptDetectionError> {
+export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<AttemptTrace[], AttemptDetectionError> {
   if (task.turnpoints.length < 2) {
     return err({ code: 'NO_SSS_CROSSING', message: 'Task has fewer than 2 turnpoints' });
   }
@@ -324,14 +318,14 @@ export function detectAttempts(
       sequenceIndex: sss.sequenceIndex,
       crossingTime: sssCross.crossingTime,
       segmentStartFix: fixes[sssCross.fixIndex],
-      segmentEndFix:   fixes[sssCross.fixIndex + 1],
+      segmentEndFix: fixes[sssCross.fixIndex + 1],
       groundCheckRequired: false,
       detectedMaxSpeedKmh: null,
       groundConfirmed: true,
     };
 
     const turnpointCrossings: CylinderCrossing[] = [sssCrossing];
-    let tpIdx = 1;  // next TP to look for (0 = SSS already done)
+    let tpIdx = 1; // next TP to look for (0 = SSS already done)
     let reachedGoal = false;
     let essCrossing: CylinderCrossing | null = null;
     let goalCrossing: CylinderCrossing | null = null;
@@ -343,16 +337,19 @@ export function detectAttempts(
       cachedGoalBearing = goalTp.goalLineBearingDeg ?? undefined;
       if (cachedGoalBearing == null) {
         try {
-          const cyls: Cylinder[] = task.turnpoints.map(t => ({
-            lat: t.lat, lng: t.lng, radiusM: t.radiusM, type: t.type,
+          const cyls: Cylinder[] = task.turnpoints.map((t) => ({
+            lat: t.lat,
+            lng: t.lng,
+            radiusM: t.radiusM,
+            type: t.type,
           }));
           cachedGoalBearing = optimiseRoute(cyls).goalLineBearingDeg;
         } catch {
           const prevTp = task.turnpoints[task.turnpoints.length - 2];
           if (prevTp) {
             const prevLocal = projectToLocal(prevTp.lat, prevTp.lng, goalTp.lat, goalTp.lng);
-            const inboundAngle = Math.atan2(-prevLocal.x, -prevLocal.y) * 180 / Math.PI;
-            cachedGoalBearing = ((inboundAngle + 90) + 360) % 360;
+            const inboundAngle = (Math.atan2(-prevLocal.x, -prevLocal.y) * 180) / Math.PI;
+            cachedGoalBearing = (inboundAngle + 90 + 360) % 360;
           }
         }
       }
@@ -374,12 +371,9 @@ export function detectAttempts(
       if (tp.type === 'GOAL_LINE' && cachedGoalBearing != null) {
         const bearingDeg = cachedGoalBearing;
         const tChord = segmentIntersectsGoalLine(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);
-        const tArc   = segmentEntersGoalSemiCircle(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);
+        const tArc = segmentEntersGoalSemiCircle(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);
         if (tChord !== null || tArc !== null) {
-          crossT = Math.min(
-            tChord !== null ? tChord : Infinity,
-            tArc   !== null ? tArc   : Infinity,
-          );
+          crossT = Math.min(tChord !== null ? tChord : Infinity, tArc !== null ? tArc : Infinity);
           crossed = true;
         }
       } else if (distA < tp.radiusM) {
@@ -402,7 +396,7 @@ export function detectAttempts(
           sequenceIndex: tp.sequenceIndex,
           crossingTime: interpolateCrossingTime(a, b, crossT),
           segmentStartFix: a,
-          segmentEndFix:   b,
+          segmentEndFix: b,
           groundCheckRequired,
           detectedMaxSpeedKmh: null,
           groundConfirmed: !groundCheckRequired,
@@ -417,7 +411,7 @@ export function detectAttempts(
           goalCrossing = crossing;
           reachedGoal = true;
           tpIdx++;
-          break;  // done for this attempt
+          break; // done for this attempt
         }
 
         tpIdx++;
@@ -431,9 +425,7 @@ export function detectAttempts(
 
     // Task time: ESS → goal time if ESS exists, else SSS → goal
     const timingCrossing = essCrossing ?? goalCrossing;
-    const taskTimeS = timingCrossing !== null
-      ? (timingCrossing.crossingTime - sssCrossing.crossingTime) / 1000
-      : null;
+    const taskTimeS = timingCrossing !== null ? (timingCrossing.crossingTime - sssCrossing.crossingTime) / 1000 : null;
 
     attempts.push({
       attemptIndex: ai,
@@ -444,31 +436,33 @@ export function detectAttempts(
       reachedGoal,
       lastTurnpointIndex,
       taskTimeS,
-      distanceFlownKm: 0,  // populated by calculateDistances
+      distanceFlownKm: 0, // populated by calculateDistances
     });
   }
 
   return ok(attempts);
 }
 
-
 // =============================================================================
 // STAGE 3a: GEOMETRY ENGINE
 // =============================================================================
 
-export interface Point2D { x: number; y: number; }
-export interface Segment2D { a: Point2D; b: Point2D; }
+export interface Point2D {
+  x: number;
+  y: number;
+}
+export interface Segment2D {
+  a: Point2D;
+  b: Point2D;
+}
 
 /**
  * Project WGS84 lat/lng to a local flat plane centred on origin.
  * Uses equirectangular approximation — accurate for distances < 20km.
  */
-export function projectToLocal(
-  lat: number, lng: number,
-  originLat: number, originLng: number,
-): Point2D {
+export function projectToLocal(lat: number, lng: number, originLat: number, originLng: number): Point2D {
   const R = 6371000;
-  const x = R * (lng - originLng) * (Math.PI / 180) * Math.cos(originLat * Math.PI / 180);
+  const x = R * (lng - originLng) * (Math.PI / 180) * Math.cos((originLat * Math.PI) / 180);
   const y = R * (lat - originLat) * (Math.PI / 180);
   return { x, y };
 }
@@ -478,9 +472,7 @@ export function projectToLocal(
  * Returns the interpolation parameter t ∈ [0,1] of the first intersection,
  * or null if no intersection.
  */
-export function segmentIntersectsCircle(
-  a: Point2D, b: Point2D, r: number,
-): number | null {
+export function segmentIntersectsCircle(a: Point2D, b: Point2D, r: number): number | null {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const qa = dx * dx + dy * dy;
@@ -505,27 +497,31 @@ export function segmentIntersectsCircle(
  * Goal line is defined by its midpoint, half-length, and bearing (degrees from north).
  */
 export function segmentIntersectsGoalLine(
-  a: Point2D, b: Point2D,
+  a: Point2D,
+  b: Point2D,
   lineMidpoint: Point2D,
   halfLengthM: number,
   bearingDeg: number,
 ): number | null {
   // Build goal line endpoints from bearing and half-length
-  const rad = bearingDeg * Math.PI / 180;
+  const rad = (bearingDeg * Math.PI) / 180;
   const dx = Math.sin(rad) * halfLengthM;
   const dy = Math.cos(rad) * halfLengthM;
   const p1: Point2D = { x: lineMidpoint.x - dx, y: lineMidpoint.y - dy };
   const p2: Point2D = { x: lineMidpoint.x + dx, y: lineMidpoint.y + dy };
 
   // Segment-segment intersection: A + t*(B-A) = P1 + u*(P2-P1)
-  const bax  = b.x - a.x;    const bay  = b.y - a.y;
-  const p2p1x = p2.x - p1.x; const p2p1y = p2.y - p1.y;
+  const bax = b.x - a.x;
+  const bay = b.y - a.y;
+  const p2p1x = p2.x - p1.x;
+  const p2p1y = p2.y - p1.y;
   const denom = bax * p2p1y - bay * p2p1x;
-  if (Math.abs(denom) < 1e-10) return null;  // parallel
+  if (Math.abs(denom) < 1e-10) return null; // parallel
 
-  const p1ax = p1.x - a.x; const p1ay = p1.y - a.y;
+  const p1ax = p1.x - a.x;
+  const p1ay = p1.y - a.y;
   const t = (p1ax * p2p1y - p1ay * p2p1x) / denom;
-  const u = (p1ax * bay  - p1ay * bax)   / denom;
+  const u = (p1ax * bay - p1ay * bax) / denom;
 
   if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return t;
   return null;
@@ -543,7 +539,8 @@ export function segmentIntersectsGoalLine(
  * bearingDeg is the goal LINE bearing (perpendicular to the inbound track).
  */
 export function segmentEntersGoalSemiCircle(
-  a: Point2D, b: Point2D,
+  a: Point2D,
+  b: Point2D,
   centre: Point2D,
   radiusM: number,
   bearingDeg: number,
@@ -553,32 +550,35 @@ export function segmentEntersGoalSemiCircle(
   // side the pilot is on *after* crossing the chord.
   // direction from goal centre toward prev TP = goalLineBearing + 90°
   // outbound = opposite direction, so dot product with towardPrev must be < 0
-  const towardPrevRad = ((bearingDeg + 90) % 360) * Math.PI / 180;
+  const towardPrevRad = (((bearingDeg + 90) % 360) * Math.PI) / 180;
   const tpx = Math.sin(towardPrevRad);
   const tpy = Math.cos(towardPrevRad);
   const onOutboundSide = (px: number, py: number) => px * tpx + py * tpy < 0;
 
   // Work in centre-relative coordinates
-  const ax = a.x - centre.x, ay = a.y - centre.y;
-  const bx = b.x - centre.x, by = b.y - centre.y;
-  const dx = bx - ax, dy = by - ay;
+  const ax = a.x - centre.x,
+    ay = a.y - centre.y;
+  const bx = b.x - centre.x,
+    by = b.y - centre.y;
+  const dx = bx - ax,
+    dy = by - ay;
 
   // Already inside the semi-circle at point A
-  if (ax*ax + ay*ay <= radiusM*radiusM && onOutboundSide(ax, ay)) return 0;
+  if (ax * ax + ay * ay <= radiusM * radiusM && onOutboundSide(ax, ay)) return 0;
 
   // Find intersections of the segment with the bounding circle
-  const A2 = dx*dx + dy*dy;
+  const A2 = dx * dx + dy * dy;
   if (A2 < 1e-10) return null;
-  const B2 = 2*(ax*dx + ay*dy);
-  const C2 = ax*ax + ay*ay - radiusM*radiusM;
-  const disc = B2*B2 - 4*A2*C2;
+  const B2 = 2 * (ax * dx + ay * dy);
+  const C2 = ax * ax + ay * ay - radiusM * radiusM;
+  const disc = B2 * B2 - 4 * A2 * C2;
   if (disc < 0) return null;
 
   const sqrtDisc = Math.sqrt(disc);
   // Check entry (t1) then exit (t2); return earliest crossing on the outbound arc
-  for (const t of [(-B2 - sqrtDisc) / (2*A2), (-B2 + sqrtDisc) / (2*A2)]) {
+  for (const t of [(-B2 - sqrtDisc) / (2 * A2), (-B2 + sqrtDisc) / (2 * A2)]) {
     if (t < 0 || t > 1) continue;
-    if (onOutboundSide(ax + t*dx, ay + t*dy)) return t;
+    if (onOutboundSide(ax + t * dx, ay + t * dy)) return t;
   }
   return null;
 }
@@ -593,19 +593,14 @@ export function interpolateCrossingTime(fixA: Fix, fixB: Fix, t: number): number
 /**
  * WGS84 geodesic distance between two points in metres (haversine).
  */
-export function geodesicDistanceM(
-  lat1: number, lng1: number,
-  lat2: number, lng2: number,
-): number {
+export function geodesicDistanceM(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371000;
   const DEG = Math.PI / 180;
   const dLat = (lat2 - lat1) * DEG;
   const dLng = (lng2 - lng1) * DEG;
-  const a = Math.sin(dLat / 2) ** 2
-    + Math.cos(lat1 * DEG) * Math.cos(lat2 * DEG) * Math.sin(dLng / 2) ** 2;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * DEG) * Math.cos(lat2 * DEG) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
-
 
 // =============================================================================
 // STAGE 4: GROUND STATE CLASSIFICATION (Hike & Fly only)
@@ -630,14 +625,12 @@ export function classifyGroundState(
 ): AttemptTrace[] {
   if (competitionType === 'XC') return attempts;
   // Hike & fly: check max speed in a window around each GROUND_ONLY crossing
-  return attempts.map(attempt => ({
+  return attempts.map((attempt) => ({
     ...attempt,
-    turnpointCrossings: attempt.turnpointCrossings.map(crossing => {
+    turnpointCrossings: attempt.turnpointCrossings.map((crossing) => {
       if (!crossing.groundCheckRequired) return crossing;
       const windowMs = 60_000;
-      const relevant = fixes.filter(f =>
-        Math.abs(f.timestamp - crossing.crossingTime) <= windowMs / 2,
-      );
+      const relevant = fixes.filter((f) => Math.abs(f.timestamp - crossing.crossingTime) <= windowMs / 2);
       const maxSpeed = relevant.reduce((m, f) => Math.max(m, f.derivedSpeedKmh ?? 0), 0);
       return {
         ...crossing,
@@ -647,7 +640,6 @@ export function classifyGroundState(
     }),
   }));
 }
-
 
 // =============================================================================
 // STAGE 5: DISTANCE CALCULATION
@@ -659,16 +651,12 @@ export function classifyGroundState(
  * Goal pilots: distanceFlownKm = route.totalDistanceKm
  * Others: use computePartialDistanceKm from shared task-engine
  */
-export function calculateDistances(
-  attempts: AttemptTrace[],
-  fixes: Fix[],
-  task: TaskDefinition,
-): AttemptTrace[] {
+export function calculateDistances(attempts: AttemptTrace[], fixes: Fix[], task: TaskDefinition): AttemptTrace[] {
   if (task.turnpoints.length < 2) return attempts;
 
-  const cylinders: Cylinder[] = task.turnpoints.map(tp => ({
-    lat:  tp.lat,
-    lng:  tp.lng,
+  const cylinders: Cylinder[] = task.turnpoints.map((tp) => ({
+    lat: tp.lat,
+    lng: tp.lng,
     radiusM: tp.radiusM,
     type: tp.type,
     goalLineBearingDeg: tp.goalLineBearingDeg,
@@ -678,24 +666,21 @@ export function calculateDistances(
   try {
     route = optimiseRoute(cylinders);
   } catch {
-    return attempts.map(a => ({ ...a, distanceFlownKm: 0 }));
+    return attempts.map((a) => ({ ...a, distanceFlownKm: 0 }));
   }
 
-  return attempts.map(attempt => {
+  return attempts.map((attempt) => {
     if (attempt.reachedGoal) {
       return { ...attempt, distanceFlownKm: route.totalDistanceKm };
     }
 
     const sssTime = attempt.sssCrossing.crossingTime;
-    const pilotFixes = fixes
-      .filter(f => f.timestamp >= sssTime)
-      .map(f => ({ lat: f.lat, lng: f.lng }));
+    const pilotFixes = fixes.filter((f) => f.timestamp >= sssTime).map((f) => ({ lat: f.lat, lng: f.lng }));
 
     const dist = computePartialDistanceKm(route, cylinders, attempt.lastTurnpointIndex, pilotFixes);
     return { ...attempt, distanceFlownKm: dist };
   });
 }
-
 
 // =============================================================================
 // STAGE 6: GAP SCORING
@@ -718,42 +703,34 @@ export function scoreAttempts(
   taskBestDistanceKm: number,
 ): ScoredAttempt[] {
   // Collect goal task times including this submission's attempts
-  const newGoalTimesS = attempts
-    .filter(a => a.reachedGoal && a.taskTimeS !== null)
-    .map(a => a.taskTimeS!);
+  const newGoalTimesS = attempts.filter((a) => a.reachedGoal && a.taskTimeS !== null).map((a) => a.taskTimeS!);
   const allGoalTimesS = [...existingGoalTimesS, ...newGoalTimesS];
 
   // Best distance across all pilots including this submission
-  const thisBestDist = Math.max(
-    taskBestDistanceKm,
-    ...attempts.map(a => a.distanceFlownKm),
-  );
+  const thisBestDist = Math.max(taskBestDistanceKm, ...attempts.map((a) => a.distanceFlownKm));
 
-  return attempts.map(attempt => {
+  return attempts.map((attempt) => {
     const dist = attempt.distanceFlownKm;
     const bestDist = Math.max(thisBestDist, dist);
 
     const distancePoints = computeDistancePoints(dist, bestDist, attempt.reachedGoal);
-    const timePoints = attempt.reachedGoal && attempt.taskTimeS !== null
-      ? computeTimePoints(attempt.taskTimeS, allGoalTimesS)
-      : 0;
+    const timePoints =
+      attempt.reachedGoal && attempt.taskTimeS !== null ? computeTimePoints(attempt.taskTimeS, allGoalTimesS) : 0;
 
     return {
-      attemptIndex:       attempt.attemptIndex,
-      sssCrossing:        attempt.sssCrossing,
-      essCrossing:        attempt.essCrossing,
-      goalCrossing:       attempt.goalCrossing,
+      attemptIndex: attempt.attemptIndex,
+      sssCrossing: attempt.sssCrossing,
+      essCrossing: attempt.essCrossing,
+      goalCrossing: attempt.goalCrossing,
       turnpointCrossings: attempt.turnpointCrossings,
-      reachedGoal:        attempt.reachedGoal,
+      reachedGoal: attempt.reachedGoal,
       lastTurnpointIndex: attempt.lastTurnpointIndex,
-      taskTimeS:          attempt.taskTimeS,
-      distanceFlownKm:    dist,
+      taskTimeS: attempt.taskTimeS,
+      distanceFlownKm: dist,
       distancePoints,
       timePoints,
-      totalPoints:        distancePoints + timePoints,
-      hasFlaggedCrossings: attempt.turnpointCrossings.some(
-        c => c.groundCheckRequired && !c.groundConfirmed,
-      ),
+      totalPoints: distancePoints + timePoints,
+      hasFlaggedCrossings: attempt.turnpointCrossings.some((c) => c.groundCheckRequired && !c.groundConfirmed),
     };
   });
 }
@@ -761,14 +738,10 @@ export function scoreAttempts(
 /**
  * Rescore: recalculate time points for all goal attempts on a task.
  */
-export function rescoreTimePoints(
-  allTaskAttempts: ScoredAttempt[],
-): ScoredAttempt[] {
-  const goalTimes = allTaskAttempts
-    .filter(a => a.reachedGoal && a.taskTimeS !== null)
-    .map(a => a.taskTimeS!);
+export function rescoreTimePoints(allTaskAttempts: ScoredAttempt[]): ScoredAttempt[] {
+  const goalTimes = allTaskAttempts.filter((a) => a.reachedGoal && a.taskTimeS !== null).map((a) => a.taskTimeS!);
 
-  return allTaskAttempts.map(attempt => {
+  return allTaskAttempts.map((attempt) => {
     if (!attempt.reachedGoal || attempt.taskTimeS === null) {
       return { ...attempt, timePoints: 0, totalPoints: attempt.distancePoints };
     }
@@ -780,7 +753,6 @@ export function rescoreTimePoints(
     };
   });
 }
-
 
 // =============================================================================
 // STAGE 7: SELECT BEST ATTEMPT
@@ -797,28 +769,37 @@ export function selectBestAttempt(scoredAttempts: ScoredAttempt[]): number {
     const candidate = scoredAttempts[i];
     const current = scoredAttempts[bestIdx];
 
-    if (candidate.reachedGoal && !current.reachedGoal) { bestIdx = i; continue; }
-    if (!candidate.reachedGoal && current.reachedGoal) { continue; }
-    if (candidate.totalPoints > current.totalPoints) { bestIdx = i; continue; }
+    if (candidate.reachedGoal && !current.reachedGoal) {
+      bestIdx = i;
+      continue;
+    }
+    if (!candidate.reachedGoal && current.reachedGoal) {
+      continue;
+    }
+    if (candidate.totalPoints > current.totalPoints) {
+      bestIdx = i;
+      continue;
+    }
     if (
       candidate.totalPoints === current.totalPoints &&
       candidate.taskTimeS !== null &&
       current.taskTimeS !== null &&
       candidate.taskTimeS < current.taskTimeS
-    ) { bestIdx = i; }
+    ) {
+      bestIdx = i;
+    }
   }
   return bestIdx;
 }
-
 
 // =============================================================================
 // PIPELINE ORCHESTRATOR
 // =============================================================================
 
 export type PipelineError =
-  | { stage: 'PARSE';        error: ParseError }
-  | { stage: 'DATE';         error: DateValidationError }
-  | { stage: 'DETECTION';    error: AttemptDetectionError };
+  | { stage: 'PARSE'; error: ParseError }
+  | { stage: 'DATE'; error: DateValidationError }
+  | { stage: 'DETECTION'; error: AttemptDetectionError };
 
 export interface PipelineResult {
   scoredAttempts: ScoredAttempt[];
@@ -834,7 +815,6 @@ export async function runPipeline(
   scoresFrozenAt: number | null,
   taskBestDistanceKm: number,
 ): Promise<Result<PipelineResult, PipelineError>> {
-
   // Stage 1: Parse
   const parseResult = parseAndValidate(input.igcText);
   if (!parseResult.ok) return err({ stage: 'PARSE', error: parseResult.error });
@@ -869,7 +849,6 @@ export async function runPipeline(
   });
 }
 
-
 // =============================================================================
 // RESCORE JOB ENTRY POINT
 // =============================================================================
@@ -888,7 +867,6 @@ export function runRescore(input: RescoreInput): RescoreOutput {
   return { updatedAttempts };
 }
 
-
 // =============================================================================
 // ERROR MESSAGES
 // =============================================================================
@@ -897,22 +875,30 @@ export function formatPipelineError(error: PipelineError): string {
   switch (error.stage) {
     case 'PARSE':
       switch (error.error.code) {
-        case 'MISSING_DATE_HEADER':   return 'Your IGC file is missing a valid date header (HFDTE). Please check your flight recorder settings.';
-        case 'NO_VALID_FIXES':        return 'Your IGC file contains no valid GPS fixes. The file may be corrupt.';
-        case 'NON_MONOTONIC_TIME':    return 'Your IGC file contains timestamps that go backwards. The file may be corrupt.';
-        case 'INSUFFICIENT_DURATION': return `Your IGC file contains less than 2 minutes of valid fixes (${error.error.durationS}s found). Please check your recorder logged the full flight.`;
-        case 'PARSE_FAILURE':         return 'Your IGC file could not be read. Please ensure it is a valid IGC file.';
+        case 'MISSING_DATE_HEADER':
+          return 'Your IGC file is missing a valid date header (HFDTE). Please check your flight recorder settings.';
+        case 'NO_VALID_FIXES':
+          return 'Your IGC file contains no valid GPS fixes. The file may be corrupt.';
+        case 'NON_MONOTONIC_TIME':
+          return 'Your IGC file contains timestamps that go backwards. The file may be corrupt.';
+        case 'INSUFFICIENT_DURATION':
+          return `Your IGC file contains less than 2 minutes of valid fixes (${error.error.durationS}s found). Please check your recorder logged the full flight.`;
+        case 'PARSE_FAILURE':
+          return 'Your IGC file could not be read. Please ensure it is a valid IGC file.';
       }
       break;
     case 'DATE':
       switch (error.error.code) {
-        case 'FLIGHT_DATE_OUTSIDE_TASK_WINDOW': return `Your flight date (${error.error.flightDate}) is outside the task window (${error.error.taskOpen} – ${error.error.taskClose}).`;
-        case 'TASK_SCORES_FROZEN':              return `This task closed on ${error.error.frozenAt}. No further submissions are accepted.`;
+        case 'FLIGHT_DATE_OUTSIDE_TASK_WINDOW':
+          return `Your flight date (${error.error.flightDate}) is outside the task window (${error.error.taskOpen} – ${error.error.taskClose}).`;
+        case 'TASK_SCORES_FROZEN':
+          return `This task closed on ${error.error.frozenAt}. No further submissions are accepted.`;
       }
       break;
     case 'DETECTION':
       switch (error.error.code) {
-        case 'NO_SSS_CROSSING': return 'No valid start cylinder crossing was detected in your track. Make sure you crossed the start cylinder before heading to the first turnpoint.';
+        case 'NO_SSS_CROSSING':
+          return 'No valid start cylinder crossing was detected in your track. Make sure you crossed the start cylinder before heading to the first turnpoint.';
       }
       break;
   }

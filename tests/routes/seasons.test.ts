@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
 import Fastify from 'fastify';
-import { getTestDb, resetTestDb } from '../setup';
-import { setupTestDatabase, createTestUser, createTestLeague, addLeagueMember, createTestSeason } from '../helpers';
-import { registerLeagueRoutes } from '../../src/routes/leagues';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { authPlugin, loadAuthConfig } from '../../src/auth';
+import { registerLeagueRoutes } from '../../src/routes/leagues';
+import { addLeagueMember, createTestLeague, createTestSeason, createTestUser, setupTestDatabase } from '../helpers';
+import { getTestDb, resetTestDb } from '../setup';
 
 describe('Season Management API', () => {
   let app: any;
@@ -32,7 +32,7 @@ describe('Season Management API', () => {
     // Set up Fastify with auth
     app = Fastify();
     authConfig = loadAuthConfig();
-    
+
     await app.register(authPlugin, { config: authConfig, db });
     await registerLeagueRoutes(app, { db, queue: null as any });
   });
@@ -153,9 +153,7 @@ describe('Season Management API', () => {
       expect(response.statusCode).toBe(200);
 
       // Verify season is soft-deleted
-      const deleted = db.prepare(
-        'SELECT deleted_at FROM seasons WHERE id = ?'
-      ).get(season.id);
+      const deleted = db.prepare('SELECT deleted_at FROM seasons WHERE id = ?').get(season.id);
       expect(deleted.deleted_at).not.toBeNull();
     });
   });

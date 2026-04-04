@@ -1,6 +1,6 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { adminApi, type User, type LeagueSummary } from '../api/admin';
+import { adminApi, type LeagueSummary, type User } from '../api/admin';
 
 export default function SuperAdminPage() {
   const queryClient = useQueryClient();
@@ -8,7 +8,11 @@ export default function SuperAdminPage() {
   const [leagueToDelete, setLeagueToDelete] = useState<LeagueSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const { data, isLoading, error: queryError } = useQuery({
+  const {
+    data,
+    isLoading,
+    error: queryError,
+  } = useQuery({
     queryKey: ['admin', 'users'],
     queryFn: adminApi.listUsers,
   });
@@ -67,13 +71,15 @@ export default function SuperAdminPage() {
   if (queryError) {
     return (
       <div style={{ padding: '2rem' }}>
-        <div style={{ 
-          padding: '1rem', 
-          background: '#fee', 
-          border: '1px solid #fcc',
-          borderRadius: 8,
-          color: '#c00'
-        }}>
+        <div
+          style={{
+            padding: '1rem',
+            background: '#fee',
+            border: '1px solid #fcc',
+            borderRadius: 8,
+            color: '#c00',
+          }}
+        >
           Error loading users: {queryError.message}
         </div>
       </div>
@@ -81,43 +87,41 @@ export default function SuperAdminPage() {
   }
 
   const users = data?.users || [];
-  const superAdmins = users.filter(u => u.isAdmin);
-  const regularUsers = users.filter(u => !u.isAdmin);
+  const superAdmins = users.filter((u) => u.isAdmin);
+  const regularUsers = users.filter((u) => !u.isAdmin);
 
   return (
     <div style={{ padding: '2rem', maxWidth: 1200, margin: '0 auto' }}>
       <header style={{ marginBottom: '2rem' }}>
-        <h1 style={{ fontSize: '2rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-          Super Admin Panel
-        </h1>
-        <p style={{ color: 'var(--text2)' }}>
-          Manage platform administrators and view system users
-        </p>
-        
+        <h1 style={{ fontSize: '2rem', fontWeight: 600, marginBottom: '0.5rem' }}>Super Admin Panel</h1>
+        <p style={{ color: 'var(--text2)' }}>Manage platform administrators and view system users</p>
+
         {error && (
-          <div style={{ 
-            marginTop: '1rem',
-            padding: '0.75rem 1rem',
-            background: '#fee',
-            border: '1px solid #fcc',
-            borderRadius: 6,
-            color: '#c00',
-            fontSize: '0.875rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between'
-          }}>
+          <div
+            style={{
+              marginTop: '1rem',
+              padding: '0.75rem 1rem',
+              background: '#fee',
+              border: '1px solid #fcc',
+              borderRadius: 6,
+              color: '#c00',
+              fontSize: '0.875rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
             <span>{error}</span>
             <button
               onClick={() => setError(null)}
-              style={{ 
-                background: 'none', 
-                border: 'none', 
-                color: '#c00', 
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#c00',
                 cursor: 'pointer',
                 fontSize: '1.25rem',
                 padding: 0,
-                lineHeight: 1
+                lineHeight: 1,
               }}
             >
               ×
@@ -138,43 +142,45 @@ export default function SuperAdminPage() {
             </div>
           ) : (leaguesData?.leagues ?? []).length === 0 ? (
             <div style={{ padding: '1rem', color: 'var(--text3)', fontSize: '0.875rem' }}>No leagues</div>
-          ) : (leaguesData?.leagues ?? []).map((league, i) => (
-            <div
-              key={league.id}
-              style={{
-                padding: '1rem',
-                borderBottom: i < (leaguesData?.leagues.length ?? 0) - 1 ? '1px solid var(--border)' : 'none',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                backgroundColor: 'var(--bg2)',
-              }}
-            >
-              <div>
-                <div style={{ fontWeight: 500, marginBottom: '0.2rem' }}>{league.name}</div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
-                  /{league.slug}
-                  {league.shortDescription && (
-                    <span style={{ marginLeft: 8, color: 'var(--text3)' }}>· {league.shortDescription}</span>
-                  )}
-                </div>
-              </div>
-              <button
-                onClick={() => setLeagueToDelete(league)}
+          ) : (
+            (leaguesData?.leagues ?? []).map((league, i) => (
+              <div
+                key={league.id}
                 style={{
-                  padding: '0.375rem 0.75rem',
-                  border: '1px solid rgba(239,68,68,0.4)',
-                  borderRadius: 4,
-                  background: 'rgba(239,68,68,0.08)',
-                  color: '#f87171',
-                  cursor: 'pointer',
-                  fontSize: '0.8rem',
+                  padding: '1rem',
+                  borderBottom: i < (leaguesData?.leagues.length ?? 0) - 1 ? '1px solid var(--border)' : 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  backgroundColor: 'var(--bg2)',
                 }}
               >
-                Delete
-              </button>
-            </div>
-          ))}
+                <div>
+                  <div style={{ fontWeight: 500, marginBottom: '0.2rem' }}>{league.name}</div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
+                    /{league.slug}
+                    {league.shortDescription && (
+                      <span style={{ marginLeft: 8, color: 'var(--text3)' }}>· {league.shortDescription}</span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setLeagueToDelete(league)}
+                  style={{
+                    padding: '0.375rem 0.75rem',
+                    border: '1px solid rgba(239,68,68,0.4)',
+                    borderRadius: 4,
+                    background: 'rgba(239,68,68,0.08)',
+                    color: '#f87171',
+                    cursor: 'pointer',
+                    fontSize: '0.8rem',
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            ))
+          )}
         </div>
       </section>
 
@@ -183,11 +189,13 @@ export default function SuperAdminPage() {
         <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem' }}>
           Super Administrators ({superAdmins.length})
         </h2>
-        <div style={{ 
-          border: '1px solid var(--border)', 
-          borderRadius: 8,
-          overflow: 'hidden'
-        }}>
+        <div
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            overflow: 'hidden',
+          }}
+        >
           {superAdmins.map((user, i) => (
             <div
               key={user.id}
@@ -197,16 +205,12 @@ export default function SuperAdminPage() {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                backgroundColor: 'var(--bg2)'
+                backgroundColor: 'var(--bg2)',
               }}
             >
               <div>
-                <div style={{ fontWeight: 500, marginBottom: '0.25rem' }}>
-                  {user.displayName}
-                </div>
-                <div style={{ fontSize: '0.875rem', color: 'var(--text2)' }}>
-                  {user.email}
-                </div>
+                <div style={{ fontWeight: 500, marginBottom: '0.25rem' }}>{user.displayName}</div>
+                <div style={{ fontSize: '0.875rem', color: 'var(--text2)' }}>{user.email}</div>
               </div>
               <button
                 onClick={() => setSelectedUser(user)}
@@ -218,7 +222,7 @@ export default function SuperAdminPage() {
                   background: 'var(--bg1)',
                   color: 'var(--text2)',
                   cursor: 'pointer',
-                  fontSize: '0.875rem'
+                  fontSize: '0.875rem',
                 }}
               >
                 Manage
@@ -233,11 +237,13 @@ export default function SuperAdminPage() {
         <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem' }}>
           All Users ({regularUsers.length})
         </h2>
-        <div style={{ 
-          border: '1px solid var(--border)', 
-          borderRadius: 8,
-          overflow: 'hidden'
-        }}>
+        <div
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            overflow: 'hidden',
+          }}
+        >
           {regularUsers.map((user, i) => (
             <div
               key={user.id}
@@ -246,16 +252,12 @@ export default function SuperAdminPage() {
                 borderBottom: i < regularUsers.length - 1 ? '1px solid var(--border)' : 'none',
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'space-between'
+                justifyContent: 'space-between',
               }}
             >
               <div>
-                <div style={{ fontWeight: 500, marginBottom: '0.25rem' }}>
-                  {user.displayName}
-                </div>
-                <div style={{ fontSize: '0.875rem', color: 'var(--text2)' }}>
-                  {user.email}
-                </div>
+                <div style={{ fontWeight: 500, marginBottom: '0.25rem' }}>{user.displayName}</div>
+                <div style={{ fontSize: '0.875rem', color: 'var(--text2)' }}>{user.email}</div>
               </div>
               <button
                 onClick={() => promoteMutation.mutate(user.id)}
@@ -267,7 +269,7 @@ export default function SuperAdminPage() {
                   background: 'var(--primary)',
                   color: 'white',
                   cursor: 'pointer',
-                  fontSize: '0.875rem'
+                  fontSize: '0.875rem',
                 }}
               >
                 Promote to Admin
@@ -279,16 +281,19 @@ export default function SuperAdminPage() {
 
       {/* Delete league confirm */}
       {leagueToDelete && (
-        <div style={{
-          position: 'fixed', inset: 0,
-          background: 'rgba(0,0,0,0.5)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 1000,
-        }}>
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+        >
           <div style={{ background: 'var(--bg1)', padding: '2rem', borderRadius: 8, maxWidth: 400, width: '90%' }}>
-            <h3 style={{ marginBottom: '1rem', fontSize: '1.25rem' }}>
-              Delete "{leagueToDelete.name}"?
-            </h3>
+            <h3 style={{ marginBottom: '1rem', fontSize: '1.25rem' }}>Delete "{leagueToDelete.name}"?</h3>
             <p style={{ marginBottom: '1.5rem', color: 'var(--text2)', fontSize: '0.875rem' }}>
               This will permanently remove the league and all associated data. This cannot be undone.
             </p>
@@ -297,8 +302,11 @@ export default function SuperAdminPage() {
                 onClick={() => setLeagueToDelete(null)}
                 style={{
                   padding: '0.5rem 1rem',
-                  border: '1px solid var(--border)', borderRadius: 4,
-                  background: 'var(--bg2)', color: 'var(--text)', cursor: 'pointer',
+                  border: '1px solid var(--border)',
+                  borderRadius: 4,
+                  background: 'var(--bg2)',
+                  color: 'var(--text)',
+                  cursor: 'pointer',
                 }}
               >
                 Cancel
@@ -308,8 +316,11 @@ export default function SuperAdminPage() {
                 disabled={deleteLeagueMutation.isPending}
                 style={{
                   padding: '0.5rem 1rem',
-                  border: 'none', borderRadius: 4,
-                  background: '#dc2626', color: 'white', cursor: 'pointer',
+                  border: 'none',
+                  borderRadius: 4,
+                  background: '#dc2626',
+                  color: 'white',
+                  cursor: 'pointer',
                 }}
               >
                 {deleteLeagueMutation.isPending ? 'Deleting…' : 'Delete League'}
@@ -321,31 +332,33 @@ export default function SuperAdminPage() {
 
       {/* Confirm Dialog */}
       {selectedUser && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0,0,0,0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000
-        }}>
-          <div style={{
-            background: 'var(--bg1)',
-            padding: '2rem',
-            borderRadius: 8,
-            maxWidth: 400,
-            width: '90%'
-          }}>
-            <h3 style={{ marginBottom: '1rem', fontSize: '1.25rem' }}>
-              Demote {selectedUser.displayName}?
-            </h3>
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+        >
+          <div
+            style={{
+              background: 'var(--bg1)',
+              padding: '2rem',
+              borderRadius: 8,
+              maxWidth: 400,
+              width: '90%',
+            }}
+          >
+            <h3 style={{ marginBottom: '1rem', fontSize: '1.25rem' }}>Demote {selectedUser.displayName}?</h3>
             <p style={{ marginBottom: '1.5rem', color: 'var(--text2)' }}>
-              This will remove super admin privileges from this user. They will no longer have 
-              platform-wide administrative access.
+              This will remove super admin privileges from this user. They will no longer have platform-wide
+              administrative access.
             </p>
             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
               <button
@@ -356,7 +369,7 @@ export default function SuperAdminPage() {
                   borderRadius: 4,
                   background: 'var(--bg2)',
                   color: 'var(--text)',
-                  cursor: 'pointer'
+                  cursor: 'pointer',
                 }}
               >
                 Cancel
@@ -370,7 +383,7 @@ export default function SuperAdminPage() {
                   borderRadius: 4,
                   background: 'var(--danger, #dc2626)',
                   color: 'white',
-                  cursor: 'pointer'
+                  cursor: 'pointer',
                 }}
               >
                 {demoteMutation.isPending ? 'Demoting...' : 'Demote'}

@@ -1,10 +1,10 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { useUpload } from '../hooks/useSubmission';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { SubmissionResponse, Task } from '../api/tasks';
 import { useAuth } from '../hooks/useAuth';
 import { useLeague } from '../hooks/useLeague';
-import TaskExportModal from './TaskExportModal';
-import type { Task, SubmissionResponse } from '../api/tasks';
+import { useUpload } from '../hooks/useSubmission';
 import type { TaskStatus } from '../utils/taskStatus';
+import TaskExportModal from './TaskExportModal';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -21,11 +21,13 @@ function fmtTime(seconds: number | null) {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-  return `${m}:${String(s).padStart(2,'0')}`;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function fmtPts(n: number) { return Math.round(n).toString(); }
+function fmtPts(n: number) {
+  return Math.round(n).toString();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ScoreResult
@@ -44,11 +46,17 @@ function ScoreResult({ result, onReset }: { result: SubmissionResponse; onReset:
             </div>
           </div>
         </div>
-        <div style={{
-          background: 'rgba(224,82,82,0.08)', border: '1px solid rgba(224,82,82,0.2)',
-          borderRadius: 'var(--r)', padding: '10px 14px',
-          fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--danger)',
-        }}>
+        <div
+          style={{
+            background: 'rgba(224,82,82,0.08)',
+            border: '1px solid rgba(224,82,82,0.2)',
+            borderRadius: 'var(--r)',
+            padding: '10px 14px',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 12,
+            color: 'var(--danger)',
+          }}
+        >
           {result.errorMessage}
         </div>
         <button className="btn btn-ghost" style={{ marginTop: 8, fontSize: 12 }} onClick={onReset}>
@@ -134,18 +142,27 @@ export default function UploadZone({ taskId, taskStatus, task, onSubmission }: U
 
   const handleFile = (f: File | null | undefined) => {
     if (!f) return;
-    if (!f.name.toLowerCase().endsWith('.igc')) { alert('Please select a .igc file'); return; }
-    if (f.size > 5 * 1024 * 1024) { alert('File too large — maximum 5MB'); return; }
+    if (!f.name.toLowerCase().endsWith('.igc')) {
+      alert('Please select a .igc file');
+      return;
+    }
+    if (f.size > 5 * 1024 * 1024) {
+      alert('File too large — maximum 5MB');
+      return;
+    }
     setFile(f);
     reset();
   };
 
   const handleReset = useCallback(() => {
-    setFile(null); reset();
+    setFile(null);
+    reset();
     if (fileRef.current) fileRef.current.value = '';
   }, [reset]);
 
-  useEffect(() => { handleReset(); }, [taskId, handleReset]);
+  useEffect(() => {
+    handleReset();
+  }, [taskId, handleReset]);
 
   const isDisabled = taskStatus !== 'OPEN';
 
@@ -166,17 +183,26 @@ export default function UploadZone({ taskId, taskStatus, task, onSubmission }: U
 
       {/* Upload area */}
       {isDisabled ? (
-        <div style={{
-          padding: '14px 16px',
-          background: 'var(--bg3)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--r)',
-          textAlign: 'center',
-          opacity: 0.75,
-        }}>
+        <div
+          style={{
+            padding: '14px 16px',
+            background: 'var(--bg3)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--r)',
+            textAlign: 'center',
+            opacity: 0.75,
+          }}
+        >
           {taskStatus === 'UPCOMING' && (
             <div style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
-              Opens {new Date(task.openDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              Opens{' '}
+              {new Date(task.openDate).toLocaleDateString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
             </div>
           )}
           {taskStatus === 'FROZEN' && (
@@ -185,29 +211,53 @@ export default function UploadZone({ taskId, taskStatus, task, onSubmission }: U
             </div>
           )}
           {taskStatus === 'DRAFT' && (
-            <div style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
-              Not yet published
-            </div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>Not yet published</div>
           )}
         </div>
       ) : (
-        <div style={{
-          background: 'var(--bg2)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--r)',
-          overflow: 'hidden',
-        }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '10px 14px',
-            borderBottom: '1px solid var(--border)',
-            background: 'rgba(93,184,122,0.06)',
-          }}>
+        <div
+          style={{
+            background: 'var(--bg2)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--r)',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '10px 14px',
+              borderBottom: '1px solid var(--border)',
+              background: 'rgba(93,184,122,0.06)',
+            }}
+          >
             <span style={{ fontSize: 16, lineHeight: 1 }}>✈️</span>
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#5db87a', fontFamily: 'var(--font-mono)' }}>
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: '0.12em',
+                textTransform: 'uppercase',
+                color: '#5db87a',
+                fontFamily: 'var(--font-mono)',
+              }}
+            >
               Submit Flight
             </span>
-            <span style={{ marginLeft: 'auto', fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text3)', background: 'rgba(93,184,122,0.12)', border: '1px solid rgba(93,184,122,0.25)', borderRadius: 3, padding: '1px 6px' }}>
+            <span
+              style={{
+                marginLeft: 'auto',
+                fontSize: 10,
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--text3)',
+                background: 'rgba(93,184,122,0.12)',
+                border: '1px solid rgba(93,184,122,0.25)',
+                borderRadius: 3,
+                padding: '1px 6px',
+              }}
+            >
               IGC
             </span>
           </div>
@@ -215,7 +265,9 @@ export default function UploadZone({ taskId, taskStatus, task, onSubmission }: U
             {!user ? (
               <div style={{ textAlign: 'center', padding: '16px 0' }}>
                 <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>Sign in to submit a flight</div>
-                <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={login}>Sign in</button>
+                <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={login}>
+                  Sign in
+                </button>
               </div>
             ) : status === 'done' && result ? (
               <ScoreResult result={result} onReset={handleReset} />
@@ -224,9 +276,16 @@ export default function UploadZone({ taskId, taskStatus, task, onSubmission }: U
                 <div
                   className={`upload-zone${drag ? ' drag-over' : ''}`}
                   style={{ padding: '16px', minHeight: 'unset' }}
-                  onDragOver={e => { e.preventDefault(); setDrag(true); }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDrag(true);
+                  }}
                   onDragLeave={() => setDrag(false)}
-                  onDrop={e => { e.preventDefault(); setDrag(false); handleFile(e.dataTransfer.files[0]); }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDrag(false);
+                    handleFile(e.dataTransfer.files[0]);
+                  }}
                   onClick={() => !file && fileRef.current?.click()}
                 >
                   <input
@@ -234,44 +293,70 @@ export default function UploadZone({ taskId, taskStatus, task, onSubmission }: U
                     type="file"
                     accept=".igc"
                     style={{ display: 'none' }}
-                    onChange={e => handleFile(e.target.files?.[0])}
+                    onChange={(e) => handleFile(e.target.files?.[0])}
                   />
                   {file ? (
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{file.name}</div>
-                      <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text3)', marginTop: 2 }}>
+                      <div
+                        style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text3)', marginTop: 2 }}
+                      >
                         {fmtFileSize(file.size)}
                       </div>
                       <button
                         className="btn btn-ghost"
                         style={{ marginTop: 8, fontSize: 11 }}
-                        onClick={e => { e.stopPropagation(); setFile(null); reset(); if (fileRef.current) fileRef.current.value = ''; }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFile(null);
+                          reset();
+                          if (fileRef.current) fileRef.current.value = '';
+                        }}
                       >
                         ✕ Remove
                       </button>
                     </div>
                   ) : (
                     <>
-                      <div style={{
-                        width: 40, height: 40, borderRadius: 10,
-                        background: 'rgba(93,184,122,0.1)', border: '1px solid rgba(93,184,122,0.25)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 20, margin: '0 auto 8px',
-                      }}>
+                      <div
+                        style={{
+                          width: 40,
+                          height: 40,
+                          borderRadius: 10,
+                          background: 'rgba(93,184,122,0.1)',
+                          border: '1px solid rgba(93,184,122,0.25)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: 20,
+                          margin: '0 auto 8px',
+                        }}
+                      >
                         ⬆
                       </div>
-                      <div className="upload-title" style={{ fontSize: 13 }}>Drop IGC file here</div>
-                      <div className="upload-sub" style={{ fontSize: 11 }}>or click to browse · max 5MB</div>
+                      <div className="upload-title" style={{ fontSize: 13 }}>
+                        Drop IGC file here
+                      </div>
+                      <div className="upload-sub" style={{ fontSize: 11 }}>
+                        or click to browse · max 5MB
+                      </div>
                     </>
                   )}
                 </div>
 
                 {status === 'error' && error && (
-                  <div style={{
-                    marginTop: 8, padding: '8px 12px',
-                    background: 'rgba(224,82,82,0.08)', border: '1px solid rgba(224,82,82,0.2)',
-                    borderRadius: 'var(--r)', fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--danger)',
-                  }}>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      padding: '8px 12px',
+                      background: 'rgba(224,82,82,0.08)',
+                      border: '1px solid rgba(224,82,82,0.2)',
+                      borderRadius: 'var(--r)',
+                      fontSize: 12,
+                      fontFamily: 'var(--font-mono)',
+                      color: 'var(--danger)',
+                    }}
+                  >
                     {error}
                   </div>
                 )}
@@ -287,7 +372,15 @@ export default function UploadZone({ taskId, taskStatus, task, onSubmission }: U
                           {status === 'processing' ? (
                             <div className="progress-fill" />
                           ) : (
-                            <div style={{ height: '100%', width: `${progress}%`, background: 'var(--gold)', borderRadius: 2, transition: 'width 0.2s' }} />
+                            <div
+                              style={{
+                                height: '100%',
+                                width: `${progress}%`,
+                                background: 'var(--gold)',
+                                borderRadius: 2,
+                                transition: 'width 0.2s',
+                              }}
+                            />
                           )}
                         </div>
                       </div>
@@ -309,11 +402,7 @@ export default function UploadZone({ taskId, taskStatus, task, onSubmission }: U
       )}
 
       {showExport && (
-        <TaskExportModal
-          task={task as any}
-          leagueSlug={leagueSlug}
-          onClose={() => setShowExport(false)}
-        />
+        <TaskExportModal task={task as any} leagueSlug={leagueSlug} onClose={() => setShowExport(false)} />
       )}
     </div>
   );

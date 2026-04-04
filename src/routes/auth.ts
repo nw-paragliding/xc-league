@@ -5,16 +5,16 @@
 // Uses handlers from ../auth.ts
 // =============================================================================
 
-import type { FastifyInstance } from 'fastify';
 import type Database from 'better-sqlite3';
+import type { FastifyInstance } from 'fastify';
 import type { AuthConfig } from '../auth';
 import {
-  handleGoogleAuthInitiate,
-  handleGoogleAuthCallback,
   handleGetMe,
-  handleUpdateMe,
+  handleGoogleAuthCallback,
+  handleGoogleAuthInitiate,
   handleLogout,
   handleRevokeTokens,
+  handleUpdateMe,
 } from '../auth';
 
 interface AuthRouteOptions {
@@ -22,25 +22,30 @@ interface AuthRouteOptions {
   db: Database.Database;
 }
 
-export async function registerAuthRoutes(
-  fastify: FastifyInstance,
-  opts: AuthRouteOptions,
-): Promise<void> {
+export async function registerAuthRoutes(fastify: FastifyInstance, opts: AuthRouteOptions): Promise<void> {
   const { config, db } = opts;
 
   // OAuth initiate — redirects to Google
-  fastify.get('/auth/oauth/google', {
-    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
-  }, async (request, reply) => {
-    return handleGoogleAuthInitiate(request, reply, config);
-  });
+  fastify.get(
+    '/auth/oauth/google',
+    {
+      config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      return handleGoogleAuthInitiate(request, reply, config);
+    },
+  );
 
   // OAuth callback — Google redirects here after consent
-  fastify.get('/auth/oauth/google/callback', {
-    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
-  }, async (request, reply) => {
-    return handleGoogleAuthCallback(request, reply, config, db as any);
-  });
+  fastify.get(
+    '/auth/oauth/google/callback',
+    {
+      config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      return handleGoogleAuthCallback(request, reply, config, db as any);
+    },
+  );
 
   // Get current user profile
   fastify.get('/auth/me', async (request, reply) => {

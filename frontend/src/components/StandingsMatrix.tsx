@@ -1,5 +1,5 @@
-import type { Task } from '../api/tasks';
 import type { StandingsEntry } from '../api/standings';
+import type { Task } from '../api/tasks';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared styles
@@ -27,13 +27,21 @@ const TD: React.CSSProperties = {
 function RankBadge({ rank }: { rank: number }) {
   const top = rank <= 3;
   return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      width: 18, height: 18, borderRadius: 3,
-      fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)',
-      background: top ? 'rgba(59,130,246,0.15)' : 'transparent',
-      color: top ? 'var(--accent)' : 'var(--text3)',
-    }}>
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 18,
+        height: 18,
+        borderRadius: 3,
+        fontSize: 10,
+        fontWeight: 700,
+        fontFamily: 'var(--font-mono)',
+        background: top ? 'rgba(59,130,246,0.15)' : 'transparent',
+        color: top ? 'var(--accent)' : 'var(--text3)',
+      }}
+    >
       {rank}
     </span>
   );
@@ -46,7 +54,9 @@ function PilotCell({ name, isMe }: { name: string; isMe: boolean }) {
         {name}
       </span>
       {isMe && (
-        <span style={{ marginLeft: 5, fontSize: 9, color: 'var(--accent)', fontFamily: 'var(--font-mono)', opacity: 0.7 }}>
+        <span
+          style={{ marginLeft: 5, fontSize: 9, color: 'var(--accent)', fontFamily: 'var(--font-mono)', opacity: 0.7 }}
+        >
           you
         </span>
       )}
@@ -60,10 +70,10 @@ function PilotCell({ name, isMe }: { name: string; isMe: boolean }) {
 
 export interface StandingsMatrixProps {
   standings: StandingsEntry[];
-  tasks:     Task[];
-  scoreMap:  Map<string, Map<string, number>>;
+  tasks: Task[];
+  scoreMap: Map<string, Map<string, number>>;
   maxByTask: Record<string, number>;
-  myId:      string | undefined;
+  myId: string | undefined;
 }
 
 export default function StandingsMatrix({ standings, tasks, scoreMap, maxByTask, myId }: StandingsMatrixProps) {
@@ -83,7 +93,7 @@ export default function StandingsMatrix({ standings, tasks, scoreMap, maxByTask,
             <th style={{ ...TH, width: 24 }}>#</th>
             <th style={{ ...TH }}>Pilot</th>
             <th style={{ ...TH, textAlign: 'right', paddingRight: 10 }}>Total</th>
-            {tasks.map(t => (
+            {tasks.map((t) => (
               <th key={t.id} style={{ ...TH, textAlign: 'center', width: 44 }}>
                 <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 44 }}>
                   {t.name}
@@ -93,30 +103,38 @@ export default function StandingsMatrix({ standings, tasks, scoreMap, maxByTask,
           </tr>
         </thead>
         <tbody>
-          {standings.map(row => {
+          {standings.map((row) => {
             const isMe = row.pilotId === myId;
             return (
               <tr key={row.pilotId} style={{ background: isMe ? 'rgba(59,130,246,0.07)' : undefined }}>
-                <td style={TD}><RankBadge rank={row.rank} /></td>
+                <td style={TD}>
+                  <RankBadge rank={row.rank} />
+                </td>
                 <PilotCell name={row.pilotName} isMe={isMe} />
                 <td style={{ ...TD, textAlign: 'right', paddingRight: 10 }}>
                   <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 11, color: 'var(--text)' }}>
                     {row.totalPoints.toLocaleString()}
                   </span>
                 </td>
-                {tasks.map(task => {
-                  const pts   = scoreMap.get(task.id)?.get(row.pilotId);
-                  const max   = maxByTask[task.id] ?? 1;
+                {tasks.map((task) => {
+                  const pts = scoreMap.get(task.id)?.get(row.pilotId);
+                  const max = maxByTask[task.id] ?? 1;
                   const ratio = pts != null ? pts / max : 0;
                   return (
                     <td key={task.id} style={{ ...TD, textAlign: 'center', width: 44 }}>
                       {pts != null ? (
-                        <span style={{
-                          display: 'inline-block', padding: '1px 3px', borderRadius: 3,
-                          fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: 11,
-                          background: `rgba(59,130,246,${(0.07 + ratio * 0.25).toFixed(2)})`,
-                          color: ratio >= 0.5 ? '#93c5fd' : 'var(--text2)',
-                        }}>
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            padding: '1px 3px',
+                            borderRadius: 3,
+                            fontFamily: 'var(--font-mono)',
+                            fontWeight: 600,
+                            fontSize: 11,
+                            background: `rgba(59,130,246,${(0.07 + ratio * 0.25).toFixed(2)})`,
+                            color: ratio >= 0.5 ? '#93c5fd' : 'var(--text2)',
+                          }}
+                        >
                           {Math.round(pts)}
                         </span>
                       ) : (

@@ -5,10 +5,10 @@
 // to /leagues/:leagueSlug when the user picks one.
 // =============================================================================
 
-import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { leagueApi, type League } from '../api/leagues';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { type League, leagueApi } from '../api/leagues';
 import { useLeague } from '../hooks/useLeague';
 
 export default function LeagueSwitcher() {
@@ -24,7 +24,7 @@ export default function LeagueSwitcher() {
   });
 
   const leagues = data?.leagues ?? [];
-  const currentLeague = leagues.find(l => l.slug === leagueSlug);
+  const currentLeague = leagues.find((l) => l.slug === leagueSlug);
 
   // Close on outside click
   useEffect(() => {
@@ -45,7 +45,7 @@ export default function LeagueSwitcher() {
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={() => setOpen((o) => !o)}
         style={{
           background: 'none',
           border: 'none',
@@ -60,25 +60,25 @@ export default function LeagueSwitcher() {
         <span style={{ fontSize: '1.75rem', fontWeight: 700, lineHeight: 1.2, color: 'var(--text1)' }}>
           {currentLeague?.name ?? leagueSlug ?? 'Select league'}
         </span>
-        <span style={{ fontSize: '1rem', color: 'var(--text3)', marginTop: 4 }}>
-          {open ? '▲' : '▼'}
-        </span>
+        <span style={{ fontSize: '1rem', color: 'var(--text3)', marginTop: 4 }}>{open ? '▲' : '▼'}</span>
       </button>
 
       {open && leagues.length > 0 && (
-        <div style={{
-          position: 'absolute',
-          top: 'calc(100% + 4px)',
-          left: 0,
-          right: 0,
-          background: 'var(--bg1)',
-          border: '1px solid var(--border)',
-          borderRadius: 6,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-          zIndex: 100,
-          overflow: 'hidden',
-        }}>
-          {leagues.map(league => (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            left: 0,
+            right: 0,
+            background: 'var(--bg1)',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            zIndex: 100,
+            overflow: 'hidden',
+          }}
+        >
+          {leagues.map((league) => (
             <button
               key={league.id}
               onClick={() => handleSelect(league)}
@@ -95,11 +95,15 @@ export default function LeagueSwitcher() {
                 gap: '0.5rem',
               }}
             >
-              {league.slug === leagueSlug && (
-                <span style={{ color: 'var(--primary)', fontSize: '0.75rem' }}>✓</span>
-              )}
+              {league.slug === leagueSlug && <span style={{ color: 'var(--primary)', fontSize: '0.75rem' }}>✓</span>}
               <div>
-                <div style={{ fontSize: '0.8rem', fontWeight: league.slug === leagueSlug ? 600 : 400, color: 'var(--text1)' }}>
+                <div
+                  style={{
+                    fontSize: '0.8rem',
+                    fontWeight: league.slug === leagueSlug ? 600 : 400,
+                    color: 'var(--text1)',
+                  }}
+                >
                   {league.name}
                 </div>
                 {league.shortDescription && (
@@ -111,7 +115,10 @@ export default function LeagueSwitcher() {
             </button>
           ))}
           <button
-            onClick={() => { setOpen(false); navigate('/leagues'); }}
+            onClick={() => {
+              setOpen(false);
+              navigate('/leagues');
+            }}
             style={{
               width: '100%',
               padding: '0.5rem 0.75rem',

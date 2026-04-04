@@ -1,24 +1,24 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authApi } from '../api/auth';
-import { AUTH_KEY } from '../hooks/useAuth';
 import { leagueApi } from '../api/leagues';
+import { AUTH_KEY } from '../hooks/useAuth';
 
 const WIND_RATINGS = ['A', 'B', 'C', 'D', 'CCC'] as const;
 
 export default function OnboardingPage() {
-  const navigate     = useNavigate();
-  const queryClient  = useQueryClient();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
-  const [windRating,         setWindRating]         = useState('');
+  const [windRating, setWindRating] = useState('');
   const [gliderManufacturer, setGliderManufacturer] = useState('');
-  const [gliderModel,        setGliderModel]        = useState('');
+  const [gliderModel, setGliderModel] = useState('');
   const [gliderWeightRating, setGliderWeightRating] = useState<string>('');
 
   const { data: leaguesData } = useQuery({
     queryKey: ['leagues'],
-    queryFn:  leagueApi.list,
+    queryFn: leagueApi.list,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -33,31 +33,29 @@ export default function OnboardingPage() {
 
   const handleContinue = () => {
     saveMutation.mutate({
-      windRating:         windRating         || null,
+      windRating: windRating || null,
       gliderManufacturer: gliderManufacturer || null,
-      gliderModel:        gliderModel        || null,
+      gliderModel: gliderModel || null,
       gliderWeightRating: gliderWeightRating ? parseFloat(gliderWeightRating) : null,
     });
   };
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: 'var(--bg)',
-      padding: '2rem',
-    }}>
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'var(--bg)',
+        padding: '2rem',
+      }}
+    >
       <div style={{ width: '100%', maxWidth: 480 }}>
         {/* Header */}
         <div style={{ marginBottom: 32 }}>
-          <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--accent)', marginBottom: 8 }}>
-            XC League
-          </div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: 8 }}>
-            Set up your pilot profile
-          </div>
+          <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--accent)', marginBottom: 8 }}>XC League</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: 8 }}>Set up your pilot profile</div>
           <div style={{ fontSize: '0.9rem', color: 'var(--text2)' }}>
             Tell us about your equipment so your results can be displayed correctly.
           </div>
@@ -70,7 +68,7 @@ export default function OnboardingPage() {
               Wind Rating <span style={{ color: 'var(--error)', marginLeft: 2 }}>*</span>
             </label>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {WIND_RATINGS.map(r => (
+              {WIND_RATINGS.map((r) => (
                 <button
                   key={r}
                   type="button"
@@ -99,7 +97,7 @@ export default function OnboardingPage() {
             <input
               type="text"
               value={gliderManufacturer}
-              onChange={e => setGliderManufacturer(e.target.value)}
+              onChange={(e) => setGliderManufacturer(e.target.value)}
               placeholder="e.g. Ozone, Advance, Nova"
             />
           </div>
@@ -110,7 +108,7 @@ export default function OnboardingPage() {
             <input
               type="text"
               value={gliderModel}
-              onChange={e => setGliderModel(e.target.value)}
+              onChange={(e) => setGliderModel(e.target.value)}
               placeholder="e.g. Zeno 3, Iota 3"
             />
           </div>
@@ -123,7 +121,7 @@ export default function OnboardingPage() {
               min="1"
               step="0.5"
               value={gliderWeightRating}
-              onChange={e => setGliderWeightRating(e.target.value)}
+              onChange={(e) => setGliderWeightRating(e.target.value)}
               placeholder="e.g. 95"
             />
           </div>

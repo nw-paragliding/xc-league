@@ -1,11 +1,16 @@
-import { useAuth, AUTH_KEY } from '../hooks/useAuth';
-import { useStandings } from '../hooks/useStandings';
-import { useState, useEffect, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
 import { authApi } from '../api/auth';
+import { AUTH_KEY, useAuth } from '../hooks/useAuth';
+import { useStandings } from '../hooks/useStandings';
 
 function initials(name: string) {
-  return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  return name
+    .split(' ')
+    .map((w) => w[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
 }
 
 const WIND_RATINGS = ['A', 'B', 'C', 'D', 'CCC'] as const;
@@ -15,9 +20,9 @@ export default function ProfilePage() {
   const { data: standingsData } = useStandings();
   const queryClient = useQueryClient();
 
-  const [windRating,         setWindRating]         = useState('');
+  const [windRating, setWindRating] = useState('');
   const [gliderManufacturer, setGliderManufacturer] = useState('');
-  const [gliderModel,        setGliderModel]        = useState('');
+  const [gliderModel, setGliderModel] = useState('');
   const [gliderWeightRating, setGliderWeightRating] = useState<string>('');
   const initialized = useRef(false);
 
@@ -39,19 +44,19 @@ export default function ProfilePage() {
 
   const saveEquipment = () => {
     updateMutation.mutate({
-      windRating:         windRating         || null,
+      windRating: windRating || null,
       gliderManufacturer: gliderManufacturer || null,
-      gliderModel:        gliderModel        || null,
+      gliderModel: gliderModel || null,
       gliderWeightRating: gliderWeightRating ? parseFloat(gliderWeightRating) : null,
     });
   };
 
   const savedWeight = user?.gliderWeightRating != null ? String(user.gliderWeightRating) : '';
   const equipmentDirty =
-    (user?.windRating         ?? '') !== windRating         ||
+    (user?.windRating ?? '') !== windRating ||
     (user?.gliderManufacturer ?? '') !== gliderManufacturer ||
-    (user?.gliderModel        ?? '') !== gliderModel        ||
-    savedWeight                       !== gliderWeightRating;
+    (user?.gliderModel ?? '') !== gliderModel ||
+    savedWeight !== gliderWeightRating;
 
   if (!user) {
     return (
@@ -61,12 +66,14 @@ export default function ProfilePage() {
         <div style={{ fontSize: 14, color: 'var(--text2)', marginBottom: 24 }}>
           See your standings, results, and flight history
         </div>
-        <button className="btn btn-primary" onClick={login}>Continue with Google</button>
+        <button className="btn btn-primary" onClick={login}>
+          Continue with Google
+        </button>
       </div>
     );
   }
 
-  const myStanding = standingsData?.standings.find(s => s.pilotId === user.id);
+  const myStanding = standingsData?.standings.find((s) => s.pilotId === user.id);
 
   return (
     <div className="fade-in">
@@ -84,19 +91,35 @@ export default function ProfilePage() {
             {myStanding && (
               <div style={{ display: 'flex', gap: 20, marginTop: 12, flexWrap: 'wrap' }}>
                 <div>
-                  <div style={{ fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)' }}>Rank</div>
+                  <div
+                    style={{ fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)' }}
+                  >
+                    Rank
+                  </div>
                   <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--gold)' }}>#{myStanding.rank}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)' }}>Points</div>
+                  <div
+                    style={{ fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)' }}
+                  >
+                    Points
+                  </div>
                   <div style={{ fontSize: 20, fontWeight: 800 }}>{myStanding.totalPoints.toLocaleString()}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)' }}>Tasks Flown</div>
+                  <div
+                    style={{ fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)' }}
+                  >
+                    Tasks Flown
+                  </div>
                   <div style={{ fontSize: 20, fontWeight: 800 }}>{myStanding.tasksFlown}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)' }}>Goals</div>
+                  <div
+                    style={{ fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)' }}
+                  >
+                    Goals
+                  </div>
                   <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--sky)' }}>{myStanding.tasksWithGoal}</div>
                 </div>
               </div>
@@ -105,7 +128,16 @@ export default function ProfilePage() {
         </div>
 
         {/* Equipment */}
-        <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text3)', marginBottom: 12 }}>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+            color: 'var(--text3)',
+            marginBottom: 12,
+          }}
+        >
           Equipment
         </div>
         <div className="card" style={{ marginBottom: 24 }}>
@@ -114,7 +146,7 @@ export default function ProfilePage() {
             <div>
               <label style={{ marginBottom: 8 }}>Wind Rating</label>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {WIND_RATINGS.map(r => (
+                {WIND_RATINGS.map((r) => (
                   <button
                     key={r}
                     type="button"
@@ -143,7 +175,7 @@ export default function ProfilePage() {
               <input
                 type="text"
                 value={gliderManufacturer}
-                onChange={e => setGliderManufacturer(e.target.value)}
+                onChange={(e) => setGliderManufacturer(e.target.value)}
                 placeholder="e.g. Ozone, Advance, Nova"
               />
             </div>
@@ -154,7 +186,7 @@ export default function ProfilePage() {
               <input
                 type="text"
                 value={gliderModel}
-                onChange={e => setGliderModel(e.target.value)}
+                onChange={(e) => setGliderModel(e.target.value)}
                 placeholder="e.g. Zeno 3, Iota 3"
               />
             </div>
@@ -167,27 +199,21 @@ export default function ProfilePage() {
                 min="1"
                 step="0.5"
                 value={gliderWeightRating}
-                onChange={e => setGliderWeightRating(e.target.value)}
+                onChange={(e) => setGliderWeightRating(e.target.value)}
                 placeholder="e.g. 95"
               />
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               {equipmentDirty && (
-                <button
-                  className="btn btn-primary"
-                  onClick={saveEquipment}
-                  disabled={updateMutation.isPending}
-                >
+                <button className="btn btn-primary" onClick={saveEquipment} disabled={updateMutation.isPending}>
                   {updateMutation.isPending ? 'Saving…' : 'Save Equipment'}
                 </button>
               )}
               {!equipmentDirty && updateMutation.isSuccess && (
                 <span style={{ fontSize: 13, color: 'var(--success)' }}>Saved ✓</span>
               )}
-              {updateMutation.isError && (
-                <span style={{ fontSize: 13, color: 'var(--error)' }}>Failed to save</span>
-              )}
+              {updateMutation.isError && <span style={{ fontSize: 13, color: 'var(--error)' }}>Failed to save</span>}
             </div>
           </div>
         </div>

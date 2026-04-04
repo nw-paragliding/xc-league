@@ -4,17 +4,17 @@
 // Layout: left scrollable panel (task list + action panel) + right MapLibre map
 // =============================================================================
 
-import { useState, useEffect, useRef, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { useTasks, useLeaderboard, useMySubmissions } from '../hooks/useTasks';
-import { useUpload } from '../hooks/useSubmission';
-import { useTrack } from '../hooks/useTrack';
+import { type Cylinder, computeDistanceKm, optimiseRoute } from '../../../src/shared/task-engine';
+import type { SubmissionResponse, Task, Turnpoint } from '../api/tasks';
+import TaskExportModal from '../components/TaskExportModal';
 import { useAuth } from '../hooks/useAuth';
 import { useLeague } from '../hooks/useLeague';
-import TaskExportModal from '../components/TaskExportModal';
-import type { Task, Turnpoint, SubmissionResponse } from '../api/tasks';
-import { optimiseRoute, computeDistanceKm, type Cylinder } from '../../../src/shared/task-engine';
+import { useUpload } from '../hooks/useSubmission';
+import { useLeaderboard, useMySubmissions, useTasks } from '../hooks/useTasks';
+import { useTrack } from '../hooks/useTrack';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -31,11 +31,13 @@ function fmtTime(seconds: number | null) {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-  return `${m}:${String(s).padStart(2,'0')}`;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function fmtPts(n: number) { return Math.round(n).toString(); }
+function fmtPts(n: number) {
+  return Math.round(n).toString();
+}
 
 type TaskStatus = 'OPEN' | 'UPCOMING' | 'FROZEN' | 'DRAFT';
 
@@ -48,10 +50,10 @@ function getTaskStatus(task: Task): TaskStatus {
 }
 
 const STATUS_STYLE: Record<TaskStatus, { background: string; color: string; border: string }> = {
-  OPEN:     { background: 'rgba(93,184,122,0.15)', color: '#5db87a', border: 'rgba(93,184,122,0.3)' },
+  OPEN: { background: 'rgba(93,184,122,0.15)', color: '#5db87a', border: 'rgba(93,184,122,0.3)' },
   UPCOMING: { background: 'rgba(74,158,255,0.12)', color: '#4a9eff', border: 'rgba(74,158,255,0.25)' },
-  FROZEN:   { background: 'rgba(232,168,66,0.12)',  color: '#e8a842', border: 'rgba(232,168,66,0.25)' },
-  DRAFT:    { background: 'var(--bg3)',             color: 'var(--text3)', border: 'var(--border)' },
+  FROZEN: { background: 'rgba(232,168,66,0.12)', color: '#e8a842', border: 'rgba(232,168,66,0.25)' },
+  DRAFT: { background: 'var(--bg3)', color: 'var(--text3)', border: 'var(--border)' },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,12 +84,12 @@ function toCylinder(tp: Turnpoint): Cylinder {
 
 /** Optimal touch-point polyline as [lng, lat] pairs (for map drawing). */
 function optimizedLinePts(tps: Turnpoint[]): [number, number][] {
-  if (tps.length < 2) return tps.map(tp => [tp.longitude, tp.latitude]);
+  if (tps.length < 2) return tps.map((tp) => [tp.longitude, tp.latitude]);
   try {
     const route = optimiseRoute(tps.map(toCylinder));
-    return route.touchPoints.map(p => [p.lng, p.lat]);
+    return route.touchPoints.map((p) => [p.lng, p.lat]);
   } catch {
-    return tps.map(tp => [tp.longitude, tp.latitude]);
+    return tps.map((tp) => [tp.longitude, tp.latitude]);
   }
 }
 
@@ -98,22 +100,36 @@ function optimizedLinePts(tps: Turnpoint[]): [number, number][] {
 const LOCATION_TOL = 1e-4; // degrees ≈ 11 m
 const COLOR_PRI: Record<string, number> = { '#4a9eff': 3, '#5db87a': 2, '#e8a842': 1 };
 
-interface TpEntry { role: string; color: string; radiusM: number; }
-interface TpGroup { lng: number; lat: number; name: string; entries: TpEntry[]; }
+interface TpEntry {
+  role: string;
+  color: string;
+  radiusM: number;
+}
+interface TpGroup {
+  lng: number;
+  lat: number;
+  name: string;
+  entries: TpEntry[];
+}
 
 function buildGroups(tps: Turnpoint[]): TpGroup[] {
   let cylIdx = 0;
   const groups: TpGroup[] = [];
   for (const tp of tps) {
     const isPlain = tp.type !== 'SSS' && tp.type !== 'ESS' && tp.type !== 'GOAL_CYLINDER' && tp.type !== 'GOAL_LINE';
-    const role  = tpRole(tp, isPlain ? ++cylIdx : 0);
+    const role = tpRole(tp, isPlain ? ++cylIdx : 0);
     const color = tpColor(tp.type);
-    const g = groups.find(g =>
-      Math.abs(g.lng - tp.longitude) < LOCATION_TOL &&
-      Math.abs(g.lat - tp.latitude)  < LOCATION_TOL,
+    const g = groups.find(
+      (g) => Math.abs(g.lng - tp.longitude) < LOCATION_TOL && Math.abs(g.lat - tp.latitude) < LOCATION_TOL,
     );
     if (g) g.entries.push({ role, color, radiusM: tp.radiusM });
-    else   groups.push({ lng: tp.longitude, lat: tp.latitude, name: tp.name, entries: [{ role, color, radiusM: tp.radiusM }] });
+    else
+      groups.push({
+        lng: tp.longitude,
+        lat: tp.latitude,
+        name: tp.name,
+        entries: [{ role, color, radiusM: tp.radiusM }],
+      });
   }
   return groups;
 }
@@ -125,34 +141,36 @@ function mergeCircles(entries: TpEntry[]): { radiusM: number; color: string }[] 
     const prev = m.get(radiusM);
     if (!prev || (COLOR_PRI[color] ?? 0) > (COLOR_PRI[prev] ?? 0)) m.set(radiusM, color);
   }
-  return Array.from(m.entries()).sort((a, b) => b[0] - a[0]).map(([radiusM, color]) => ({ radiusM, color }));
+  return Array.from(m.entries())
+    .sort((a, b) => b[0] - a[0])
+    .map(([radiusM, color]) => ({ radiusM, color }));
 }
 
 const BASE_STYLE = {
   version: 8 as const,
   sources: {
     satellite: { type: 'raster' as const, tiles: [ESRI_TILES], tileSize: 256, maxzoom: 19 },
-    terrain:   { type: 'raster' as const, tiles: [TOPO_TILES], tileSize: 256, maxzoom: 17 },
+    terrain: { type: 'raster' as const, tiles: [TOPO_TILES], tileSize: 256, maxzoom: 17 },
   },
   layers: [
     { id: 'satellite-layer', type: 'raster' as const, source: 'satellite', layout: { visibility: 'none' as const } },
-    { id: 'terrain-layer',   type: 'raster' as const, source: 'terrain' },
+    { id: 'terrain-layer', type: 'raster' as const, source: 'terrain' },
   ],
 };
 
 export function TaskMap({ turnpoints, trackCoords }: { turnpoints: Turnpoint[]; trackCoords?: [number, number][] }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const svgRef       = useRef<SVGSVGElement>(null);
-  const mapRef       = useRef<maplibregl.Map | null>(null);
-  const markersRef   = useRef<maplibregl.Marker[]>([]);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const markersRef = useRef<maplibregl.Marker[]>([]);
   const [legendOpen, setLegendOpen] = useState<string | null>(null);
-  const tpsRef       = useRef<Turnpoint[]>(turnpoints);
-  const trackRef     = useRef<[number, number][] | undefined>(trackCoords);
-  const [basemap, setBasemap]   = useState<'satellite' | 'terrain'>('terrain');
+  const tpsRef = useRef<Turnpoint[]>(turnpoints);
+  const trackRef = useRef<[number, number][] | undefined>(trackCoords);
+  const [basemap, setBasemap] = useState<'satellite' | 'terrain'>('terrain');
   const [mapReady, setMapReady] = useState(false);
 
   // Keep refs current without stale-closure issues in map event handlers
-  tpsRef.current   = turnpoints;
+  tpsRef.current = turnpoints;
   trackRef.current = trackCoords;
 
   // Draw the SVG overlay: optimized route line, then cylinder rings, then dots.
@@ -164,7 +182,7 @@ export function TaskMap({ turnpoints, trackCoords }: { turnpoints: Turnpoint[]; 
 
     while (svg.firstChild) svg.removeChild(svg.firstChild);
 
-    const tps    = tpsRef.current;
+    const tps = tpsRef.current;
     const groups = buildGroups(tps);
 
     const mk = (tag: string, attrs: Record<string, string | number>) => {
@@ -184,23 +202,53 @@ export function TaskMap({ turnpoints, trackCoords }: { turnpoints: Turnpoint[]; 
     if (track && track.length >= 2) {
       const tp = track.map(([lng, lat]) => map.project([lng, lat]));
       const td = tp.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('');
-      mk('path', { d: td, fill: 'none', stroke: 'rgba(0,0,0,0.5)', 'stroke-width': 3, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
-      mk('path', { d: td, fill: 'none', stroke: '#ff6b35', 'stroke-width': 1.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-opacity': '0.9' });
+      mk('path', {
+        d: td,
+        fill: 'none',
+        stroke: 'rgba(0,0,0,0.5)',
+        'stroke-width': 3,
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round',
+      });
+      mk('path', {
+        d: td,
+        fill: 'none',
+        stroke: '#ff6b35',
+        'stroke-width': 1.5,
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round',
+        'stroke-opacity': '0.9',
+      });
     }
 
     // ── 1. Optimized route line ───────────────────────────────────────────────
     const linePts = optimizedLinePts(tps);
     if (linePts.length >= 2) {
       const sp = linePts.map(([lng, lat]) => map.project([lng, lat]));
-      const d  = sp.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('');
+      const d = sp.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('');
       // Dark shadow for contrast
-      mk('path', { d, fill: 'none', stroke: 'rgba(0,0,0,0.6)', 'stroke-width': 4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+      mk('path', {
+        d,
+        fill: 'none',
+        stroke: 'rgba(0,0,0,0.6)',
+        'stroke-width': 4,
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round',
+      });
       // White route line
-      mk('path', { d, fill: 'none', stroke: 'rgba(255,255,255,0.9)', 'stroke-width': 1.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+      mk('path', {
+        d,
+        fill: 'none',
+        stroke: 'rgba(255,255,255,0.9)',
+        'stroke-width': 1.5,
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round',
+      });
 
       // Directional arrows — one per segment, placed at midpoint
       for (let i = 0; i < sp.length - 1; i++) {
-        const a = sp[i], b = sp[i + 1];
+        const a = sp[i],
+          b = sp[i + 1];
         const mx = (a.x + b.x) / 2;
         const my = (a.y + b.y) / 2;
         const rad = Math.atan2(b.y - a.y, b.x - a.x);
@@ -215,7 +263,10 @@ export function TaskMap({ turnpoints, trackCoords }: { turnpoints: Turnpoint[]; 
         const shadowEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         shadowEl.setAttribute('d', arrowPath);
         shadowEl.setAttribute('fill', 'rgba(0,0,0,0.6)');
-        shadowEl.setAttribute('transform', `translate(${px.toFixed(1)},${py.toFixed(1)}) rotate(${angle.toFixed(1)}) scale(1.4)`);
+        shadowEl.setAttribute(
+          'transform',
+          `translate(${px.toFixed(1)},${py.toFixed(1)}) rotate(${angle.toFixed(1)}) scale(1.4)`,
+        );
         svg.appendChild(shadowEl);
         // White arrow
         const arrowEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -231,7 +282,14 @@ export function TaskMap({ turnpoints, trackCoords }: { turnpoints: Turnpoint[]; 
       for (const { radiusM } of mergeCircles(group.entries)) {
         const { cx, cy, r } = projR(group.lng, group.lat, radiusM);
         if (r < 1) continue;
-        mk('circle', { cx: cx.toFixed(1), cy: cy.toFixed(1), r: r.toFixed(1), fill: 'none', stroke: 'rgba(0,0,0,0.55)', 'stroke-width': 8 });
+        mk('circle', {
+          cx: cx.toFixed(1),
+          cy: cy.toFixed(1),
+          r: r.toFixed(1),
+          fill: 'none',
+          stroke: 'rgba(0,0,0,0.55)',
+          'stroke-width': 8,
+        });
       }
     }
 
@@ -240,15 +298,31 @@ export function TaskMap({ turnpoints, trackCoords }: { turnpoints: Turnpoint[]; 
       for (const { radiusM, color } of mergeCircles(group.entries)) {
         const { cx, cy, r } = projR(group.lng, group.lat, radiusM);
         if (r < 1) continue;
-        mk('circle', { cx: cx.toFixed(1), cy: cy.toFixed(1), r: r.toFixed(1), fill: color + '28', stroke: color, 'stroke-width': 3, 'stroke-dasharray': '10 5' });
+        mk('circle', {
+          cx: cx.toFixed(1),
+          cy: cy.toFixed(1),
+          r: r.toFixed(1),
+          fill: color + '28',
+          stroke: color,
+          'stroke-width': 3,
+          'stroke-dasharray': '10 5',
+        });
       }
     }
 
     // ── 4. Center dots ────────────────────────────────────────────────────────
     for (const group of groups) {
       const c = map.project([group.lng, group.lat]);
-      const dotColor = [...group.entries].sort((a, b) => (COLOR_PRI[b.color] ?? 0) - (COLOR_PRI[a.color] ?? 0))[0]?.color ?? '#e8a842';
-      mk('circle', { cx: c.x.toFixed(1), cy: c.y.toFixed(1), r: 5, fill: dotColor, stroke: 'rgba(0,0,0,0.7)', 'stroke-width': 2 });
+      const dotColor =
+        [...group.entries].sort((a, b) => (COLOR_PRI[b.color] ?? 0) - (COLOR_PRI[a.color] ?? 0))[0]?.color ?? '#e8a842';
+      mk('circle', {
+        cx: c.x.toFixed(1),
+        cy: c.y.toFixed(1),
+        r: 5,
+        fill: dotColor,
+        stroke: 'rgba(0,0,0,0.7)',
+        'stroke-width': 2,
+      });
     }
   }, []);
 
@@ -265,11 +339,11 @@ export function TaskMap({ turnpoints, trackCoords }: { turnpoints: Turnpoint[]; 
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
     map.on('load', () => setMapReady(true));
-    map.on('move',   drawSvg);
-    map.on('zoom',   drawSvg);
+    map.on('move', drawSvg);
+    map.on('zoom', drawSvg);
     map.on('resize', drawSvg);
     return () => {
-      markersRef.current.forEach(m => m.remove());
+      markersRef.current.forEach((m) => m.remove());
       markersRef.current = [];
       map.remove();
       mapRef.current = null;
@@ -282,7 +356,7 @@ export function TaskMap({ turnpoints, trackCoords }: { turnpoints: Turnpoint[]; 
     const map = mapRef.current;
     if (!map || !mapReady) return;
     map.setLayoutProperty('satellite-layer', 'visibility', basemap === 'satellite' ? 'visible' : 'none');
-    map.setLayoutProperty('terrain-layer',   'visibility', basemap === 'terrain'   ? 'visible' : 'none');
+    map.setLayoutProperty('terrain-layer', 'visibility', basemap === 'terrain' ? 'visible' : 'none');
   }, [basemap, mapReady]);
 
   // Redraw SVG when track changes (trackRef is already updated above)
@@ -296,7 +370,7 @@ export function TaskMap({ turnpoints, trackCoords }: { turnpoints: Turnpoint[]; 
     if (!map || !mapReady) return;
 
     // Clear old markers
-    markersRef.current.forEach(m => m.remove());
+    markersRef.current.forEach((m) => m.remove());
     markersRef.current = [];
 
     // HTML label markers — one per unique location, badges for all roles at that point
@@ -326,7 +400,8 @@ export function TaskMap({ turnpoints, trackCoords }: { turnpoints: Turnpoint[]; 
 
       const nameEl = document.createElement('div');
       nameEl.textContent = group.name;
-      const nameColor = [...group.entries].sort((a, b) => (COLOR_PRI[b.color] ?? 0) - (COLOR_PRI[a.color] ?? 0))[0]?.color ?? '#e8a842';
+      const nameColor =
+        [...group.entries].sort((a, b) => (COLOR_PRI[b.color] ?? 0) - (COLOR_PRI[a.color] ?? 0))[0]?.color ?? '#e8a842';
       nameEl.style.cssText = `
         color:${nameColor};font-family:"DM Mono",monospace;font-size:10px;font-weight:600;
         text-shadow:0 0 4px rgba(0,0,0,1),0 0 8px rgba(0,0,0,0.8);white-space:nowrap;
@@ -347,7 +422,10 @@ export function TaskMap({ turnpoints, trackCoords }: { turnpoints: Turnpoint[]; 
       const lons = linePts.map(([lng]) => lng);
       const lats = linePts.map(([, lat]) => lat);
       map.fitBounds(
-        [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
+        [
+          [Math.min(...lons), Math.min(...lats)],
+          [Math.max(...lons), Math.max(...lats)],
+        ],
         { padding: 80, maxZoom: 14, duration: 600 },
       );
     }
@@ -362,22 +440,28 @@ export function TaskMap({ turnpoints, trackCoords }: { turnpoints: Turnpoint[]; 
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       {/* SVG overlay — circles drawn via map.project(), stays in sync on move/zoom */}
-      <svg ref={svgRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
+      <svg
+        ref={svgRef}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+      />
 
       {/* Basemap toggle */}
       <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 4, zIndex: 10 }}>
-        {(['satellite', 'terrain'] as const).map(b => (
+        {(['satellite', 'terrain'] as const).map((b) => (
           <button
             key={b}
             onClick={() => setBasemap(b)}
             style={{
-              padding: '5px 10px', fontSize: 11,
-              fontFamily: '"DM Mono", monospace', fontWeight: 700,
+              padding: '5px 10px',
+              fontSize: 11,
+              fontFamily: '"DM Mono", monospace',
+              fontWeight: 700,
               border: `1px solid ${basemap === b ? 'rgba(232,168,66,0.6)' : 'rgba(255,255,255,0.2)'}`,
               borderRadius: 4,
               background: basemap === b ? 'rgba(232,168,66,0.2)' : 'rgba(0,0,0,0.45)',
               color: basemap === b ? '#e8a842' : 'rgba(255,255,255,0.75)',
-              cursor: 'pointer', backdropFilter: 'blur(6px)',
+              cursor: 'pointer',
+              backdropFilter: 'blur(6px)',
             }}
           >
             {b === 'satellite' ? '🛰 Satellite' : '🗺 Terrain'}
@@ -386,16 +470,39 @@ export function TaskMap({ turnpoints, trackCoords }: { turnpoints: Turnpoint[]; 
       </div>
 
       {/* Legend */}
-      <div style={{
-        position: 'absolute', bottom: 36, left: 12, zIndex: 10,
-        background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)',
-        border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6,
-        padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 4,
-      }}>
+      <div
+        style={{
+          position: 'absolute',
+          bottom: 36,
+          left: 12,
+          zIndex: 10,
+          background: 'rgba(0,0,0,0.55)',
+          backdropFilter: 'blur(6px)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          borderRadius: 6,
+          padding: '6px 10px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }}
+      >
         {[
-          { color: '#4a9eff', label: 'SSS', tooltip: 'Start of Speed Section — the clock starts on exit. Pilots may restart multiple times; we score the best attempt (furthest distance, then fastest time).' },
-          { color: '#e8a842', label: 'Turnpoint', tooltip: 'Intermediate turnpoint — pilots must enter this cylinder to validate the leg' },
-          { color: '#5db87a', label: 'ESS / Goal', tooltip: 'End of Speed Section / Goal — crossing ESS stops the clock; Goal is the finish' },
+          {
+            color: '#4a9eff',
+            label: 'SSS',
+            tooltip:
+              'Start of Speed Section — the clock starts on exit. Pilots may restart multiple times; we score the best attempt (furthest distance, then fastest time).',
+          },
+          {
+            color: '#e8a842',
+            label: 'Turnpoint',
+            tooltip: 'Intermediate turnpoint — pilots must enter this cylinder to validate the leg',
+          },
+          {
+            color: '#5db87a',
+            label: 'ESS / Goal',
+            tooltip: 'End of Speed Section / Goal — crossing ESS stops the clock; Goal is the finish',
+          },
         ].map(({ color, label, tooltip }) => (
           <div key={label} style={{ position: 'relative' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -407,26 +514,46 @@ export function TaskMap({ turnpoints, trackCoords }: { turnpoints: Turnpoint[]; 
                 onMouseEnter={() => setLegendOpen(label)}
                 onMouseLeave={() => setLegendOpen(null)}
                 style={{
-                  width: 14, height: 14, borderRadius: '50%', flexShrink: 0,
+                  width: 14,
+                  height: 14,
+                  borderRadius: '50%',
+                  flexShrink: 0,
                   background: legendOpen === label ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)',
                   border: '1px solid rgba(255,255,255,0.25)',
-                  color: 'rgba(255,255,255,0.6)', fontSize: 9, fontWeight: 700,
-                  cursor: 'default', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  lineHeight: 1, padding: 0,
+                  color: 'rgba(255,255,255,0.6)',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  cursor: 'default',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  lineHeight: 1,
+                  padding: 0,
                 }}
               >
                 ?
               </button>
             </div>
             {legendOpen === label && (
-              <div style={{
-                position: 'absolute', left: 0, bottom: '100%', marginBottom: 6,
-                width: 210, padding: '7px 10px',
-                background: 'rgba(15,19,24,0.95)', backdropFilter: 'blur(8px)',
-                border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6,
-                fontSize: 11, color: 'rgba(255,255,255,0.85)', lineHeight: 1.5,
-                pointerEvents: 'none', zIndex: 20,
-              }}>
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  bottom: '100%',
+                  marginBottom: 6,
+                  width: 210,
+                  padding: '7px 10px',
+                  background: 'rgba(15,19,24,0.95)',
+                  backdropFilter: 'blur(8px)',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  borderRadius: 6,
+                  fontSize: 11,
+                  color: 'rgba(255,255,255,0.85)',
+                  lineHeight: 1.5,
+                  pointerEvents: 'none',
+                  zIndex: 20,
+                }}
+              >
                 {tooltip}
               </div>
             )}
@@ -454,11 +581,17 @@ function ScoreResult({ result, onReset }: { result: SubmissionResponse; onReset:
             </div>
           </div>
         </div>
-        <div style={{
-          background: 'rgba(224,82,82,0.08)', border: '1px solid rgba(224,82,82,0.2)',
-          borderRadius: 'var(--r)', padding: '10px 14px',
-          fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--danger)',
-        }}>
+        <div
+          style={{
+            background: 'rgba(224,82,82,0.08)',
+            border: '1px solid rgba(224,82,82,0.2)',
+            borderRadius: 'var(--r)',
+            padding: '10px 14px',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 12,
+            color: 'var(--danger)',
+          }}
+        >
           {result.errorMessage}
         </div>
         <button className="btn btn-ghost" style={{ marginTop: 8, fontSize: 12 }} onClick={onReset}>
@@ -534,15 +667,27 @@ function UploadZone({ taskId, onSubmission }: { taskId: string; onSubmission?: (
 
   const handleFile = (f: File | null | undefined) => {
     if (!f) return;
-    if (!f.name.toLowerCase().endsWith('.igc')) { alert('Please select a .igc file'); return; }
-    if (f.size > 5 * 1024 * 1024) { alert('File too large — maximum 5MB'); return; }
+    if (!f.name.toLowerCase().endsWith('.igc')) {
+      alert('Please select a .igc file');
+      return;
+    }
+    if (f.size > 5 * 1024 * 1024) {
+      alert('File too large — maximum 5MB');
+      return;
+    }
     setFile(f);
     reset();
   };
 
-  const handleReset = useCallback(() => { setFile(null); reset(); if (fileRef.current) fileRef.current.value = ''; }, [reset]);
+  const handleReset = useCallback(() => {
+    setFile(null);
+    reset();
+    if (fileRef.current) fileRef.current.value = '';
+  }, [reset]);
 
-  useEffect(() => { handleReset(); }, [taskId, handleReset]);
+  useEffect(() => {
+    handleReset();
+  }, [taskId, handleReset]);
 
   if (status === 'done' && result) {
     return <ScoreResult result={result} onReset={handleReset} />;
@@ -553,9 +698,16 @@ function UploadZone({ taskId, onSubmission }: { taskId: string; onSubmission?: (
       <div
         className={`upload-zone${drag ? ' drag-over' : ''}`}
         style={{ padding: '16px', minHeight: 'unset' }}
-        onDragOver={e => { e.preventDefault(); setDrag(true); }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDrag(true);
+        }}
         onDragLeave={() => setDrag(false)}
-        onDrop={e => { e.preventDefault(); setDrag(false); handleFile(e.dataTransfer.files[0]); }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDrag(false);
+          handleFile(e.dataTransfer.files[0]);
+        }}
         onClick={() => !file && fileRef.current?.click()}
       >
         <input
@@ -563,7 +715,7 @@ function UploadZone({ taskId, onSubmission }: { taskId: string; onSubmission?: (
           type="file"
           accept=".igc"
           style={{ display: 'none' }}
-          onChange={e => handleFile(e.target.files?.[0])}
+          onChange={(e) => handleFile(e.target.files?.[0])}
         />
         {file ? (
           <div>
@@ -574,33 +726,57 @@ function UploadZone({ taskId, onSubmission }: { taskId: string; onSubmission?: (
             <button
               className="btn btn-ghost"
               style={{ marginTop: 8, fontSize: 11 }}
-              onClick={e => { e.stopPropagation(); setFile(null); reset(); if (fileRef.current) fileRef.current.value = ''; }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setFile(null);
+                reset();
+                if (fileRef.current) fileRef.current.value = '';
+              }}
             >
               ✕ Remove
             </button>
           </div>
         ) : (
           <>
-            <div style={{
-              width: 40, height: 40, borderRadius: 10,
-              background: 'rgba(93,184,122,0.1)', border: '1px solid rgba(93,184,122,0.25)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 20, margin: '0 auto 8px',
-            }}>
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 10,
+                background: 'rgba(93,184,122,0.1)',
+                border: '1px solid rgba(93,184,122,0.25)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 20,
+                margin: '0 auto 8px',
+              }}
+            >
               ⬆
             </div>
-            <div className="upload-title" style={{ fontSize: 13 }}>Drop IGC file here</div>
-            <div className="upload-sub" style={{ fontSize: 11 }}>or click to browse · max 5MB</div>
+            <div className="upload-title" style={{ fontSize: 13 }}>
+              Drop IGC file here
+            </div>
+            <div className="upload-sub" style={{ fontSize: 11 }}>
+              or click to browse · max 5MB
+            </div>
           </>
         )}
       </div>
 
       {status === 'error' && error && (
-        <div style={{
-          marginTop: 8, padding: '8px 12px',
-          background: 'rgba(224,82,82,0.08)', border: '1px solid rgba(224,82,82,0.2)',
-          borderRadius: 'var(--r)', fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--danger)',
-        }}>
+        <div
+          style={{
+            marginTop: 8,
+            padding: '8px 12px',
+            background: 'rgba(224,82,82,0.08)',
+            border: '1px solid rgba(224,82,82,0.2)',
+            borderRadius: 'var(--r)',
+            fontSize: 12,
+            fontFamily: 'var(--font-mono)',
+            color: 'var(--danger)',
+          }}
+        >
           {error}
         </div>
       )}
@@ -616,7 +792,15 @@ function UploadZone({ taskId, onSubmission }: { taskId: string; onSubmission?: (
                 {status === 'processing' ? (
                   <div className="progress-fill" />
                 ) : (
-                  <div style={{ height: '100%', width: `${progress}%`, background: 'var(--gold)', borderRadius: 2, transition: 'width 0.2s' }} />
+                  <div
+                    style={{
+                      height: '100%',
+                      width: `${progress}%`,
+                      background: 'var(--gold)',
+                      borderRadius: 2,
+                      transition: 'width 0.2s',
+                    }}
+                  />
                 )}
               </div>
             </div>
@@ -645,9 +829,9 @@ function TaskActionPanel({
   leagueSlug,
   onSubmission,
 }: {
-  task:          Task;
-  taskStatus:    TaskStatus;
-  leagueSlug:    string;
+  task: Task;
+  taskStatus: TaskStatus;
+  leagueSlug: string;
   onSubmission?: (id: string) => void;
 }) {
   const { user, login } = useAuth();
@@ -671,24 +855,50 @@ function TaskActionPanel({
 
       {/* Upload zone — only for open tasks */}
       {isOpen && (
-        <div style={{
-          background: 'var(--bg2)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--r)',
-          overflow: 'hidden',
-        }}>
+        <div
+          style={{
+            background: 'var(--bg2)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--r)',
+            overflow: 'hidden',
+          }}
+        >
           {/* Section header */}
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '10px 14px',
-            borderBottom: '1px solid var(--border)',
-            background: 'rgba(93,184,122,0.06)',
-          }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '10px 14px',
+              borderBottom: '1px solid var(--border)',
+              background: 'rgba(93,184,122,0.06)',
+            }}
+          >
             <span style={{ fontSize: 16, lineHeight: 1 }}>✈️</span>
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#5db87a', fontFamily: 'var(--font-mono)' }}>
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: '0.12em',
+                textTransform: 'uppercase',
+                color: '#5db87a',
+                fontFamily: 'var(--font-mono)',
+              }}
+            >
               Submit Flight
             </span>
-            <span style={{ marginLeft: 'auto', fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text3)', background: 'rgba(93,184,122,0.12)', border: '1px solid rgba(93,184,122,0.25)', borderRadius: 3, padding: '1px 6px' }}>
+            <span
+              style={{
+                marginLeft: 'auto',
+                fontSize: 10,
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--text3)',
+                background: 'rgba(93,184,122,0.12)',
+                border: '1px solid rgba(93,184,122,0.25)',
+                borderRadius: 3,
+                padding: '1px 6px',
+              }}
+            >
               IGC
             </span>
           </div>
@@ -698,7 +908,9 @@ function TaskActionPanel({
             ) : (
               <div style={{ textAlign: 'center', padding: '16px 0' }}>
                 <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>Sign in to submit a flight</div>
-                <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={login}>Sign in</button>
+                <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={login}>
+                  Sign in
+                </button>
               </div>
             )}
           </div>
@@ -708,26 +920,65 @@ function TaskActionPanel({
       {/* Mini leaderboard */}
       {lb && lb.entries.length > 0 && (
         <div>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              color: 'var(--text3)',
+              fontFamily: 'var(--font-mono)',
+              marginBottom: 8,
+            }}
+          >
             Leaderboard
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {lb.entries.slice(0, 8).map(e => (
-              <div key={e.pilotId} style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '5px 8px', borderRadius: 'var(--r)',
-                background: 'var(--bg3)',
-              }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)', width: 20, flexShrink: 0 }}>
+            {lb.entries.slice(0, 8).map((e) => (
+              <div
+                key={e.pilotId}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '5px 8px',
+                  borderRadius: 'var(--r)',
+                  background: 'var(--bg3)',
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 11,
+                    color: 'var(--text3)',
+                    width: 20,
+                    flexShrink: 0,
+                  }}
+                >
                   {e.rank}
                 </span>
-                <span style={{ fontSize: 12, fontWeight: 500, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    flex: 1,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
                   {e.pilotName}
                 </span>
-                {e.reachedGoal && (
-                  <span style={{ fontSize: 10, color: 'var(--success)', flexShrink: 0 }}>✓</span>
-                )}
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: 'var(--gold)', flexShrink: 0 }}>
+                {e.reachedGoal && <span style={{ fontSize: 10, color: 'var(--success)', flexShrink: 0 }}>✓</span>}
+                <span
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: 'var(--gold)',
+                    flexShrink: 0,
+                  }}
+                >
                   {Math.round(e.totalPoints)}
                 </span>
               </div>
@@ -738,11 +989,7 @@ function TaskActionPanel({
 
       {/* Export modal */}
       {showExport && (
-        <TaskExportModal
-          task={task as any}
-          leagueSlug={leagueSlug}
-          onClose={() => setShowExport(false)}
-        />
+        <TaskExportModal task={task as any} leagueSlug={leagueSlug} onClose={() => setShowExport(false)} />
       )}
     </div>
   );
@@ -755,19 +1002,21 @@ function TaskActionPanel({
 export default function TasksPage() {
   const { leagueSlug } = useLeague();
   const { data: tasks, isLoading } = useTasks();
-  const [selectedId, setSelectedId]             = useState<string | null>(null);
-  const [uploadedSubmissionId, setUploadedId]   = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [uploadedSubmissionId, setUploadedId] = useState<string | null>(null);
 
   // Auto-select first published task on load
   useEffect(() => {
     if (!selectedId && tasks?.length) {
-      const first = tasks.find(t => t.status === 'published') ?? tasks[0];
+      const first = tasks.find((t) => t.status === 'published') ?? tasks[0];
       setSelectedId(first.id);
     }
   }, [tasks, selectedId]);
 
   // Clear uploaded track when switching tasks
-  useEffect(() => { setUploadedId(null); }, [selectedId]);
+  useEffect(() => {
+    setUploadedId(null);
+  }, [selectedId]);
 
   // Fetch user's existing submissions for the selected task
   const { data: mySubmissions } = useMySubmissions(selectedId);
@@ -776,20 +1025,24 @@ export default function TasksPage() {
   const submissionId = uploadedSubmissionId ?? mySubmissions?.[0]?.id ?? null;
 
   const { data: track } = useTrack(selectedId, submissionId);
-  const trackCoords = track?.fixes.map(f => [f.lng, f.lat] as [number, number]);
+  const trackCoords = track?.fixes.map((f) => [f.lng, f.lat] as [number, number]);
 
-  const selectedTask = tasks?.find(t => t.id === selectedId) ?? null;
+  const selectedTask = tasks?.find((t) => t.id === selectedId) ?? null;
   const taskStatus = selectedTask ? getTaskStatus(selectedTask) : null;
 
   return (
     <div className="fade-in" style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       {/* Left panel */}
-      <div style={{
-        width: 380, flexShrink: 0,
-        display: 'flex', flexDirection: 'column',
-        borderRight: '1px solid var(--border)',
-        overflow: 'hidden',
-      }}>
+      <div
+        style={{
+          width: 380,
+          flexShrink: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          borderRight: '1px solid var(--border)',
+          overflow: 'hidden',
+        }}
+      >
         {/* Header */}
         <div style={{ padding: '20px 20px 12px', flexShrink: 0 }}>
           <div className="page-title">Tasks</div>
@@ -809,7 +1062,7 @@ export default function TasksPage() {
               No tasks in this season yet
             </div>
           ) : (
-            tasks.map(task => {
+            tasks.map((task) => {
               const ts = getTaskStatus(task);
               const ss = STATUS_STYLE[ts];
               const isSelected = task.id === selectedId;
@@ -818,39 +1071,67 @@ export default function TasksPage() {
                   key={task.id}
                   onClick={() => setSelectedId(task.id)}
                   style={{
-                    display: 'flex', alignItems: 'center', gap: 8,
-                    padding: '8px 12px', marginBottom: 3,
-                    borderRadius: 'var(--r)', cursor: 'pointer',
-                    background: isSelected ? 'linear-gradient(90deg, rgba(232,168,66,0.11) 0%, rgba(232,168,66,0.04) 100%)' : 'var(--bg2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '8px 12px',
+                    marginBottom: 3,
+                    borderRadius: 'var(--r)',
+                    cursor: 'pointer',
+                    background: isSelected
+                      ? 'linear-gradient(90deg, rgba(232,168,66,0.11) 0%, rgba(232,168,66,0.04) 100%)'
+                      : 'var(--bg2)',
                     border: `1px solid ${isSelected ? 'rgba(232,168,66,0.4)' : 'var(--border)'}`,
                     boxShadow: isSelected ? 'inset 3px 0 0 var(--gold)' : 'none',
                     transition: 'all 0.12s',
                   }}
                 >
                   {/* Name — truncates to fill available space */}
-                  <div style={{
-                    flex: 1, minWidth: 0,
-                    fontSize: 13, fontWeight: isSelected ? 700 : 500,
-                    color: isSelected ? 'var(--gold)' : 'var(--text)',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>
+                  <div
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      fontSize: 13,
+                      fontWeight: isSelected ? 700 : 500,
+                      color: isSelected ? 'var(--gold)' : 'var(--text)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
                     {task.name}
                   </div>
 
                   {/* Distance — computed from turnpoints */}
                   {task.turnpoints.length >= 2 && (
-                    <div style={{ flexShrink: 0, fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: 'var(--text2)' }}>
-                      {computeDistanceKm(task.turnpoints.map(toCylinder)).toFixed(1)}<span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}> km</span>
+                    <div
+                      style={{
+                        flexShrink: 0,
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: 'var(--text2)',
+                      }}
+                    >
+                      {computeDistanceKm(task.turnpoints.map(toCylinder)).toFixed(1)}
+                      <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}> km</span>
                     </div>
                   )}
 
                   {/* Status badge inline */}
-                  <span style={{
-                    flexShrink: 0,
-                    fontSize: 9, fontWeight: 700, fontFamily: 'var(--font-mono)',
-                    padding: '2px 5px', borderRadius: 3,
-                    background: ss.background, color: ss.color, border: `1px solid ${ss.border}`,
-                  }}>
+                  <span
+                    style={{
+                      flexShrink: 0,
+                      fontSize: 9,
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      padding: '2px 5px',
+                      borderRadius: 3,
+                      background: ss.background,
+                      color: ss.color,
+                      border: `1px solid ${ss.border}`,
+                    }}
+                  >
                     {ts}
                   </span>
                 </div>
@@ -878,10 +1159,15 @@ export default function TasksPage() {
 
         {/* Task name chip — top-left, over the map */}
         {selectedTask && (
-          <div style={{
-            position: 'absolute', top: 12, left: 12, zIndex: 10,
-            pointerEvents: 'none',
-          }}>
+          <div
+            style={{
+              position: 'absolute',
+              top: 12,
+              left: 12,
+              zIndex: 10,
+              pointerEvents: 'none',
+            }}
+          >
             <div className="map-chip">
               <span style={{ fontWeight: 600, fontSize: 13 }}>{selectedTask.name}</span>
               {selectedTask.turnpoints.length >= 2 && (
@@ -895,12 +1181,20 @@ export default function TasksPage() {
 
         {/* No-turnpoints notice */}
         {selectedTask && !selectedTask.turnpoints.length && (
-          <div style={{
-            position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center', gap: 8,
-            color: 'var(--text3)', pointerEvents: 'none',
-            background: 'rgba(15,19,24,0.6)',
-          }}>
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              color: 'var(--text3)',
+              pointerEvents: 'none',
+              background: 'rgba(15,19,24,0.6)',
+            }}
+          >
             <div style={{ fontSize: 28 }}>◈</div>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>No turnpoints for this task</div>
           </div>

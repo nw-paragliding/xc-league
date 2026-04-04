@@ -5,21 +5,30 @@
 // with all turnpoints pre-populated.
 // =============================================================================
 
-import { useState, useRef, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { leagueApi } from '../api/leagues';
 
 interface Props {
-  leagueSlug:       string;
-  seasonId:         string;
+  leagueSlug: string;
+  seasonId: string;
   defaultOpenDate?: string;
   defaultCloseDate?: string;
-  onSuccess:        () => void;
-  onClose:          () => void;
+  onSuccess: () => void;
+  onClose: () => void;
 }
 
-export default function TaskImportModal({ leagueSlug, seasonId, defaultOpenDate, defaultCloseDate, onSuccess, onClose }: Props) {
+export default function TaskImportModal({
+  leagueSlug,
+  seasonId,
+  defaultOpenDate,
+  defaultCloseDate,
+  onSuccess,
+  onClose,
+}: Props) {
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
@@ -86,45 +95,55 @@ export default function TaskImportModal({ leagueSlug, seasonId, defaultOpenDate,
         zIndex: 1000,
         padding: '1.5rem',
       }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      <div style={{
-        background: 'var(--bg1)',
-        borderRadius: 8,
-        padding: '2rem',
-        width: '100%',
-        maxWidth: 520,
-        maxHeight: '90vh',
-        overflowY: 'auto',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
-      }}>
+      <div
+        style={{
+          background: 'var(--bg1)',
+          borderRadius: 8,
+          padding: '2rem',
+          width: '100%',
+          maxWidth: 520,
+          maxHeight: '90vh',
+          overflowY: 'auto',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+        }}
+      >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>
-            Import Task
-          </h2>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>Import Task</h2>
           <button
             onClick={onClose}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.25rem', color: 'var(--text2)' }}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '1.25rem',
+              color: 'var(--text2)',
+            }}
           >
             ×
           </button>
         </div>
 
         <p style={{ fontSize: '0.875rem', color: 'var(--text2)', marginBottom: '1.5rem' }}>
-          Upload a task file to automatically create a task with all turnpoints.
-          Supported formats: <strong>.xctsk</strong> (XCTrack), <strong>.cup</strong> (SeeYou Navigator).
+          Upload a task file to automatically create a task with all turnpoints. Supported formats:{' '}
+          <strong>.xctsk</strong> (XCTrack), <strong>.cup</strong> (SeeYou Navigator).
         </p>
 
         {error && (
-          <div style={{
-            padding: '0.75rem 1rem',
-            background: '#fee',
-            border: '1px solid #fcc',
-            borderRadius: 6,
-            color: '#c00',
-            fontSize: '0.875rem',
-            marginBottom: '1rem',
-          }}>
+          <div
+            style={{
+              padding: '0.75rem 1rem',
+              background: '#fee',
+              border: '1px solid #fcc',
+              borderRadius: 6,
+              color: '#c00',
+              fontSize: '0.875rem',
+              marginBottom: '1rem',
+            }}
+          >
             {error}
           </div>
         )}
@@ -132,9 +151,16 @@ export default function TaskImportModal({ leagueSlug, seasonId, defaultOpenDate,
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {/* File drop zone */}
           <div
-            onDragOver={e => { e.preventDefault(); setDrag(true); }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDrag(true);
+            }}
             onDragLeave={() => setDrag(false)}
-            onDrop={e => { e.preventDefault(); setDrag(false); handleFile(e.dataTransfer.files[0]); }}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDrag(false);
+              handleFile(e.dataTransfer.files[0]);
+            }}
             onClick={() => !file && fileRef.current?.click()}
             style={{
               border: `2px dashed ${drag ? 'var(--primary)' : 'var(--border)'}`,
@@ -151,7 +177,7 @@ export default function TaskImportModal({ leagueSlug, seasonId, defaultOpenDate,
               type="file"
               accept=".xctsk,.cup"
               style={{ display: 'none' }}
-              onChange={e => handleFile(e.target.files?.[0])}
+              onChange={(e) => handleFile(e.target.files?.[0])}
             />
             {file ? (
               <div>
@@ -162,8 +188,19 @@ export default function TaskImportModal({ leagueSlug, seasonId, defaultOpenDate,
                 </div>
                 <button
                   type="button"
-                  onClick={e => { e.stopPropagation(); setFile(null); setName(''); }}
-                  style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#c00', background: 'none', border: 'none', cursor: 'pointer' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFile(null);
+                    setName('');
+                  }}
+                  style={{
+                    marginTop: '0.5rem',
+                    fontSize: '0.75rem',
+                    color: '#c00',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                  }}
                 >
                   ✕ Remove
                 </button>
@@ -185,7 +222,7 @@ export default function TaskImportModal({ leagueSlug, seasonId, defaultOpenDate,
             <input
               type="text"
               value={name}
-              onChange={e => setName(e.target.value)}
+              onChange={(e) => setName(e.target.value)}
               placeholder="Defaults to filename"
               style={{
                 width: '100%',
@@ -209,7 +246,7 @@ export default function TaskImportModal({ leagueSlug, seasonId, defaultOpenDate,
               <input
                 type="datetime-local"
                 value={openDate}
-                onChange={e => setOpenDate(e.target.value)}
+                onChange={(e) => setOpenDate(e.target.value)}
                 style={{
                   width: '100%',
                   padding: '0.5rem',
@@ -230,7 +267,7 @@ export default function TaskImportModal({ leagueSlug, seasonId, defaultOpenDate,
               <input
                 type="datetime-local"
                 value={closeDate}
-                onChange={e => setCloseDate(e.target.value)}
+                onChange={(e) => setCloseDate(e.target.value)}
                 style={{
                   width: '100%',
                   padding: '0.5rem',

@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { segmentIntersectsGoalLine, segmentEntersGoalSemiCircle } from '../src/pipeline';
-import { optimiseRoute, type Cylinder } from '../src/shared/task-engine';
+import { describe, expect, it } from 'vitest';
+import { segmentEntersGoalSemiCircle, segmentIntersectsGoalLine } from '../src/pipeline';
+import { type Cylinder, optimiseRoute } from '../src/shared/task-engine';
 
 // =============================================================================
 // Coordinate convention used throughout:

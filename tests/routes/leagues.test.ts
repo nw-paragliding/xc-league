@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
 import Fastify from 'fastify';
-import { getTestDb, resetTestDb } from '../setup';
-import { setupTestDatabase, createTestUser, createTestLeague, addLeagueMember } from '../helpers';
-import { registerLeagueRoutes } from '../../src/routes/leagues';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { authPlugin, loadAuthConfig } from '../../src/auth';
+import { registerLeagueRoutes } from '../../src/routes/leagues';
+import { addLeagueMember, createTestLeague, createTestUser, setupTestDatabase } from '../helpers';
+import { getTestDb, resetTestDb } from '../setup';
 
 describe('League Settings API', () => {
   let app: any;
@@ -18,16 +18,16 @@ describe('League Settings API', () => {
     db = getTestDb();
     setupTestDatabase(db);
 
-    adminUser  = createTestUser(db, { email: 'admin@test.com',  displayName: 'Admin User' });
-    regularUser = createTestUser(db, { email: 'user@test.com',  displayName: 'Regular User' });
+    adminUser = createTestUser(db, { email: 'admin@test.com', displayName: 'Admin User' });
+    regularUser = createTestUser(db, { email: 'user@test.com', displayName: 'Regular User' });
 
     testLeague = createTestLeague(db, {
-      name:        'Test League',
-      slug:        'test-league',
+      name: 'Test League',
+      slug: 'test-league',
       description: 'A test league description',
     });
 
-    addLeagueMember(db, testLeague.id, adminUser.id,   'admin');
+    addLeagueMember(db, testLeague.id, adminUser.id, 'admin');
     addLeagueMember(db, testLeague.id, regularUser.id, 'pilot');
 
     app = Fastify();
@@ -41,21 +41,21 @@ describe('League Settings API', () => {
   describe('GET /leagues/:leagueSlug', () => {
     it('returns full league data including description and logoUrl', async () => {
       const res = await app.inject({
-        method:  'GET',
-        url:     `/leagues/${testLeague.slug}`,
+        method: 'GET',
+        url: `/leagues/${testLeague.slug}`,
         headers: { 'x-test-user-id': adminUser.id },
       });
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body);
       expect(body.league).toMatchObject({
-        id:               testLeague.id,
-        slug:             testLeague.slug,
-        name:             testLeague.name,
+        id: testLeague.id,
+        slug: testLeague.slug,
+        name: testLeague.name,
         shortDescription: 'A test league description',
       });
       // logoUrl and createdAt should be present (even if null)
-      expect('logoUrl'   in body.league).toBe(true);
+      expect('logoUrl' in body.league).toBe(true);
       expect('createdAt' in body.league).toBe(true);
     });
 
@@ -63,8 +63,8 @@ describe('League Settings API', () => {
       const noDescLeague = createTestLeague(db, { name: 'No Desc', slug: 'no-desc' });
 
       const res = await app.inject({
-        method:  'GET',
-        url:     `/leagues/${noDescLeague.slug}`,
+        method: 'GET',
+        url: `/leagues/${noDescLeague.slug}`,
         headers: { 'x-test-user-id': adminUser.id },
       });
 
@@ -73,7 +73,6 @@ describe('League Settings API', () => {
       expect(body.league.shortDescription).toBeNull();
       expect(body.league.logoUrl).toBeNull();
     });
-
   });
 
   // ── PUT /leagues/:leagueSlug ─────────────────────────────────────────────
@@ -81,8 +80,8 @@ describe('League Settings API', () => {
   describe('PUT /leagues/:leagueSlug', () => {
     it('updates league name as admin', async () => {
       const res = await app.inject({
-        method:  'PUT',
-        url:     `/leagues/${testLeague.slug}`,
+        method: 'PUT',
+        url: `/leagues/${testLeague.slug}`,
         payload: { name: 'Updated League Name' },
         headers: { 'x-test-user-id': adminUser.id },
       });
@@ -94,8 +93,8 @@ describe('League Settings API', () => {
 
     it('updates description without touching other fields', async () => {
       const res = await app.inject({
-        method:  'PUT',
-        url:     `/leagues/${testLeague.slug}`,
+        method: 'PUT',
+        url: `/leagues/${testLeague.slug}`,
         payload: { shortDescription: 'New description' },
         headers: { 'x-test-user-id': adminUser.id },
       });
@@ -108,8 +107,8 @@ describe('League Settings API', () => {
 
     it('returns 400 when no fields provided', async () => {
       const res = await app.inject({
-        method:  'PUT',
-        url:     `/leagues/${testLeague.slug}`,
+        method: 'PUT',
+        url: `/leagues/${testLeague.slug}`,
         payload: {},
         headers: { 'x-test-user-id': adminUser.id },
       });
@@ -120,15 +119,14 @@ describe('League Settings API', () => {
 
     it('rejects regular members from updating league settings', async () => {
       const res = await app.inject({
-        method:  'PUT',
-        url:     `/leagues/${testLeague.slug}`,
+        method: 'PUT',
+        url: `/leagues/${testLeague.slug}`,
         payload: { name: 'Hacked Name' },
         headers: { 'x-test-user-id': regularUser.id },
       });
 
       expect(res.statusCode).toBe(403);
     });
-
   });
 
   // ── GET /leagues/:leagueSlug/members ─────────────────────────────────────
@@ -136,8 +134,8 @@ describe('League Settings API', () => {
   describe('GET /leagues/:leagueSlug/members', () => {
     it('returns members for league members', async () => {
       const res = await app.inject({
-        method:  'GET',
-        url:     `/leagues/${testLeague.slug}/members`,
+        method: 'GET',
+        url: `/leagues/${testLeague.slug}/members`,
         headers: { 'x-test-user-id': adminUser.id },
       });
 
@@ -155,14 +153,13 @@ describe('League Settings API', () => {
       const outsider = createTestUser(db, { email: 'outsider@test.com' });
 
       const res = await app.inject({
-        method:  'GET',
-        url:     `/leagues/${testLeague.slug}/members`,
+        method: 'GET',
+        url: `/leagues/${testLeague.slug}/members`,
         headers: { 'x-test-user-id': outsider.id },
       });
 
       expect(res.statusCode).toBe(403);
       expect(JSON.parse(res.body).error).toContain('membership');
     });
-
   });
 });

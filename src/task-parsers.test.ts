@@ -2,8 +2,8 @@
 // task-parsers.test.ts — unit tests for parseCupAll and parseCup
 // =============================================================================
 
-import { describe, it, expect } from 'vitest';
-import { parseCupAll, parseCup, parseXctsk } from './task-parsers';
+import { describe, expect, it } from 'vitest';
+import { parseCup, parseCupAll, parseXctsk } from './task-parsers';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -107,10 +107,10 @@ describe('parseCupAll', () => {
   describe('ObsZone radii', () => {
     it('reads R1 for each turnpoint', () => {
       const { turnpoints } = parseCupAll(TWO_TASK_CUP)[0];
-      expect(turnpoints[0].radius_m).toBe(400);  // SSS
+      expect(turnpoints[0].radius_m).toBe(400); // SSS
       expect(turnpoints[1].radius_m).toBe(4000); // big cylinder
-      expect(turnpoints[2].radius_m).toBe(300);  // ESS
-      expect(turnpoints[3].radius_m).toBe(200);  // Goal
+      expect(turnpoints[2].radius_m).toBe(300); // ESS
+      expect(turnpoints[3].radius_m).toBe(200); // Goal
     });
 
     it('radii are different per task when tasks differ', () => {
@@ -205,8 +205,8 @@ describe('parseXctsk (JSON v1)', () => {
     taskType: 'CLASSIC',
     turnpoints: [
       { waypoint: { name: 'Launch', lat: 47.5, lon: -121.9 }, radius: 400 },
-      { waypoint: { name: 'TP1',    lat: 47.52, lon: -121.85 }, radius: 1000 },
-      { waypoint: { name: 'Goal',   lat: 47.48, lon: -121.8 }, radius: 400 },
+      { waypoint: { name: 'TP1', lat: 47.52, lon: -121.85 }, radius: 1000 },
+      { waypoint: { name: 'Goal', lat: 47.48, lon: -121.8 }, radius: 400 },
     ],
   });
 
@@ -234,9 +234,9 @@ describe('parseXctsk (JSON v1)', () => {
     const src = JSON.stringify({
       version: 1,
       turnpoints: [
-        { waypoint: { name: 'S',   lat: 47.5,  lon: -122 }, radius: 400 },
+        { waypoint: { name: 'S', lat: 47.5, lon: -122 }, radius: 400 },
         { waypoint: { name: 'ESS', lat: 47.52, lon: -121.9 }, radius: 400, type: 'ESS' },
-        { waypoint: { name: 'G',   lat: 47.48, lon: -121.8 }, radius: 200 },
+        { waypoint: { name: 'G', lat: 47.48, lon: -121.8 }, radius: 200 },
       ],
     });
     const task = parseXctsk(src);

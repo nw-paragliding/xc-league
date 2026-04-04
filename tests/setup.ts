@@ -1,8 +1,7 @@
 // Backend test setup
 import 'dotenv/config';
-import { beforeAll, afterAll, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { existsSync, unlinkSync } from 'fs';
+import { afterAll, beforeAll } from 'vitest';
 
 // Use in-memory database for tests
 export const TEST_DB_PATH = ':memory:';
