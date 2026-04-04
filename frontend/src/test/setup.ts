@@ -1,7 +1,7 @@
 // Frontend test setup
 
 import { cleanup } from '@testing-library/react';
-import { afterEach, expect } from 'vitest';
+import { afterEach } from 'vitest';
 import '@testing-library/jest-dom';
 
 // Cleanup after each test

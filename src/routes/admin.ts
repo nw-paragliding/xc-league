@@ -8,7 +8,7 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'crypto';
 import type { FastifyInstance } from 'fastify';
-import { requireAuth, requireSuperAdmin } from '../auth';
+import { requireSuperAdmin } from '../auth';
 
 interface AdminRouteOptions {
   db: Database.Database;
