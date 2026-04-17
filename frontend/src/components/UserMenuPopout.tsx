@@ -4,15 +4,6 @@ import { useAuth } from '../hooks/useAuth';
 import { useLeague } from '../hooks/useLeague';
 import { useTheme } from '../hooks/useTheme';
 
-function initials(name: string) {
-  return name
-    .split(' ')
-    .map((w) => w[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
-}
-
 interface UserMenuPopoutProps {
   isLeagueAdmin: boolean;
 }
@@ -64,7 +55,18 @@ export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
   };
 
   return (
-    <div ref={containerRef} style={{ position: 'fixed', bottom: 24, left: 24, zIndex: 100 }}>
+    <div
+      ref={containerRef}
+      style={{
+        position: 'fixed',
+        bottom: 24,
+        left: 24,
+        zIndex: 100,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+      }}
+    >
       {/* Popout card — shown above the button */}
       {open && (
         <div
@@ -80,16 +82,17 @@ export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
             padding: '8px 4px',
           }}
         >
-          {/* Nav items */}
-          <button
-            style={menuItemStyle}
-            onClick={() => go(`/leagues/${leagueSlug}/profile`)}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg3)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
-          >
-            <span style={{ fontSize: 14 }}>◉</span>
-            Profile
-          </button>
+          {user && (
+            <button
+              style={menuItemStyle}
+              onClick={() => go(`/leagues/${leagueSlug}/profile`)}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg3)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+            >
+              <span style={{ fontSize: 14 }}>◉</span>
+              Profile
+            </button>
+          )}
 
           {isLeagueAdmin && (
             <button
@@ -115,15 +118,17 @@ export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
             </button>
           )}
 
-          <button
-            style={menuItemStyle}
-            onClick={() => go(`/leagues/${leagueSlug}/create-league`)}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg3)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
-          >
-            <span style={{ fontSize: 14 }}>+</span>
-            Create League
-          </button>
+          {user && (
+            <button
+              style={menuItemStyle}
+              onClick={() => go(`/leagues/${leagueSlug}/create-league`)}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg3)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+            >
+              <span style={{ fontSize: 14 }}>+</span>
+              Create League
+            </button>
+          )}
 
           <button
             style={menuItemStyle}
@@ -167,7 +172,7 @@ export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
         </div>
       )}
 
-      {/* Avatar button */}
+      {/* Menu button */}
       <button
         onClick={() => setOpen((o) => !o)}
         style={{
@@ -182,20 +187,52 @@ export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
           justifyContent: 'center',
           boxShadow: '0 4px 12px var(--shadow)',
           transition: 'all 0.15s',
-          fontSize: '0.75rem',
-          fontWeight: 600,
           color: 'var(--text)',
         }}
-        title={user ? user.displayName : 'Sign in'}
+        title={user ? user.displayName : 'Menu'}
+        aria-label="Open menu"
       >
         {isLoading ? (
           <div className="shimmer" style={{ width: 20, height: 20, borderRadius: '50%' }} />
-        ) : user ? (
-          initials(user.displayName)
         ) : (
-          '?'
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <line x1="4" y1="7" x2="20" y2="7" />
+            <line x1="4" y1="12" x2="20" y2="12" />
+            <line x1="4" y1="17" x2="20" y2="17" />
+          </svg>
         )}
       </button>
+
+      {/* Sign-in pill — signed-out users only */}
+      {!isLoading && !user && (
+        <button
+          onClick={() => login()}
+          style={{
+            height: 36,
+            padding: '0 1rem',
+            borderRadius: 18,
+            background: 'var(--accent)',
+            border: '1px solid var(--accent)',
+            cursor: 'pointer',
+            boxShadow: '0 4px 12px var(--shadow)',
+            fontSize: '0.875rem',
+            fontWeight: 600,
+            color: 'var(--accent-fg, #fff)',
+          }}
+        >
+          Sign in
+        </button>
+      )}
     </div>
   );
 }
