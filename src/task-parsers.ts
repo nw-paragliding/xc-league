@@ -15,7 +15,18 @@ export interface ParsedTurnpoint {
   longitude: number; // WGS84 decimal degrees
   radius_m: number; // cylinder / observation zone radius in metres
   type: 'SSS' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE' | 'CYLINDER';
+  forceGround?: boolean; // hike & fly: pilot must touch down inside the cylinder ([GND] prefix)
   goalLineBearingDeg?: number; // GOAL_LINE only
+}
+
+// Hike-and-fly naming convention: a `[GND]` prefix in a turnpoint name marks
+// it as ground-only (pilot must arrive on foot). Case-insensitive, tolerates
+// leading/trailing whitespace. Marker is preserved in the stored name so it
+// round-trips through the exporter untouched.
+const GND_MARKER = /^\s*\[gnd\]/i;
+
+function detectForceGround(name: string): boolean {
+  return GND_MARKER.test(name);
 }
 
 export interface ParsedTask {
@@ -117,12 +128,14 @@ function parseXctskJson(content: string): ParsedTask {
       else if (idx === lastUntyped && lastUntyped !== firstUntyped) type = 'GOAL_CYLINDER';
     }
 
+    const name = waypoint.name || `TP${idx + 1}`;
     return {
-      name: waypoint.name || `TP${idx + 1}`,
+      name,
       latitude: lat,
       longitude: lon,
       radius_m: typeof radius === 'number' && radius > 0 ? radius : 400,
       type,
+      forceGround: detectForceGround(name),
     };
   });
 
@@ -199,7 +212,14 @@ function parseXctskXml(content: string): ParsedTask {
       type = ozTypeMatch?.toLowerCase() === 'line' ? 'GOAL_LINE' : 'GOAL_CYLINDER';
     }
 
-    turnpoints.push({ name, latitude: lat, longitude: lon, radius_m, type });
+    turnpoints.push({
+      name,
+      latitude: lat,
+      longitude: lon,
+      radius_m,
+      type,
+      forceGround: detectForceGround(name),
+    });
   }
 
   // Fallback: first = SSS, last = GOAL_CYLINDER
@@ -337,7 +357,16 @@ export function parseCupAll(content: string): ParsedTask[] {
     } else {
       if (/^Options,/i.test(line)) continue;
 
-      // ObsZone=N,Style=S,R1=Rm,...
+      // ObsZone=N,Style=S,R1=Rm,[SpeedStyle=X]
+      //
+      // SeeYou CUP Style values we care about:
+      //   2 = "To Start Point"     → the SSS marker
+      //   3 = "To End Point"       → the goal marker
+      //   1 / others               → intermediate cylinder
+      //
+      // SpeedStyle=2 marks the ESS (end of speed section). Earlier code treated
+      // *any* SpeedStyle value as ESS, which false-positives on files that
+      // emit SpeedStyle=1 (default / AAT) on every zone.
       const ozMatch = /^ObsZone=(\d+),(.+)$/i.exec(line);
       if (ozMatch && currentTask) {
         const idx = parseInt(ozMatch[1]);
@@ -348,7 +377,7 @@ export function parseCupAll(content: string): ParsedTask[] {
         currentTask.obszones.set(idx, {
           style: styleMatch ? parseInt(styleMatch[1]) : 1,
           r1: r1Match ? parseInt(r1Match[1]) : 400,
-          isEss: speedMatch !== null,
+          isEss: speedMatch !== null && parseInt(speedMatch[1]) === 2,
         });
         continue;
       }
@@ -392,6 +421,7 @@ export function parseCupAll(content: string): ParsedTask[] {
         longitude: coord?.lon ?? 0,
         radius_m: oz?.r1 ?? 400,
         type,
+        forceGround: detectForceGround(wpName),
       };
     });
 

@@ -39,6 +39,7 @@ interface TaskRow {
   close_date: string;
   scores_frozen_at: string | null;
   task_type: string | null;
+  competition_type: string;
 }
 
 interface TurnpointRow {
@@ -49,6 +50,7 @@ interface TurnpointRow {
   longitude: number;
   radius_m: number;
   type: string;
+  force_ground: number;
   goal_line_bearing_deg: number | null;
 }
 
@@ -97,7 +99,7 @@ export async function handleIgcUpload(
   // ── Resolve task ───────────────────────────────────────────────────────────
   const task = db
     .prepare(
-      `SELECT t.*
+      `SELECT t.*, s.competition_type
      FROM tasks t
      JOIN seasons s ON s.id = t.season_id
      WHERE t.id = ?
@@ -193,7 +195,7 @@ export async function handleIgcUpload(
   // ── Load task turnpoints ───────────────────────────────────────────────────
   const turnpointRows = db
     .prepare(
-      `SELECT id, sequence_index, name, latitude, longitude, radius_m, type, goal_line_bearing_deg
+      `SELECT id, sequence_index, name, latitude, longitude, radius_m, type, force_ground, goal_line_bearing_deg
      FROM turnpoints
      WHERE task_id = ? AND deleted_at IS NULL
      ORDER BY sequence_index ASC`,
@@ -213,6 +215,7 @@ export async function handleIgcUpload(
     lng: tp.longitude,
     radiusM: tp.radius_m,
     type: tp.type as TurnpointDef['type'],
+    forceGround: tp.force_ground === 1,
     goalLineBearingDeg: tp.goal_line_bearing_deg ?? undefined,
   }));
 
@@ -242,7 +245,7 @@ export async function handleIgcUpload(
       closeDate: new Date(task.close_date).getTime(),
     },
     existingGoalTimes: existingGoalTimesS,
-    competitionType: 'XC',
+    competitionType: task.competition_type === 'HIKE_AND_FLY' ? 'HIKE_AND_FLY' : 'XC',
   };
 
   // ── Run pipeline ───────────────────────────────────────────────────────────

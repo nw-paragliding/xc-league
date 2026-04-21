@@ -171,6 +171,80 @@ describe('parseXctsk — JSON format (v1)', () => {
   });
 });
 
+describe('parseXctsk — [GND] naming convention', () => {
+  it('sets forceGround on turnpoints prefixed with [GND]', () => {
+    const task = JSON.stringify({
+      version: 1,
+      taskType: 'CLASSIC',
+      turnpoints: [
+        { waypoint: { name: '[GND] Launch', lat: 47.5, lon: -122.0, altSmoothed: 0 }, radius: 400 },
+        { waypoint: { name: 'Normal TP', lat: 47.55, lon: -122.0, altSmoothed: 0 }, radius: 400 },
+        { waypoint: { name: '[gnd] Lowercase', lat: 47.6, lon: -122.0, altSmoothed: 0 }, radius: 400 },
+        { waypoint: { name: 'Goal', lat: 47.65, lon: -122.0, altSmoothed: 0 }, radius: 400 },
+      ],
+    });
+    const result = parseXctsk(task);
+    expect(result.turnpoints[0].forceGround).toBe(true);
+    expect(result.turnpoints[0].type).toBe('SSS'); // role still assigned
+    expect(result.turnpoints[1].forceGround).toBe(false);
+    expect(result.turnpoints[2].forceGround).toBe(true); // case-insensitive
+    expect(result.turnpoints[3].forceGround).toBe(false);
+  });
+
+  it('keeps the [GND] marker in the display name for round-trip', () => {
+    const task = JSON.stringify({
+      version: 1,
+      taskType: 'CLASSIC',
+      turnpoints: [
+        { waypoint: { name: '[GND] Summit', lat: 47.5, lon: -122.0, altSmoothed: 0 }, radius: 400 },
+        { waypoint: { name: 'Goal', lat: 47.6, lon: -122.0, altSmoothed: 0 }, radius: 400 },
+      ],
+    });
+    expect(parseXctsk(task).turnpoints[0].name).toBe('[GND] Summit');
+  });
+});
+
+describe('parseXctsk XML — [GND] naming convention', () => {
+  it('sets forceGround on turnpoints prefixed with [GND]', () => {
+    const xml = `<?xml version="1.0"?>
+<xctrack>
+  <task type="RACE_TO_GOAL">
+    <turnpoints>
+      <turnpoint><waypoint name="[GND] Ground Start" lat="47.5" lon="-122.0"/><observation-zone type="cylinder" radius="400"/></turnpoint>
+      <turnpoint><waypoint name="Regular TP" lat="47.55" lon="-122.0"/><observation-zone type="cylinder" radius="400"/></turnpoint>
+      <turnpoint><waypoint name="[GND] Goal" lat="47.6" lon="-122.0"/><observation-zone type="cylinder" radius="400"/></turnpoint>
+    </turnpoints>
+    <sss index="0"/>
+    <goal index="2"/>
+  </task>
+</xctrack>`;
+    const result = parseXctsk(xml);
+    expect(result.turnpoints[0].forceGround).toBe(true);
+    expect(result.turnpoints[0].type).toBe('SSS');
+    expect(result.turnpoints[1].forceGround).toBe(false);
+    expect(result.turnpoints[2].forceGround).toBe(true);
+    expect(result.turnpoints[2].type).toBe('GOAL_CYLINDER');
+  });
+});
+
+describe('parseCup — [GND] naming convention', () => {
+  it('sets forceGround on turnpoints prefixed with [GND]', () => {
+    const cup = `name,code,country,lat,lon,elev,style,rwdir,rwlen,freq,desc
+"[GND] Launch","L","US",4730.684N,12159.460W,744m,1,,,,""
+"Regular","R","US",4732.868N,12159.004W,0m,1,,,,""
+"[GND] Summit","S","US",4730.048N,12201.314W,55m,1,,,,""
+-----Related Tasks-----
+"HAF Task","[GND] Launch","Regular","[GND] Summit"
+`;
+    const result = parseCup(cup);
+    expect(result.turnpoints[0].forceGround).toBe(true);
+    expect(result.turnpoints[0].type).toBe('SSS');
+    expect(result.turnpoints[1].forceGround).toBe(false);
+    expect(result.turnpoints[2].forceGround).toBe(true);
+    expect(result.turnpoints[2].type).toBe('GOAL_CYLINDER');
+  });
+});
+
 describe('parseXctsk — XML format (legacy)', () => {
   it('parses 3 turnpoints', () => {
     const result = parseXctsk(XCTSK_XML);

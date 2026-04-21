@@ -96,7 +96,8 @@ export interface TurnpointDef {
   lat: number;
   lng: number;
   radiusM: number;
-  type: 'SSS' | 'CYLINDER' | 'AIR_OR_GROUND' | 'GROUND_ONLY' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE';
+  type: 'SSS' | 'CYLINDER' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE';
+  forceGround?: boolean; // hike & fly: pilot must touch down inside the cylinder
   goalLineBearingDeg?: number; // GOAL_LINE only
 }
 
@@ -390,7 +391,7 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
       }
 
       if (crossed && crossT !== null) {
-        const groundCheckRequired = tp.type === 'GROUND_ONLY' || tp.type === 'AIR_OR_GROUND';
+        const groundCheckRequired = tp.forceGround === true;
         const crossing: CylinderCrossing = {
           turnpointId: tp.id,
           sequenceIndex: tp.sequenceIndex,
@@ -606,36 +607,96 @@ export function geodesicDistanceM(lat1: number, lng1: number, lat2: number, lng2
 // STAGE 4: GROUND STATE CLASSIFICATION (Hike & Fly only)
 // =============================================================================
 
-const GROUND_SPEED_THRESHOLD_KMH = 15;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const GROUND_STATE_WINDOW_S = 30;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const CROSSING_CHECK_WINDOW_S = 60;
+const SUSTAINED_STILLNESS_WINDOW_S = 20;
+const SUSTAINED_STILLNESS_SPEED_KMH = 5;
+const EARTH_RADIUS_M = 6_371_000;
+const DEG_RAD = Math.PI / 180;
 
 export type GroundState = 'GROUND' | 'AIRBORNE' | 'UNKNOWN';
 
+/** Haversine distance from a GPS fix to a turnpoint centre, in metres. */
+function fixDistanceToTpM(fix: Fix, tp: TurnpointDef): number {
+  const dLat = (fix.lat - tp.lat) * DEG_RAD;
+  const dLng = (fix.lng - tp.lng) * DEG_RAD;
+  const a =
+    Math.sin(dLat / 2) ** 2 + Math.cos(tp.lat * DEG_RAD) * Math.cos(fix.lat * DEG_RAD) * Math.sin(dLng / 2) ** 2;
+  return EARTH_RADIUS_M * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
+ * Does the fix sequence contain a continuous run of at least
+ * SUSTAINED_STILLNESS_WINDOW_S seconds where every fix has ground speed
+ * below SUSTAINED_STILLNESS_SPEED_KMH? Expects fixes in ascending time order.
+ */
+function hasSustainedStillness(fixes: Fix[]): boolean {
+  const windowMs = SUSTAINED_STILLNESS_WINDOW_S * 1000;
+  let runStart: number | null = null;
+  for (const f of fixes) {
+    const speed = f.derivedSpeedKmh ?? Number.POSITIVE_INFINITY;
+    if (speed < SUSTAINED_STILLNESS_SPEED_KMH) {
+      if (runStart === null) runStart = f.timestamp;
+      else if (f.timestamp - runStart >= windowMs) return true;
+    } else {
+      runStart = null;
+    }
+  }
+  return false;
+}
+
 /**
  * Stage 4: classifyGroundState
- * XC tracks: pass through unchanged.
+ *
+ * For HAF tasks, some turnpoints are force-ground — the pilot must touch
+ * down somewhere inside the cylinder. Both entry and exit may be airborne
+ * (fly in, land on a hillside, relaunch) as long as the track shows them
+ * on the ground at some point inside.
+ *
+ * To distinguish an actual touch-down from a paraglider hovering in a
+ * steady headwind (low ground speed but still flying), we look for a
+ * *sustained stillness* signature: a continuous 20-second window where
+ * every fix inside the cylinder has ground speed < 5 km/h. GPS-speed
+ * jitter and shifting wind make such a window very hard to fake in the
+ * air, and easy to satisfy on the ground.
+ *
+ * True per-fix AGL would be more rigorous but requires DEM lookup (see
+ * issue backlog); for our league-scale use case stillness is plenty.
+ *
+ * XC tasks pass through unchanged.
  */
 export function classifyGroundState(
   fixes: Fix[],
   attempts: AttemptTrace[],
   competitionType: 'XC' | 'HIKE_AND_FLY',
+  task: TaskDefinition,
 ): AttemptTrace[] {
   if (competitionType === 'XC') return attempts;
-  // Hike & fly: check max speed in a window around each GROUND_ONLY crossing
+  const tpById = new Map(task.turnpoints.map((tp) => [tp.id, tp]));
   return attempts.map((attempt) => ({
     ...attempt,
     turnpointCrossings: attempt.turnpointCrossings.map((crossing) => {
       if (!crossing.groundCheckRequired) return crossing;
-      const windowMs = 60_000;
-      const relevant = fixes.filter((f) => Math.abs(f.timestamp - crossing.crossingTime) <= windowMs / 2);
-      const maxSpeed = relevant.reduce((m, f) => Math.max(m, f.derivedSpeedKmh ?? 0), 0);
+      const tp = tpById.get(crossing.turnpointId);
+      if (!tp) return { ...crossing, groundConfirmed: false };
+
+      // Fixes that are geographically inside the cylinder after the crossing.
+      const insideFixes = fixes.filter(
+        (f) => f.timestamp >= crossing.crossingTime && fixDistanceToTpM(f, tp) <= tp.radiusM,
+      );
+
+      // Slowest observed ground speed — informational, stored on the crossing.
+      const minSpeed = insideFixes.reduce(
+        (m, f) => Math.min(m, f.derivedSpeedKmh ?? Number.POSITIVE_INFINITY),
+        Number.POSITIVE_INFINITY,
+      );
+      const resolvedMin = Number.isFinite(minSpeed) ? minSpeed : null;
+
       return {
         ...crossing,
-        detectedMaxSpeedKmh: maxSpeed,
-        groundConfirmed: maxSpeed < GROUND_SPEED_THRESHOLD_KMH,
+        // Field is named `detectedMaxSpeedKmh` for backward compatibility with
+        // existing DB column `detected_max_speed_kmh`; it now stores the minimum
+        // ground speed observed inside the cylinder. Rename tracked in #26.
+        detectedMaxSpeedKmh: resolvedMin,
+        groundConfirmed: hasSustainedStillness(insideFixes),
       };
     }),
   }));
@@ -659,6 +720,7 @@ export function calculateDistances(attempts: AttemptTrace[], fixes: Fix[], task:
     lng: tp.lng,
     radiusM: tp.radiusM,
     type: tp.type,
+    forceGround: tp.forceGround,
     goalLineBearingDeg: tp.goalLineBearingDeg,
   }));
 
@@ -830,7 +892,7 @@ export async function runPipeline(
   let attempts = detectionResult.value;
 
   // Stage 4: Ground state (hike & fly only — no-op for XC)
-  attempts = classifyGroundState(track.fixes, attempts, input.competitionType);
+  attempts = classifyGroundState(track.fixes, attempts, input.competitionType, input.task);
 
   // Stage 5: Distance calculation
   attempts = calculateDistances(attempts, track.fixes, input.task);

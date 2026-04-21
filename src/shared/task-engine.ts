@@ -10,11 +10,14 @@
 // TYPES
 // =============================================================================
 
+export type CylinderRole = 'SSS' | 'CYLINDER' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE';
+
 export interface Cylinder {
   lat: number;
   lng: number;
   radiusM: number;
-  type: 'SSS' | 'CYLINDER' | 'AIR_OR_GROUND' | 'GROUND_ONLY' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE';
+  type: CylinderRole;
+  forceGround?: boolean; // hike & fly: pilot must arrive on foot (any role)
   goalLineBearingDeg?: number;
 }
 

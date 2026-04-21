@@ -31,3 +31,33 @@ Key rules relevant to this codebase:
 - XCTrack observation zone XML spec: `type="line"` / `type="cylinder"`, `radius` attribute
 - XCTSK v2 JSON format (QR codes): `g: { t: "LINE" }` sets goal type; `o: { r, a1: 180 }`
   per-turnpoint observation zone
+
+## Hike-and-fly turnpoints
+
+HAF seasons (`seasons.competition_type = 'HIKE_AND_FLY'`) support ground-only
+turnpoints — the pilot must **touch down somewhere inside the cylinder**,
+not arrive on foot. A common HAF move is flying in, landing briefly on a
+hillside, and relaunching — both the entry and exit are airborne, but the
+visit is valid because the track shows a moment at ground speed somewhere
+inside. Role (SSS/ESS/goal/intermediate) and ground-ness are orthogonal:
+any role can be ground-only.
+
+- **Naming convention**: prefix the turnpoint name with `[GND]`
+  (case-insensitive, optional leading whitespace). Example: `[GND] Summit`.
+- The prefix is parsed at import time and sets `turnpoints.force_ground = 1`;
+  the marker stays in the stored name so exporters round-trip it transparently.
+- Ground confirmation (pipeline Stage 4, `classifyGroundState`): scan every
+  fix that is *geographically inside* the force-ground cylinder after the
+  crossing. A crossing is `ground_confirmed` when those fixes contain a
+  continuous 20-second window where every fix has ground speed below
+  5 km/h. Speed alone (without a sustained window) is not enough — a
+  glider in a headwind can hit near-zero ground speed briefly without being
+  on the ground. A sustained window of very low speed is very hard to fake
+  in the air because GPS noise and shifting wind push a hovering glider in
+  and out of the threshold; a pilot on the ground stays below it.
+- A true per-fix AGL gate would be more rigorous (need terrain lookup via
+  DEM or elevation API); not worth the ops complexity at our current scale.
+- Failing the check leaves `hasFlaggedCrossings` set on the attempt (shows
+  as `⚑` in the leaderboard).
+- Stage 4 is a no-op for XC seasons, so `[GND]` on an XC task is harmless
+  but also meaningless — the flag is never exercised.
