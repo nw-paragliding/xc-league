@@ -259,9 +259,12 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       }
 
       // Get turnpoints
-      const turnpoints = db
-        .prepare(
-          `SELECT
+      // SQLite stores force_ground as 0/1 INTEGER; coerce to real boolean
+      // so the JSON payload matches the TS `Turnpoint` contract on the client.
+      const turnpoints = (
+        db
+          .prepare(
+            `SELECT
            id,
            sequence_index as sequenceIndex,
            name,
@@ -274,8 +277,9 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
          FROM turnpoints
          WHERE task_id = ?
          ORDER BY sequence_index`,
-        )
-        .all(taskId);
+          )
+          .all(taskId) as Array<{ forceGround: number }>
+      ).map((tp) => ({ ...tp, forceGround: Boolean(tp.forceGround) }));
 
       // Get results (best attempt per pilot)
       const results = db
@@ -1437,13 +1441,15 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         )
         .get(taskId);
 
-      const turnpoints = db
-        .prepare(
-          `SELECT id, name, latitude, longitude, radius_m as radiusM, type,
+      const turnpoints = (
+        db
+          .prepare(
+            `SELECT id, name, latitude, longitude, radius_m as radiusM, type,
                   force_ground as forceGround, sequence_index as sequenceIndex
          FROM turnpoints WHERE task_id = ? AND deleted_at IS NULL ORDER BY sequence_index`,
-        )
-        .all(taskId);
+          )
+          .all(taskId) as Array<{ forceGround: number }>
+      ).map((tp) => ({ ...tp, forceGround: Boolean(tp.forceGround) }));
 
       request.log.info({ leagueId: league.id, seasonId, taskId, format: parsed.format }, 'Task imported from file');
       return reply.status(201).send({ task, turnpoints });

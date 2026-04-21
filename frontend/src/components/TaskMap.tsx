@@ -56,7 +56,7 @@ function tpRole(tp: Turnpoint, cylIndex: number): string {
         : tp.type === 'GOAL_CYLINDER' || tp.type === 'GOAL_LINE'
           ? 'GOAL'
           : `D${cylIndex}`;
-  return tp.forceGround ? `${base}↓` : base;
+  return tp.forceGround === true ? `${base}↓` : base;
 }
 
 function toCylinder(tp: Turnpoint): Cylinder {
