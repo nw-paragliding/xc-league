@@ -102,6 +102,29 @@ describe('parseCupAll', () => {
       // index 1 is Style=1 with no SpeedStyle → plain CYLINDER
       expect(turnpoints[1].type).toBe('CYLINDER');
     });
+
+    it('SpeedStyle=1 (default/AAT) on every zone → CYLINDER, not ESS', () => {
+      // Some CUP exporters emit SpeedStyle=1 on every zone as a default;
+      // only SpeedStyle=2 marks the actual end of speed section.
+      const cup = `name,code,country,lat,lon,elev,style,rwdir,rwlen,rwwidth,freq,desc,userdata,pics
+"Start",S,,4730.000N,12200.000W,100m,1,,,,,,,""
+"Mid1",M1,,4731.000N,12200.000W,100m,1,,,,,,,""
+"Mid2",M2,,4732.000N,12200.000W,100m,1,,,,,,,""
+"Finish",F,,4733.000N,12200.000W,100m,1,,,,,,,""
+-----Related Tasks-----
+"T","???","Start","Mid1","Mid2","Finish","???"
+Options,Short=false,MultiStart=false
+ObsZone=0,Style=2,R1=50m,A1=180,Reduce=1,SpeedStyle=1
+ObsZone=1,Style=1,R1=100m,A1=180,Reduce=1,SpeedStyle=1
+ObsZone=2,Style=1,R1=100m,A1=180,Reduce=1,SpeedStyle=1
+ObsZone=3,Style=3,R1=1000m,A1=180,Reduce=1,SpeedStyle=1
+`;
+      const { turnpoints } = parseCupAll(cup)[0];
+      expect(turnpoints[0].type).toBe('SSS');
+      expect(turnpoints[1].type).toBe('CYLINDER');
+      expect(turnpoints[2].type).toBe('CYLINDER');
+      expect(turnpoints[3].type).toBe('GOAL_CYLINDER');
+    });
   });
 
   describe('ObsZone radii', () => {

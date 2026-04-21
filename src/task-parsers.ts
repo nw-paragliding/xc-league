@@ -350,7 +350,16 @@ export function parseCupAll(content: string): ParsedTask[] {
     } else {
       if (/^Options,/i.test(line)) continue;
 
-      // ObsZone=N,Style=S,R1=Rm,...
+      // ObsZone=N,Style=S,R1=Rm,[SpeedStyle=X]
+      //
+      // SeeYou CUP Style values we care about:
+      //   2 = "To Start Point"     → the SSS marker
+      //   3 = "To End Point"       → the goal marker
+      //   1 / others               → intermediate cylinder
+      //
+      // SpeedStyle=2 marks the ESS (end of speed section). Earlier code treated
+      // *any* SpeedStyle value as ESS, which false-positives on files that
+      // emit SpeedStyle=1 (default / AAT) on every zone.
       const ozMatch = /^ObsZone=(\d+),(.+)$/i.exec(line);
       if (ozMatch && currentTask) {
         const idx = parseInt(ozMatch[1]);
@@ -361,7 +370,7 @@ export function parseCupAll(content: string): ParsedTask[] {
         currentTask.obszones.set(idx, {
           style: styleMatch ? parseInt(styleMatch[1]) : 1,
           r1: r1Match ? parseInt(r1Match[1]) : 400,
-          isEss: speedMatch !== null,
+          isEss: speedMatch !== null && parseInt(speedMatch[1]) === 2,
         });
         continue;
       }

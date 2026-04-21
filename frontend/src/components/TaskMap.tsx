@@ -336,20 +336,18 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     }
 
     // ── 5. Coloured dashed rings ──────────────────────────────────────────────
-    // Ground-only cylinders render in earthy brown with a dotted pattern to
-    // signal that a foot crossing is required; role colour still shows on the
-    // centre dot + role badge.
+    // Role colour shows on the fill (preserves SSS/ESS/Goal at-a-glance); the
+    // stroke switches to earthy brown with a tighter dash for force-ground TPs.
     for (const group of groups) {
       for (const { radiusM, color, forceGround } of mergeCircles(group.entries.filter((e) => !e.isGoalLine))) {
         const { cx, cy, r } = projR(group.lng, group.lat, radiusM);
         if (r < 1) continue;
-        const ringColor = forceGround ? GROUND_COLOR : color;
         mk('circle', {
           cx: cx.toFixed(1),
           cy: cy.toFixed(1),
           r: r.toFixed(1),
-          fill: ringColor + '28',
-          stroke: ringColor,
+          fill: color + '28',
+          stroke: forceGround ? GROUND_COLOR : color,
           'stroke-width': 3,
           'stroke-dasharray': forceGround ? '3 5' : '10 5',
         });
