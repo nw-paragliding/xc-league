@@ -3,13 +3,16 @@
 //
 // URL structure:
 //   /                          → fetches league list, redirects to first league
-//   /leagues/:leagueSlug       → home page (leaderboard + tasks)
+//   /leagues                   → browse all leagues
+//   /leagues/:leagueSlug       → home page for one league (leaderboard + tasks)
 //   /leagues/:leagueSlug/:page → named page within a league
+//   /profile | /super-admin | /create-league | /onboarding → user/platform-scoped pages
+//
+// All routes render inside <AppShell> so the floating menu appears everywhere.
 // =============================================================================
 
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
-import { Navigate, Route, Routes, useParams } from 'react-router-dom';
+import { Navigate, Outlet, Route, Routes, useParams } from 'react-router-dom';
 import { leagueApi } from './api/leagues';
 import UserMenuPopout from './components/UserMenuPopout';
 import { useAuth } from './hooks/useAuth';
@@ -56,44 +59,28 @@ function LeagueLayout() {
 }
 
 function LeagueShell({ leagueSlug }: { leagueSlug: string }) {
-  const { user } = useAuth();
-  const [isLeagueAdmin, setIsLeagueAdmin] = useState(false);
+  return (
+    <Routes>
+      <Route index element={<HomePage />} />
+      <Route path="tasks" element={<HomePage />} />
+      <Route path="season" element={<HomePage />} />
+      <Route path="league-settings" element={<LeagueSettingsPage />} />
+      {/* Catch-all: redirect unknown sub-paths to home */}
+      <Route path="*" element={<Navigate to={`/leagues/${leagueSlug}`} replace />} />
+    </Routes>
+  );
+}
 
-  // Check league admin status
-  useEffect(() => {
-    if (!user) {
-      setIsLeagueAdmin(false);
-      return;
-    }
-    if (user.isAdmin) {
-      setIsLeagueAdmin(true);
-      return;
-    }
+// ─────────────────────────────────────────────────────────────────────────────
+// AppShell — outer frame rendered on every route (floating menu + <main>)
+// ─────────────────────────────────────────────────────────────────────────────
 
-    leagueApi
-      .listMembers(leagueSlug)
-      .then((data) => {
-        const membership = data.members.find((m) => m.userId === user.id);
-        setIsLeagueAdmin(membership?.role === 'admin');
-      })
-      .catch(() => setIsLeagueAdmin(false));
-  }, [user, leagueSlug]);
-
+function AppShell() {
   return (
     <div className="app">
-      {/* Floating user menu — bottom left */}
-      <UserMenuPopout isLeagueAdmin={isLeagueAdmin} />
-
-      {/* Full-width main content */}
+      <UserMenuPopout />
       <main className="main" style={{ padding: 0 }}>
-        <Routes>
-          <Route index element={<HomePage />} />
-          <Route path="tasks" element={<HomePage />} />
-          <Route path="season" element={<HomePage />} />
-          <Route path="league-settings" element={<LeagueSettingsPage />} />
-          {/* Catch-all: redirect unknown sub-paths to home */}
-          <Route path="*" element={<Navigate to={`/leagues/${leagueSlug}`} replace />} />
-        </Routes>
+        <Outlet />
       </main>
     </div>
   );
@@ -106,13 +93,15 @@ function LeagueShell({ leagueSlug }: { leagueSlug: string }) {
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/leagues" replace />} />
-      <Route path="/leagues" element={<LeaguesListPage />} />
-      <Route path="/onboarding" element={<OnboardingPage />} />
-      <Route path="/create-league" element={<CreateLeaguePage />} />
-      <Route path="/profile" element={<ProfilePage />} />
-      <Route path="/super-admin" element={<SuperAdminPage />} />
-      <Route path="/leagues/:leagueSlug/*" element={<LeagueLayout />} />
+      <Route element={<AppShell />}>
+        <Route path="/" element={<Navigate to="/leagues" replace />} />
+        <Route path="/leagues" element={<LeaguesListPage />} />
+        <Route path="/onboarding" element={<OnboardingPage />} />
+        <Route path="/create-league" element={<CreateLeaguePage />} />
+        <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/super-admin" element={<SuperAdminPage />} />
+        <Route path="/leagues/:leagueSlug/*" element={<LeagueLayout />} />
+      </Route>
       <Route path="*" element={<Navigate to="/leagues" replace />} />
     </Routes>
   );

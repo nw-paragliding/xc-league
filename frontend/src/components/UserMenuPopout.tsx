@@ -1,20 +1,33 @@
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { leagueApi } from '../api/leagues';
 import { useAuth } from '../hooks/useAuth';
 import { useLeague } from '../hooks/useLeague';
 import { useTheme } from '../hooks/useTheme';
 
-interface UserMenuPopoutProps {
-  isLeagueAdmin: boolean;
-}
-
-export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
+export default function UserMenuPopout() {
   const { user, isLoading, login, logout } = useAuth();
   const { leagueSlug } = useLeague();
   const { theme, toggle: toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Derive league-admin status from the current URL slug + user membership.
+  // useQuery dedups requests and ignores stale responses so rapid league
+  // navigation can't leave the menu showing the previous league's admin state.
+  const { data: membersData } = useQuery({
+    queryKey: ['members', leagueSlug],
+    queryFn: () => leagueApi.listMembers(leagueSlug),
+    enabled: !!user && !user.isAdmin && !!leagueSlug,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const isLeagueAdmin =
+    !!user &&
+    !!leagueSlug &&
+    (user.isAdmin || membersData?.members.find((m) => m.userId === user.id)?.role === 'admin');
 
   // Close on outside click
   useEffect(() => {
@@ -82,6 +95,16 @@ export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
             padding: '8px 4px',
           }}
         >
+          <button
+            style={menuItemStyle}
+            onClick={() => go('/leagues')}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg3)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+          >
+            <span style={{ fontSize: 14 }}>◎</span>
+            Leagues
+          </button>
+
           {user && (
             <button
               style={menuItemStyle}
@@ -140,34 +163,22 @@ export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
             {theme === 'dark' ? 'Light mode' : 'Dark mode'}
           </button>
 
-          <div style={dividerStyle} />
-
-          {user ? (
-            <button
-              style={{ ...menuItemStyle, color: 'var(--text3)' }}
-              onClick={() => {
-                setOpen(false);
-                logout?.();
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg3)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
-            >
-              <span style={{ fontSize: 14 }}>→</span>
-              Sign out
-            </button>
-          ) : (
-            <button
-              style={menuItemStyle}
-              onClick={() => {
-                setOpen(false);
-                login();
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg3)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
-            >
-              <span style={{ fontSize: 14 }}>→</span>
-              Sign in
-            </button>
+          {user && (
+            <>
+              <div style={dividerStyle} />
+              <button
+                style={{ ...menuItemStyle, color: 'var(--text3)' }}
+                onClick={() => {
+                  setOpen(false);
+                  logout?.();
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg3)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+              >
+                <span style={{ fontSize: 14 }}>→</span>
+                Sign out
+              </button>
+            </>
           )}
         </div>
       )}
