@@ -98,7 +98,6 @@ export interface TurnpointDef {
   radiusM: number;
   type: 'SSS' | 'CYLINDER' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE';
   forceGround?: boolean; // hike & fly: pilot must touch down inside the cylinder
-  elevationM?: number; // ground elevation in metres — used for AGL check during ground confirmation
   goalLineBearingDeg?: number; // GOAL_LINE only
 }
 
@@ -608,8 +607,8 @@ export function geodesicDistanceM(lat1: number, lng1: number, lat2: number, lng2
 // STAGE 4: GROUND STATE CLASSIFICATION (Hike & Fly only)
 // =============================================================================
 
-const GROUND_SPEED_THRESHOLD_KMH = 15;
-const GROUND_AGL_THRESHOLD_M = 50;
+const SUSTAINED_STILLNESS_WINDOW_S = 20;
+const SUSTAINED_STILLNESS_SPEED_KMH = 5;
 const EARTH_RADIUS_M = 6_371_000;
 const DEG_RAD = Math.PI / 180;
 
@@ -625,23 +624,42 @@ function fixDistanceToTpM(fix: Fix, tp: TurnpointDef): number {
 }
 
 /**
+ * Does the fix sequence contain a continuous run of at least
+ * SUSTAINED_STILLNESS_WINDOW_S seconds where every fix has ground speed
+ * below SUSTAINED_STILLNESS_SPEED_KMH? Expects fixes in ascending time order.
+ */
+function hasSustainedStillness(fixes: Fix[]): boolean {
+  const windowMs = SUSTAINED_STILLNESS_WINDOW_S * 1000;
+  let runStart: number | null = null;
+  for (const f of fixes) {
+    const speed = f.derivedSpeedKmh ?? Number.POSITIVE_INFINITY;
+    if (speed < SUSTAINED_STILLNESS_SPEED_KMH) {
+      if (runStart === null) runStart = f.timestamp;
+      else if (f.timestamp - runStart >= windowMs) return true;
+    } else {
+      runStart = null;
+    }
+  }
+  return false;
+}
+
+/**
  * Stage 4: classifyGroundState
  *
  * For HAF tasks, some turnpoints are force-ground — the pilot must touch
- * down somewhere inside the cylinder. A pilot can fly in, land briefly on
- * a hillside, and relaunch; both the entry and exit may be airborne, but
- * the visit still counts if the track shows them on the ground at some
- * point inside.
+ * down somewhere inside the cylinder. Both entry and exit may be airborne
+ * (fly in, land on a hillside, relaunch) as long as the track shows them
+ * on the ground at some point inside.
  *
- * To distinguish an actual touch-down from e.g. a paraglider hovering in a
- * headwind (near-zero ground speed but still flying), we check two
- * conditions *on the same GPS fix*:
- *   1. ground speed < GROUND_SPEED_THRESHOLD_KMH
- *   2. GPS altitude within GROUND_AGL_THRESHOLD_M of the TP's ground elevation
+ * To distinguish an actual touch-down from a paraglider hovering in a
+ * steady headwind (low ground speed but still flying), we look for a
+ * *sustained stillness* signature: a continuous 20-second window where
+ * every fix inside the cylinder has ground speed < 5 km/h. GPS-speed
+ * jitter and shifting wind make such a window very hard to fake in the
+ * air, and easy to satisfy on the ground.
  *
- * The TP's ground elevation comes from the task file (CUP `elev` or XCTSK
- * `altSmoothed`). When that value is missing we fall back to speed-only —
- * still strictly more informative than nothing.
+ * True per-fix AGL would be more rigorous but requires DEM lookup (see
+ * issue backlog); for our league-scale use case stillness is plenty.
  *
  * XC tasks pass through unchanged.
  */
@@ -672,24 +690,13 @@ export function classifyGroundState(
       );
       const resolvedMin = Number.isFinite(minSpeed) ? minSpeed : null;
 
-      // Ground-confirmed when at least one fix inside the cylinder has BOTH
-      // low speed and (when elevation is known) low AGL simultaneously.
-      const hasElevation = typeof tp.elevationM === 'number';
-      const groundConfirmed = insideFixes.some((f) => {
-        const speedOk = (f.derivedSpeedKmh ?? Number.POSITIVE_INFINITY) < GROUND_SPEED_THRESHOLD_KMH;
-        if (!speedOk) return false;
-        if (!hasElevation) return true;
-        const agl = f.gpsAlt - (tp.elevationM as number);
-        return agl < GROUND_AGL_THRESHOLD_M;
-      });
-
       return {
         ...crossing,
         // Field is named `detectedMaxSpeedKmh` for backward compatibility with
         // existing DB column `detected_max_speed_kmh`; it now stores the minimum
         // ground speed observed inside the cylinder. Rename tracked in #26.
         detectedMaxSpeedKmh: resolvedMin,
-        groundConfirmed,
+        groundConfirmed: hasSustainedStillness(insideFixes),
       };
     }),
   }));

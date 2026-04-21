@@ -227,34 +227,6 @@ describe('parseXctsk XML — [GND] naming convention', () => {
   });
 });
 
-describe('elevation extraction', () => {
-  it('XCTSK JSON: uses waypoint.altSmoothed', () => {
-    const task = JSON.stringify({
-      version: 1,
-      turnpoints: [
-        { waypoint: { name: 'A', lat: 47.5, lon: -122, altSmoothed: 744 }, radius: 400 },
-        { waypoint: { name: 'B', lat: 47.6, lon: -122, altSmoothed: -99999999 }, radius: 400 },
-      ],
-    });
-    const result = parseXctsk(task);
-    expect(result.turnpoints[0].elevation_m).toBe(744);
-    // XCTrack sentinel → treated as unknown
-    expect(result.turnpoints[1].elevation_m).toBeUndefined();
-  });
-
-  it('CUP: parses elev field with "m" suffix', () => {
-    const cup = `name,code,country,lat,lon,elev,style,rwdir,rwlen,rwwidth,freq,desc,userdata,pics
-"Peak","P",,4730.000N,12200.000W,1234.5m,1,,,,,,,""
-"NoElev","N",,4731.000N,12200.000W,,1,,,,,,,""
------Related Tasks-----
-"T","???","Peak","NoElev"
-`;
-    const result = parseCup(cup);
-    expect(result.turnpoints[0].elevation_m).toBe(1234.5);
-    expect(result.turnpoints[1].elevation_m).toBeUndefined();
-  });
-});
-
 describe('parseCup — [GND] naming convention', () => {
   it('sets forceGround on turnpoints prefixed with [GND]', () => {
     const cup = `name,code,country,lat,lon,elev,style,rwdir,rwlen,freq,desc

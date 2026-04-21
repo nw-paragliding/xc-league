@@ -48,12 +48,15 @@ any role can be ground-only.
   the marker stays in the stored name so exporters round-trip it transparently.
 - Ground confirmation (pipeline Stage 4, `classifyGroundState`): scan every
   fix that is *geographically inside* the force-ground cylinder after the
-  crossing. A crossing is `ground_confirmed` when some fix has both
-  (a) ground speed below 15 km/h and (b) GPS altitude within 50 m of the
-  TP's ground elevation (from the CUP `elev` / XCTSK `altSmoothed` field).
-  Speed alone is insufficient: a glider in a headwind can hover at near-zero
-  ground speed without being on the ground. When the TP has no known
-  elevation the check falls back to speed-only.
+  crossing. A crossing is `ground_confirmed` when those fixes contain a
+  continuous 20-second window where every fix has ground speed below
+  5 km/h. Speed alone (without a sustained window) is not enough — a
+  glider in a headwind can hit near-zero ground speed briefly without being
+  on the ground. A sustained window of very low speed is very hard to fake
+  in the air because GPS noise and shifting wind push a hovering glider in
+  and out of the threshold; a pilot on the ground stays below it.
+- A true per-fix AGL gate would be more rigorous (need terrain lookup via
+  DEM or elevation API); not worth the ops complexity at our current scale.
 - Failing the check leaves `hasFlaggedCrossings` set on the attempt (shows
   as `⚑` in the leaderboard).
 - Stage 4 is a no-op for XC seasons, so `[GND]` on an XC task is harmless
