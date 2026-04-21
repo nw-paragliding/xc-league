@@ -12,7 +12,7 @@
 // =============================================================================
 
 import { useQuery } from '@tanstack/react-query';
-import { Navigate, Outlet, Route, Routes, useParams } from 'react-router-dom';
+import { Navigate, Outlet, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { leagueApi } from './api/leagues';
 import UserMenuPopout from './components/UserMenuPopout';
 import { useAuth } from './hooks/useAuth';
@@ -33,9 +33,10 @@ function LeagueLayout() {
   const { leagueSlug } = useParams<{ leagueSlug: string }>();
   const slug = leagueSlug ?? '';
   const { user, isFetched } = useAuth();
+  const location = useLocation();
 
   // Fetch seasons to get the active season ID
-  const { data: seasonsData } = useQuery({
+  const { data: seasonsData, isPending: seasonsPending } = useQuery({
     queryKey: ['seasons', slug],
     queryFn: () => leagueApi.listSeasons(slug),
     enabled: !!slug,
@@ -47,14 +48,57 @@ function LeagueLayout() {
     return <Navigate to="/onboarding" replace />;
   }
 
+  if (seasonsPending) {
+    return <LeagueLoadingState />;
+  }
+
   const seasons = seasonsData?.seasons ?? [];
   const activeSeason = seasons.find((s) => s.status === 'open') ?? seasons[0];
-  const seasonId = activeSeason?.id ?? '';
+
+  // League Settings manages seasons, so an admin must be able to reach it even
+  // when none exist yet — otherwise the "create one from League Settings"
+  // empty-state advice leads to a dead end.
+  const isSettingsRoute = location.pathname.endsWith('/league-settings');
+  if (!activeSeason && !isSettingsRoute) {
+    return <LeagueNoSeasonsState />;
+  }
 
   return (
-    <LeagueProvider leagueSlug={slug} seasonId={seasonId}>
+    <LeagueProvider leagueSlug={slug} seasonId={activeSeason?.id ?? ''}>
       <LeagueShell leagueSlug={slug} />
     </LeagueProvider>
+  );
+}
+
+function LeagueLoadingState() {
+  return (
+    <div style={{ padding: '2rem', maxWidth: 320 }}>
+      <div className="shimmer" style={{ height: 28, borderRadius: 6, marginBottom: 12 }} />
+      <div className="shimmer" style={{ height: 16, borderRadius: 4, width: '60%' }} />
+    </div>
+  );
+}
+
+function LeagueNoSeasonsState() {
+  return (
+    <div style={{ padding: '2rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div
+        style={{
+          maxWidth: 420,
+          padding: '2rem',
+          textAlign: 'center',
+          border: '1px dashed var(--border)',
+          borderRadius: 8,
+          color: 'var(--text2)',
+        }}
+      >
+        <div style={{ fontSize: 32, marginBottom: 12 }}>🪂</div>
+        <div style={{ fontWeight: 500, marginBottom: 8, color: 'var(--text)' }}>No seasons yet</div>
+        <div style={{ fontSize: 14, lineHeight: 1.5 }}>
+          This league hasn't opened a season yet. An admin can create one from League Settings.
+        </div>
+      </div>
+    </div>
   );
 }
 
