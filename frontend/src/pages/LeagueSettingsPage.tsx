@@ -25,6 +25,7 @@ import LeagueSwitcher from '../components/LeagueSwitcher';
 import TaskExportModal from '../components/TaskExportModal';
 import TaskImportModal from '../components/TaskImportModal';
 import { useLeague } from '../hooks/useLeague';
+import { formatCalendarDate, getCalendarYear } from '../utils/dates';
 import { markdownRemarkPlugins, markdownSanitizeSchema } from '../utils/markdown';
 
 type Tab = 'settings' | 'seasons' | 'tasks' | 'members';
@@ -585,7 +586,7 @@ function SeasonsTab() {
                   {season.competitionType === 'XC' ? 'Cross Country' : 'Hike & Fly'}
                 </div>
                 <div style={{ fontSize: '0.875rem', color: 'var(--text2)' }}>
-                  {new Date(season.startDate).toLocaleDateString()} – {new Date(season.endDate).toLocaleDateString()}
+                  {formatCalendarDate(season.startDate)} – {formatCalendarDate(season.endDate)}
                 </div>
                 {season.taskCount !== undefined && (
                   <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginTop: '0.25rem' }}>
@@ -891,7 +892,7 @@ function TasksTab() {
             <option value="">-- Select a season --</option>
             {seasons.map((season) => (
               <option key={season.id} value={season.id}>
-                {season.name} ({new Date(season.startDate).getFullYear()})
+                {season.name} ({getCalendarYear(season.startDate) ?? '—'})
               </option>
             ))}
           </select>
