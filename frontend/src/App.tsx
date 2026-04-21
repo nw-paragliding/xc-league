@@ -9,7 +9,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { leagueApi } from './api/leagues';
 import UserMenuPopout from './components/UserMenuPopout';
 import { useAuth } from './hooks/useAuth';
@@ -35,7 +35,7 @@ function LeagueLayout() {
   const { data: seasonsData } = useQuery({
     queryKey: ['seasons', slug],
     queryFn: () => leagueApi.listSeasons(slug),
-    enabled: !!slug && slug !== '_',
+    enabled: !!slug,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -46,7 +46,7 @@ function LeagueLayout() {
 
   const seasons = seasonsData?.seasons ?? [];
   const activeSeason = seasons.find((s) => s.status === 'open') ?? seasons[0];
-  const seasonId = activeSeason?.id ?? 'season-1';
+  const seasonId = activeSeason?.id ?? '';
 
   return (
     <LeagueProvider leagueSlug={slug} seasonId={seasonId}>
@@ -57,7 +57,6 @@ function LeagueLayout() {
 
 function LeagueShell({ leagueSlug }: { leagueSlug: string }) {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const [isLeagueAdmin, setIsLeagueAdmin] = useState(false);
 
   // Check league admin status
@@ -91,12 +90,6 @@ function LeagueShell({ leagueSlug }: { leagueSlug: string }) {
           <Route index element={<HomePage />} />
           <Route path="tasks" element={<HomePage />} />
           <Route path="season" element={<HomePage />} />
-          <Route path="profile" element={<ProfilePage />} />
-          <Route path="super-admin" element={<SuperAdminPage />} />
-          <Route
-            path="create-league"
-            element={<CreateLeaguePage onSuccess={() => navigate(`/leagues/${leagueSlug}`)} />}
-          />
           <Route path="league-settings" element={<LeagueSettingsPage />} />
           {/* Catch-all: redirect unknown sub-paths to home */}
           <Route path="*" element={<Navigate to={`/leagues/${leagueSlug}`} replace />} />
@@ -116,6 +109,9 @@ export default function App() {
       <Route path="/" element={<Navigate to="/leagues" replace />} />
       <Route path="/leagues" element={<LeaguesListPage />} />
       <Route path="/onboarding" element={<OnboardingPage />} />
+      <Route path="/create-league" element={<CreateLeaguePage />} />
+      <Route path="/profile" element={<ProfilePage />} />
+      <Route path="/super-admin" element={<SuperAdminPage />} />
       <Route path="/leagues/:leagueSlug/*" element={<LeagueLayout />} />
       <Route path="*" element={<Navigate to="/leagues" replace />} />
     </Routes>

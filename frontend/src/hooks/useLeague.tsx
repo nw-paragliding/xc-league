@@ -1,9 +1,11 @@
 /**
  * League context.
  *
- * Reads leagueSlug from the URL via React Router's useParams().
- * Falls back to the context value (set by LeagueProvider) when no URL
- * param is available (e.g. during tests or non-routed renders).
+ * Reads leagueSlug from the URL via React Router's useParams(); falls back to
+ * the context value set by LeagueProvider when no URL param is available.
+ * Both fall back to empty strings when neither is present — callers that
+ * construct URLs from these values should either be inside a LeagueProvider
+ * or check for emptiness.
  *
  * URL structure: /leagues/:leagueSlug/...
  */
@@ -16,8 +18,8 @@ interface LeagueContextValue {
 }
 
 const LeagueContext = createContext<LeagueContextValue>({
-  leagueSlug: 'alps-xc-2025',
-  seasonId: 'season-1',
+  leagueSlug: '',
+  seasonId: '',
 });
 
 export function LeagueProvider({ leagueSlug, seasonId, children }: LeagueContextValue & { children: ReactNode }) {

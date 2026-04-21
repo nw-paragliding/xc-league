@@ -85,7 +85,7 @@ export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
           {user && (
             <button
               style={menuItemStyle}
-              onClick={() => go(`/leagues/${leagueSlug}/profile`)}
+              onClick={() => go('/profile')}
               onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg3)')}
               onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
             >
@@ -109,7 +109,7 @@ export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
           {user?.isAdmin && (
             <button
               style={menuItemStyle}
-              onClick={() => go(`/leagues/${leagueSlug}/super-admin`)}
+              onClick={() => go('/super-admin')}
               onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg3)')}
               onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
             >
@@ -121,7 +121,7 @@ export default function UserMenuPopout({ isLeagueAdmin }: UserMenuPopoutProps) {
           {user && (
             <button
               style={menuItemStyle}
-              onClick={() => go(`/leagues/${leagueSlug}/create-league`)}
+              onClick={() => go('/create-league')}
               onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg3)')}
               onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
             >

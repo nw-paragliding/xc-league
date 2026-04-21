@@ -1,10 +1,7 @@
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { leagueApi } from '../api/leagues';
-
-interface CreateLeaguePageProps {
-  onSuccess?: () => void;
-}
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
@@ -22,7 +19,8 @@ const labelStyle: React.CSSProperties = {
   fontWeight: 500,
 };
 
-export default function CreateLeaguePage({ onSuccess }: CreateLeaguePageProps) {
+export default function CreateLeaguePage() {
+  const navigate = useNavigate();
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [shortDescription, setShortDescription] = useState('');
@@ -33,14 +31,7 @@ export default function CreateLeaguePage({ onSuccess }: CreateLeaguePageProps) {
   const createMutation = useMutation({
     mutationFn: leagueApi.create,
     onSuccess: (data) => {
-      setName('');
-      setSlug('');
-      setShortDescription('');
-      setFullDescription('');
-      setLogoUrl('');
-      setError('');
-      alert(`League "${data.league.name}" created successfully!`);
-      if (onSuccess) onSuccess();
+      navigate(`/leagues/${data.league.slug}`, { replace: true });
     },
     onError: (err: any) => {
       setError(err.message || 'Failed to create league');
