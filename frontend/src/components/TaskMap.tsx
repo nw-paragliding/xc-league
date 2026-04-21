@@ -9,10 +9,37 @@ import type { ReplayFix } from '../api/track';
 // Constants & helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ESRI_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-const ESRI_LABELS =
-  'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
-const TOPO_TILES = 'https://tile.opentopomap.org/{z}/{x}/{y}.png';
+const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY ?? '';
+const OPENAIP_KEY = import.meta.env.VITE_OPENAIP_KEY ?? '';
+
+const STYLES: Record<string, string> = {
+  outdoor: `https://api.maptiler.com/maps/outdoor-v2/style.json?key=${MAPTILER_KEY}`,
+  satellite: `https://api.maptiler.com/maps/hybrid/style.json?key=${MAPTILER_KEY}`,
+};
+
+const FALLBACK_STYLE: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {
+    osm: { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, maxzoom: 19 },
+  },
+  layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
+};
+
+const OPENAIP_SOURCE = {
+  type: 'raster' as const,
+  tiles: [`https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey=${OPENAIP_KEY}`],
+  tileSize: 256,
+  maxzoom: 14,
+};
+
+function hideIrrelevantLayers(map: maplibregl.Map) {
+  for (const layer of map.getStyle().layers ?? []) {
+    const sourceLayer = 'source-layer' in layer ? layer['source-layer'] : undefined;
+    if (sourceLayer === 'trail') {
+      map.setLayoutProperty(layer.id, 'visibility', 'none');
+    }
+  }
+}
 
 function tpColor(type: string) {
   if (type === 'SSS') return '#4a9eff';
@@ -90,19 +117,9 @@ function optimisedRouteResult(tps: Turnpoint[]) {
   }
 }
 
-const BASE_STYLE = {
-  version: 8 as const,
-  sources: {
-    satellite: { type: 'raster' as const, tiles: [ESRI_TILES], tileSize: 256, maxzoom: 19 },
-    labels: { type: 'raster' as const, tiles: [ESRI_LABELS], tileSize: 256, maxzoom: 19 },
-    terrain: { type: 'raster' as const, tiles: [TOPO_TILES], tileSize: 256, maxzoom: 17 },
-  },
-  layers: [
-    { id: 'satellite-layer', type: 'raster' as const, source: 'satellite' },
-    { id: 'labels-layer', type: 'raster' as const, source: 'labels' },
-    { id: 'terrain-layer', type: 'raster' as const, source: 'terrain', layout: { visibility: 'none' as const } },
-  ],
-};
+function getInitialStyle(): string | maplibregl.StyleSpecification {
+  return MAPTILER_KEY ? STYLES.outdoor : FALLBACK_STYLE;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TaskMap
@@ -122,7 +139,8 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
   const [legendOpen, setLegendOpen] = useState<string | null>(null);
   const tpsRef = useRef<Turnpoint[]>(turnpoints);
   const trackRef = useRef<ReplayFix[] | null | undefined>(track);
-  const [basemap, setBasemap] = useState<'satellite' | 'terrain'>('satellite');
+  const [basemap, setBasemap] = useState<'outdoor' | 'satellite'>('outdoor');
+  const [airspace, setAirspace] = useState(false);
   const [mapReady, setMapReady] = useState(false);
 
   tpsRef.current = turnpoints;
@@ -335,14 +353,17 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     if (!containerRef.current || mapRef.current) return;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: BASE_STYLE as maplibregl.StyleSpecification,
+      style: getInitialStyle() as maplibregl.StyleSpecification,
       center: [-121.976, 47.504],
       zoom: 10,
       attributionControl: { compact: true },
     });
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
-    map.on('load', () => setMapReady(true));
+    map.on('load', () => {
+      hideIrrelevantLayers(map);
+      setMapReady(true);
+    });
     map.on('move', drawSvg);
     map.on('zoom', drawSvg);
     map.on('resize', drawSvg);
@@ -355,13 +376,48 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     };
   }, [drawSvg]);
 
+  // Switch basemap style (MapTiler outdoor ↔ satellite hybrid)
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady) return;
-    map.setLayoutProperty('satellite-layer', 'visibility', basemap === 'satellite' ? 'visible' : 'none');
-    map.setLayoutProperty('labels-layer', 'visibility', basemap === 'satellite' ? 'visible' : 'none');
-    map.setLayoutProperty('terrain-layer', 'visibility', basemap === 'terrain' ? 'visible' : 'none');
-  }, [basemap, mapReady]);
+    if (!map || !mapReady || !MAPTILER_KEY) return;
+    const styleUrl = STYLES[basemap];
+    if (!styleUrl) return;
+
+    const center = map.getCenter();
+    const zoom = map.getZoom();
+    map.once('style.load', () => {
+      hideIrrelevantLayers(map);
+      if (airspace && OPENAIP_KEY && !map.getSource('openaip')) {
+        map.addSource('openaip', OPENAIP_SOURCE);
+        map.addLayer({ id: 'openaip-layer', type: 'raster', source: 'openaip', paint: { 'raster-opacity': 0.6 } });
+      }
+      drawSvg();
+    });
+    map.setStyle(styleUrl);
+    map.setCenter(center);
+    map.setZoom(zoom);
+  }, [basemap, mapReady, drawSvg]);
+
+  // Toggle OpenAIP airspace overlay
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !OPENAIP_KEY) return;
+
+    const apply = () => {
+      if (airspace) {
+        if (!map.getSource('openaip')) {
+          map.addSource('openaip', OPENAIP_SOURCE);
+          map.addLayer({ id: 'openaip-layer', type: 'raster', source: 'openaip', paint: { 'raster-opacity': 0.6 } });
+        }
+      } else {
+        if (map.getLayer('openaip-layer')) map.removeLayer('openaip-layer');
+        if (map.getSource('openaip')) map.removeSource('openaip');
+      }
+    };
+
+    if (map.isStyleLoaded()) apply();
+    else map.once('style.load', apply);
+  }, [airspace, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -444,28 +500,52 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
       />
 
-      {/* Basemap toggle */}
+      {/* Basemap + airspace toggle */}
       <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 4, zIndex: 10 }}>
-        {(['satellite', 'terrain'] as const).map((b) => (
+        {(
+          [
+            ['outdoor', 'Terrain'],
+            ['satellite', 'Satellite'],
+          ] as const
+        ).map(([id, label]) => (
           <button
-            key={b}
-            onClick={() => setBasemap(b)}
+            key={id}
+            onClick={() => setBasemap(id)}
             style={{
               padding: '5px 10px',
               fontSize: 11,
               fontFamily: '"DM Mono", monospace',
               fontWeight: 700,
-              border: `1px solid ${basemap === b ? 'rgba(232,168,66,0.6)' : 'rgba(255,255,255,0.2)'}`,
+              border: `1px solid ${basemap === id ? 'rgba(232,168,66,0.6)' : 'rgba(255,255,255,0.2)'}`,
               borderRadius: 4,
-              background: basemap === b ? 'rgba(232,168,66,0.2)' : 'rgba(0,0,0,0.45)',
-              color: basemap === b ? '#e8a842' : 'rgba(255,255,255,0.75)',
+              background: basemap === id ? 'rgba(232,168,66,0.2)' : 'rgba(0,0,0,0.45)',
+              color: basemap === id ? '#e8a842' : 'rgba(255,255,255,0.75)',
               cursor: 'pointer',
               backdropFilter: 'blur(6px)',
             }}
           >
-            {b === 'satellite' ? '🛰 Satellite' : '🗺 Terrain'}
+            {label}
           </button>
         ))}
+        {OPENAIP_KEY && (
+          <button
+            onClick={() => setAirspace((a) => !a)}
+            style={{
+              padding: '5px 10px',
+              fontSize: 11,
+              fontFamily: '"DM Mono", monospace',
+              fontWeight: 700,
+              border: `1px solid ${airspace ? 'rgba(59,130,246,0.6)' : 'rgba(255,255,255,0.2)'}`,
+              borderRadius: 4,
+              background: airspace ? 'rgba(59,130,246,0.2)' : 'rgba(0,0,0,0.45)',
+              color: airspace ? '#3b82f6' : 'rgba(255,255,255,0.75)',
+              cursor: 'pointer',
+              backdropFilter: 'blur(6px)',
+            }}
+          >
+            Airspace
+          </button>
+        )}
       </div>
 
       {/* Legend */}
