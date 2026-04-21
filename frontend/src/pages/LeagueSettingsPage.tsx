@@ -25,6 +25,7 @@ import LeagueSwitcher from '../components/LeagueSwitcher';
 import TaskExportModal from '../components/TaskExportModal';
 import TaskImportModal from '../components/TaskImportModal';
 import { useLeague } from '../hooks/useLeague';
+import { markdownRemarkPlugins, markdownSanitizeSchema } from '../utils/markdown';
 
 type Tab = 'settings' | 'seasons' | 'tasks' | 'members';
 
@@ -145,7 +146,12 @@ function SettingsTab() {
                   Full Description
                 </div>
                 <div style={{ fontSize: '0.875rem', color: 'var(--text1)', lineHeight: 1.6 }} className="prose">
-                  <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{leagueData.league.fullDescription}</ReactMarkdown>
+                  <ReactMarkdown
+                    remarkPlugins={markdownRemarkPlugins}
+                    rehypePlugins={[[rehypeSanitize, markdownSanitizeSchema]]}
+                  >
+                    {leagueData.league.fullDescription}
+                  </ReactMarkdown>
                 </div>
               </div>
             )}

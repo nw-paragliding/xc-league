@@ -22,6 +22,7 @@ import UploadZone from '../components/UploadZone';
 import { useAuth } from '../hooks/useAuth';
 import { useLeague } from '../hooks/useLeague';
 import { useSeasons } from '../hooks/useStandings';
+import { markdownRemarkPlugins, markdownSanitizeSchema } from '../utils/markdown';
 import { getTaskStatus, STATUS_STYLE } from '../utils/taskStatus';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -316,7 +317,12 @@ export default function HomePage() {
               color: 'var(--text2)',
             }}
           >
-            <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{leagueData.league.fullDescription}</ReactMarkdown>
+            <ReactMarkdown
+              remarkPlugins={markdownRemarkPlugins}
+              rehypePlugins={[[rehypeSanitize, markdownSanitizeSchema]]}
+            >
+              {leagueData.league.fullDescription}
+            </ReactMarkdown>
           </div>
         )}
         <div
