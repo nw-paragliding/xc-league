@@ -97,7 +97,8 @@ export interface TurnpointDef {
   lng: number;
   radiusM: number;
   type: 'SSS' | 'CYLINDER' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE';
-  forceGround?: boolean; // hike & fly: pilot must arrive on foot (any role)
+  forceGround?: boolean; // hike & fly: pilot must touch down inside the cylinder
+  elevationM?: number; // ground elevation in metres — used for AGL check during ground confirmation
   goalLineBearingDeg?: number; // GOAL_LINE only
 }
 
@@ -608,6 +609,7 @@ export function geodesicDistanceM(lat1: number, lng1: number, lat2: number, lng2
 // =============================================================================
 
 const GROUND_SPEED_THRESHOLD_KMH = 15;
+const GROUND_AGL_THRESHOLD_M = 50;
 const EARTH_RADIUS_M = 6_371_000;
 const DEG_RAD = Math.PI / 180;
 
@@ -626,14 +628,20 @@ function fixDistanceToTpM(fix: Fix, tp: TurnpointDef): number {
  * Stage 4: classifyGroundState
  *
  * For HAF tasks, some turnpoints are force-ground — the pilot must touch
- * down while inside the cylinder. Crucially, a pilot can fly in, land on
- * (say) a hillside for a moment, and relaunch; both the entry and the exit
- * may be airborne, but the visit still counts if the track shows low speed
- * anywhere inside the cylinder.
+ * down somewhere inside the cylinder. A pilot can fly in, land briefly on
+ * a hillside, and relaunch; both the entry and exit may be airborne, but
+ * the visit still counts if the track shows them on the ground at some
+ * point inside.
  *
- * So we scan the *minimum* ground speed of every fix that is geographically
- * inside the force-ground cylinder after the crossing. If any sample drops
- * below GROUND_SPEED_THRESHOLD_KMH, we treat the crossing as ground-confirmed.
+ * To distinguish an actual touch-down from e.g. a paraglider hovering in a
+ * headwind (near-zero ground speed but still flying), we check two
+ * conditions *on the same GPS fix*:
+ *   1. ground speed < GROUND_SPEED_THRESHOLD_KMH
+ *   2. GPS altitude within GROUND_AGL_THRESHOLD_M of the TP's ground elevation
+ *
+ * The TP's ground elevation comes from the task file (CUP `elev` or XCTSK
+ * `altSmoothed`). When that value is missing we fall back to speed-only —
+ * still strictly more informative than nothing.
  *
  * XC tasks pass through unchanged.
  */
@@ -652,22 +660,36 @@ export function classifyGroundState(
       const tp = tpById.get(crossing.turnpointId);
       if (!tp) return { ...crossing, groundConfirmed: false };
 
+      // Fixes that are geographically inside the cylinder after the crossing.
       const insideFixes = fixes.filter(
         (f) => f.timestamp >= crossing.crossingTime && fixDistanceToTpM(f, tp) <= tp.radiusM,
       );
+
+      // Slowest observed ground speed — informational, stored on the crossing.
       const minSpeed = insideFixes.reduce(
         (m, f) => Math.min(m, f.derivedSpeedKmh ?? Number.POSITIVE_INFINITY),
         Number.POSITIVE_INFINITY,
       );
       const resolvedMin = Number.isFinite(minSpeed) ? minSpeed : null;
+
+      // Ground-confirmed when at least one fix inside the cylinder has BOTH
+      // low speed and (when elevation is known) low AGL simultaneously.
+      const hasElevation = typeof tp.elevationM === 'number';
+      const groundConfirmed = insideFixes.some((f) => {
+        const speedOk = (f.derivedSpeedKmh ?? Number.POSITIVE_INFINITY) < GROUND_SPEED_THRESHOLD_KMH;
+        if (!speedOk) return false;
+        if (!hasElevation) return true;
+        const agl = f.gpsAlt - (tp.elevationM as number);
+        return agl < GROUND_AGL_THRESHOLD_M;
+      });
+
       return {
         ...crossing,
         // Field is named `detectedMaxSpeedKmh` for backward compatibility with
         // existing DB column `detected_max_speed_kmh`; it now stores the minimum
-        // ground speed observed inside the cylinder (the slowest moment — the
-        // candidate touch-down). Rename is tracked as a follow-up.
+        // ground speed observed inside the cylinder. Rename tracked in #26.
         detectedMaxSpeedKmh: resolvedMin,
-        groundConfirmed: resolvedMin !== null && resolvedMin < GROUND_SPEED_THRESHOLD_KMH,
+        groundConfirmed,
       };
     }),
   }));

@@ -1386,9 +1386,9 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
           db.prepare(
             `INSERT INTO turnpoints (
               id, task_id, sequence_index,
-              name, latitude, longitude, radius_m, type, force_ground, goal_line_bearing_deg,
+              name, latitude, longitude, radius_m, type, force_ground, elevation_m, goal_line_bearing_deg,
               created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
           ).run(
             tpId,
             taskId,
@@ -1399,6 +1399,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
             tp.radius_m,
             tp.type,
             tp.forceGround ? 1 : 0,
+            tp.elevation_m ?? null,
             bearing,
           );
 
@@ -1581,9 +1582,9 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
             db.prepare(
               `INSERT INTO turnpoints (
                 id, task_id, sequence_index,
-                name, latitude, longitude, radius_m, type, force_ground, goal_line_bearing_deg,
+                name, latitude, longitude, radius_m, type, force_ground, elevation_m, goal_line_bearing_deg,
                 created_at, updated_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
             ).run(
               tpId,
               taskId,
@@ -1594,6 +1595,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
               tp.radius_m,
               tp.type,
               tp.forceGround ? 1 : 0,
+              tp.elevation_m ?? null,
               bearing,
             );
 

@@ -48,8 +48,13 @@ any role can be ground-only.
   the marker stays in the stored name so exporters round-trip it transparently.
 - Ground confirmation (pipeline Stage 4, `classifyGroundState`): scan every
   fix that is *geographically inside* the force-ground cylinder after the
-  crossing. If the minimum ground speed across those fixes is below 15 km/h,
-  the crossing is `ground_confirmed`. Otherwise the attempt's
-  `hasFlaggedCrossings` gets set (shows as `⚑` in the leaderboard).
+  crossing. A crossing is `ground_confirmed` when some fix has both
+  (a) ground speed below 15 km/h and (b) GPS altitude within 50 m of the
+  TP's ground elevation (from the CUP `elev` / XCTSK `altSmoothed` field).
+  Speed alone is insufficient: a glider in a headwind can hover at near-zero
+  ground speed without being on the ground. When the TP has no known
+  elevation the check falls back to speed-only.
+- Failing the check leaves `hasFlaggedCrossings` set on the attempt (shows
+  as `⚑` in the leaderboard).
 - Stage 4 is a no-op for XC seasons, so `[GND]` on an XC task is harmless
   but also meaningless — the flag is never exercised.

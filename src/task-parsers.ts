@@ -15,7 +15,8 @@ export interface ParsedTurnpoint {
   longitude: number; // WGS84 decimal degrees
   radius_m: number; // cylinder / observation zone radius in metres
   type: 'SSS' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE' | 'CYLINDER';
-  forceGround?: boolean; // hike & fly: pilot must arrive on foot (name prefixed with [GND])
+  forceGround?: boolean; // hike & fly: pilot must touch down inside the cylinder ([GND] prefix)
+  elevation_m?: number; // ground elevation in metres when known (CUP `elev` / XCTSK `altSmoothed`)
   goalLineBearingDeg?: number; // GOAL_LINE only
 }
 
@@ -129,6 +130,9 @@ function parseXctskJson(content: string): ParsedTask {
     }
 
     const name = waypoint.name || `TP${idx + 1}`;
+    // XCTrack uses altSmoothed = -99999999 as a "missing" sentinel; drop it.
+    const alt = waypoint.altSmoothed;
+    const elevation_m = typeof alt === 'number' && alt > -10_000 ? alt : undefined;
     return {
       name,
       latitude: lat,
@@ -136,6 +140,7 @@ function parseXctskJson(content: string): ParsedTask {
       radius_m: typeof radius === 'number' && radius > 0 ? radius : 400,
       type,
       forceGround: detectForceGround(name),
+      elevation_m,
     };
   });
 
@@ -197,6 +202,10 @@ function parseXctskXml(content: string): ParsedTask {
     if (Math.abs(lat) > 180) lat /= 1e7;
     if (Math.abs(lon) > 360) lon /= 1e7;
 
+    const altRaw = attr(wpTag, 'altSmoothed') ?? attr(wpTag, 'alt');
+    const altParsed = altRaw != null ? parseFloat(altRaw) : NaN;
+    const elevation_m = !Number.isNaN(altParsed) && altParsed > -10_000 ? altParsed : undefined;
+
     const ozMatch = ozRe.exec(block);
     let radius_m = 400;
     if (ozMatch) {
@@ -212,7 +221,15 @@ function parseXctskXml(content: string): ParsedTask {
       type = ozTypeMatch?.toLowerCase() === 'line' ? 'GOAL_LINE' : 'GOAL_CYLINDER';
     }
 
-    turnpoints.push({ name, latitude: lat, longitude: lon, radius_m, type, forceGround: detectForceGround(name) });
+    turnpoints.push({
+      name,
+      latitude: lat,
+      longitude: lon,
+      radius_m,
+      type,
+      forceGround: detectForceGround(name),
+      elevation_m,
+    });
   }
 
   // Fallback: first = SSS, last = GOAL_CYLINDER
@@ -317,7 +334,7 @@ export function parseCupAll(content: string): ParsedTask[] {
     .map((l) => l.trim())
     .filter(Boolean);
 
-  const waypointMap = new Map<string, { lat: number; lon: number }>();
+  const waypointMap = new Map<string, { lat: number; lon: number; elevation_m?: number }>();
   const rawTasks: RawCupTask[] = [];
   let currentTask: RawCupTask | null = null;
   let inTaskSection = false;
@@ -336,13 +353,18 @@ export function parseCupAll(content: string): ParsedTask[] {
       const code = parts[1]?.replace(/^"|"$/g, '') ?? '';
       const latRaw = parts[3].replace(/^"|"$/g, '');
       const lonRaw = parts[4].replace(/^"|"$/g, '');
+      // CUP field 5 is elevation like "54.0m" or "744m"; may be missing/blank.
+      const elevRaw = (parts[5] ?? '').replace(/^"|"$/g, '');
+      const elevMatch = /^\s*(-?\d+(?:\.\d+)?)\s*m?\s*$/i.exec(elevRaw);
+      const elevation_m = elevMatch ? parseFloat(elevMatch[1]) : undefined;
       if (!latRaw || !lonRaw) continue;
       try {
         const lat = parseCupCoord(latRaw);
         const lon = parseCupCoord(lonRaw);
         if (!isNaN(lat) && !isNaN(lon)) {
-          if (name) waypointMap.set(name, { lat, lon });
-          if (code && code !== name) waypointMap.set(code, { lat, lon });
+          const entry = { lat, lon, elevation_m };
+          if (name) waypointMap.set(name, entry);
+          if (code && code !== name) waypointMap.set(code, entry);
         }
       } catch {
         /* skip malformed lines */
@@ -415,6 +437,7 @@ export function parseCupAll(content: string): ParsedTask[] {
         radius_m: oz?.r1 ?? 400,
         type,
         forceGround: detectForceGround(wpName),
+        elevation_m: coord?.elevation_m,
       };
     });
 

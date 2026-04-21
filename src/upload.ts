@@ -51,6 +51,7 @@ interface TurnpointRow {
   radius_m: number;
   type: string;
   force_ground: number;
+  elevation_m: number | null;
   goal_line_bearing_deg: number | null;
 }
 
@@ -195,7 +196,7 @@ export async function handleIgcUpload(
   // ── Load task turnpoints ───────────────────────────────────────────────────
   const turnpointRows = db
     .prepare(
-      `SELECT id, sequence_index, name, latitude, longitude, radius_m, type, force_ground, goal_line_bearing_deg
+      `SELECT id, sequence_index, name, latitude, longitude, radius_m, type, force_ground, elevation_m, goal_line_bearing_deg
      FROM turnpoints
      WHERE task_id = ? AND deleted_at IS NULL
      ORDER BY sequence_index ASC`,
@@ -216,6 +217,7 @@ export async function handleIgcUpload(
     radiusM: tp.radius_m,
     type: tp.type as TurnpointDef['type'],
     forceGround: tp.force_ground === 1,
+    elevationM: tp.elevation_m ?? undefined,
     goalLineBearingDeg: tp.goal_line_bearing_deg ?? undefined,
   }));
 
