@@ -153,12 +153,18 @@ function TaskLeftPanel({
 
       {/* Leaderboard */}
       <div style={{ marginBottom: 20 }}>
-        {activeEntry && (
+        {activeEntry ? (
           <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, fontFamily: 'var(--font-mono)' }}>
             Showing track for{' '}
             <span style={{ color: '#a78bfa', fontWeight: 600 }}>{trackLoading ? '…' : activeEntry.pilotName}</span> —
-            click a row to switch
+            click again to hide, or click a row to switch
           </div>
+        ) : (
+          leaderboardEntries.some((e) => e.submissionId) && (
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, fontFamily: 'var(--font-mono)' }}>
+              Tip: click a pilot's row to view their track on the map
+            </div>
+          )
         )}
         <TaskLeaderboard
           entries={leaderboardEntries}
@@ -249,12 +255,11 @@ export default function HomePage() {
   const activeQuery = activeTaskIdx >= 0 ? leaderboardQueries[activeTaskIdx] : null;
   const activeEntries = activeQuery?.data?.entries ?? [];
 
-  // Auto-select default entry when leaderboard loads
-  const defaultEntry =
-    activeEntries.find((e) => e.pilotId === user?.id && e.submissionId) ??
-    activeEntries.find((e) => e.submissionId) ??
-    null;
-  const activeEntry = selectedEntry ?? defaultEntry;
+  const activeEntry = selectedEntry;
+
+  const handleSelectPilot = (entry: LeaderboardEntry) => {
+    setSelectedEntry((prev) => (prev?.pilotId === entry.pilotId ? null : entry));
+  };
 
   // Fetch track for selected pilot
   const { data: trackData, isFetching: trackLoading } = useQuery({
@@ -427,7 +432,7 @@ export default function HomePage() {
               myId={user?.id}
               selectedPilotId={activeEntry?.pilotId}
               trackLoading={trackLoading}
-              onSelectPilot={setSelectedEntry}
+              onSelectPilot={handleSelectPilot}
             />
           ) : null)}
 
