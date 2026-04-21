@@ -608,35 +608,66 @@ export function geodesicDistanceM(lat1: number, lng1: number, lat2: number, lng2
 // =============================================================================
 
 const GROUND_SPEED_THRESHOLD_KMH = 15;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const GROUND_STATE_WINDOW_S = 30;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const CROSSING_CHECK_WINDOW_S = 60;
+const EARTH_RADIUS_M = 6_371_000;
+const DEG_RAD = Math.PI / 180;
 
 export type GroundState = 'GROUND' | 'AIRBORNE' | 'UNKNOWN';
 
+/** Haversine distance from a GPS fix to a turnpoint centre, in metres. */
+function fixDistanceToTpM(fix: Fix, tp: TurnpointDef): number {
+  const dLat = (fix.lat - tp.lat) * DEG_RAD;
+  const dLng = (fix.lng - tp.lng) * DEG_RAD;
+  const a =
+    Math.sin(dLat / 2) ** 2 + Math.cos(tp.lat * DEG_RAD) * Math.cos(fix.lat * DEG_RAD) * Math.sin(dLng / 2) ** 2;
+  return EARTH_RADIUS_M * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 /**
  * Stage 4: classifyGroundState
- * XC tracks: pass through unchanged.
+ *
+ * For HAF tasks, some turnpoints are force-ground — the pilot must touch
+ * down while inside the cylinder. Crucially, a pilot can fly in, land on
+ * (say) a hillside for a moment, and relaunch; both the entry and the exit
+ * may be airborne, but the visit still counts if the track shows low speed
+ * anywhere inside the cylinder.
+ *
+ * So we scan the *minimum* ground speed of every fix that is geographically
+ * inside the force-ground cylinder after the crossing. If any sample drops
+ * below GROUND_SPEED_THRESHOLD_KMH, we treat the crossing as ground-confirmed.
+ *
+ * XC tasks pass through unchanged.
  */
 export function classifyGroundState(
   fixes: Fix[],
   attempts: AttemptTrace[],
   competitionType: 'XC' | 'HIKE_AND_FLY',
+  task: TaskDefinition,
 ): AttemptTrace[] {
   if (competitionType === 'XC') return attempts;
-  // Hike & fly: check max speed in a window around each force-ground crossing
+  const tpById = new Map(task.turnpoints.map((tp) => [tp.id, tp]));
   return attempts.map((attempt) => ({
     ...attempt,
     turnpointCrossings: attempt.turnpointCrossings.map((crossing) => {
       if (!crossing.groundCheckRequired) return crossing;
-      const windowMs = 60_000;
-      const relevant = fixes.filter((f) => Math.abs(f.timestamp - crossing.crossingTime) <= windowMs / 2);
-      const maxSpeed = relevant.reduce((m, f) => Math.max(m, f.derivedSpeedKmh ?? 0), 0);
+      const tp = tpById.get(crossing.turnpointId);
+      if (!tp) return { ...crossing, groundConfirmed: false };
+
+      const insideFixes = fixes.filter(
+        (f) => f.timestamp >= crossing.crossingTime && fixDistanceToTpM(f, tp) <= tp.radiusM,
+      );
+      const minSpeed = insideFixes.reduce(
+        (m, f) => Math.min(m, f.derivedSpeedKmh ?? Number.POSITIVE_INFINITY),
+        Number.POSITIVE_INFINITY,
+      );
+      const resolvedMin = Number.isFinite(minSpeed) ? minSpeed : null;
       return {
         ...crossing,
-        detectedMaxSpeedKmh: maxSpeed,
-        groundConfirmed: maxSpeed < GROUND_SPEED_THRESHOLD_KMH,
+        // Field is named `detectedMaxSpeedKmh` for backward compatibility with
+        // existing DB column `detected_max_speed_kmh`; it now stores the minimum
+        // ground speed observed inside the cylinder (the slowest moment — the
+        // candidate touch-down). Rename is tracked as a follow-up.
+        detectedMaxSpeedKmh: resolvedMin,
+        groundConfirmed: resolvedMin !== null && resolvedMin < GROUND_SPEED_THRESHOLD_KMH,
       };
     }),
   }));
@@ -832,7 +863,7 @@ export async function runPipeline(
   let attempts = detectionResult.value;
 
   // Stage 4: Ground state (hike & fly only — no-op for XC)
-  attempts = classifyGroundState(track.fixes, attempts, input.competitionType);
+  attempts = classifyGroundState(track.fixes, attempts, input.competitionType, input.task);
 
   // Stage 5: Distance calculation
   attempts = calculateDistances(attempts, track.fixes, input.task);

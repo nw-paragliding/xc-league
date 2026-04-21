@@ -35,17 +35,21 @@ Key rules relevant to this codebase:
 ## Hike-and-fly turnpoints
 
 HAF seasons (`seasons.competition_type = 'HIKE_AND_FLY'`) support ground-only
-turnpoints — a pilot must arrive on foot rather than in the air. Role
-(SSS/ESS/goal/intermediate) and ground-ness are orthogonal: any role can be
-ground-only.
+turnpoints — the pilot must **touch down somewhere inside the cylinder**,
+not arrive on foot. A common HAF move is flying in, landing briefly on a
+hillside, and relaunching — both the entry and exit are airborne, but the
+visit is valid because the track shows a moment at ground speed somewhere
+inside. Role (SSS/ESS/goal/intermediate) and ground-ness are orthogonal:
+any role can be ground-only.
 
 - **Naming convention**: prefix the turnpoint name with `[GND]`
   (case-insensitive, optional leading whitespace). Example: `[GND] Summit`.
 - The prefix is parsed at import time and sets `turnpoints.force_ground = 1`;
   the marker stays in the stored name so exporters round-trip it transparently.
-- Ground confirmation is done by the pipeline Stage 4 speed check: a
-  crossing is `ground_confirmed` when max GPS speed in a ±30s window is
-  below 15 km/h. Failing that threshold adds `⚑` to the attempt's
-  `hasFlaggedCrossings`.
+- Ground confirmation (pipeline Stage 4, `classifyGroundState`): scan every
+  fix that is *geographically inside* the force-ground cylinder after the
+  crossing. If the minimum ground speed across those fixes is below 15 km/h,
+  the crossing is `ground_confirmed`. Otherwise the attempt's
+  `hasFlaggedCrossings` gets set (shows as `⚑` in the leaderboard).
 - Stage 4 is a no-op for XC seasons, so `[GND]` on an XC task is harmless
   but also meaningless — the flag is never exercised.
