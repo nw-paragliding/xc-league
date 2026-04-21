@@ -43,7 +43,29 @@ cp .npmrc.example .npmrc
 # Create .env from template and add credentials
 cp .env.example .env
 # Edit .env with your OAuth credentials and JWT keys
+
+# Create frontend/.env for map API keys (see "Frontend map keys" below)
+cp frontend/.env.example frontend/.env
 ```
+
+### Frontend map keys (MapTiler, OpenAIP)
+
+The task map uses [MapTiler](https://cloud.maptiler.com/account/keys/) for basemaps
+(Outdoor terrain + Satellite hybrid) and [OpenAIP](https://www.openaip.net/) for the
+airspace overlay. Both are free tiers; sign up and create a key in each dashboard.
+
+Paste the keys into `frontend/.env`:
+
+```
+VITE_MAPTILER_KEY=...
+VITE_OPENAIP_KEY=...
+```
+
+**Recommended**: in the MapTiler dashboard, restrict the key to the allowed HTTP origins
+`http://localhost:5173` and your production domain — Vite embeds the key in the client
+bundle, so it's publicly visible, and origin restriction prevents scraping.
+
+Without these, the map falls back to plain OpenStreetMap tiles and the Airspace toggle is hidden.
 
 ### Google OAuth Setup
 
@@ -128,6 +150,41 @@ npm run typecheck    # Type check both projects
 - ✅ Google OAuth login working (localhost)
 - 🚧 Job worker (disabled until TaskRepository implemented)
 - 🚧 IGC upload and processing (route exists, needs implementation)
+
+## Deployment
+
+Production runs on Fly.io. Pushing to `main` triggers `.github/workflows/deploy.yml`,
+which runs CI and then `flyctl deploy --remote-only`.
+
+### Build-time secrets
+
+Vite env vars (`VITE_*`) are compiled into the frontend bundle at build time, so they
+must be passed as Docker build-args rather than Fly runtime secrets. The Deploy workflow
+reads these as GitHub Actions secrets and forwards them:
+
+| Secret | Purpose |
+|---|---|
+| `FLY_API_TOKEN` | Auth for `flyctl` |
+| `VITE_MAPTILER_KEY` | MapTiler basemap key |
+| `VITE_OPENAIP_KEY` | OpenAIP airspace overlay key |
+
+Set a secret via the CLI: `gh secret set VITE_MAPTILER_KEY` (paste value when prompted),
+or from the repo **Settings → Secrets and variables → Actions** page.
+
+### Rotating a map key
+
+1. Generate a new key in the MapTiler / OpenAIP dashboard.
+2. `gh secret set VITE_MAPTILER_KEY` (or `VITE_OPENAIP_KEY`).
+3. Push any commit to `main` to trigger a redeploy.
+4. Revoke the old key in the dashboard.
+
+### Manual deploy
+
+```bash
+fly deploy --remote-only \
+  --build-arg VITE_MAPTILER_KEY="$VITE_MAPTILER_KEY" \
+  --build-arg VITE_OPENAIP_KEY="$VITE_OPENAIP_KEY"
+```
 
 ## Documentation
 
