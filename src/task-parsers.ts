@@ -15,7 +15,18 @@ export interface ParsedTurnpoint {
   longitude: number; // WGS84 decimal degrees
   radius_m: number; // cylinder / observation zone radius in metres
   type: 'SSS' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE' | 'CYLINDER';
+  forceGround?: boolean; // hike & fly: pilot must arrive on foot (name prefixed with [GND])
   goalLineBearingDeg?: number; // GOAL_LINE only
+}
+
+// Hike-and-fly naming convention: a `[GND]` prefix in a turnpoint name marks
+// it as ground-only (pilot must arrive on foot). Case-insensitive, tolerates
+// leading/trailing whitespace. Marker is preserved in the stored name so it
+// round-trips through the exporter untouched.
+const GND_MARKER = /^\s*\[gnd\]/i;
+
+function detectForceGround(name: string): boolean {
+  return GND_MARKER.test(name);
 }
 
 export interface ParsedTask {
@@ -117,12 +128,14 @@ function parseXctskJson(content: string): ParsedTask {
       else if (idx === lastUntyped && lastUntyped !== firstUntyped) type = 'GOAL_CYLINDER';
     }
 
+    const name = waypoint.name || `TP${idx + 1}`;
     return {
-      name: waypoint.name || `TP${idx + 1}`,
+      name,
       latitude: lat,
       longitude: lon,
       radius_m: typeof radius === 'number' && radius > 0 ? radius : 400,
       type,
+      forceGround: detectForceGround(name),
     };
   });
 
@@ -199,7 +212,7 @@ function parseXctskXml(content: string): ParsedTask {
       type = ozTypeMatch?.toLowerCase() === 'line' ? 'GOAL_LINE' : 'GOAL_CYLINDER';
     }
 
-    turnpoints.push({ name, latitude: lat, longitude: lon, radius_m, type });
+    turnpoints.push({ name, latitude: lat, longitude: lon, radius_m, type, forceGround: detectForceGround(name) });
   }
 
   // Fallback: first = SSS, last = GOAL_CYLINDER
@@ -392,6 +405,7 @@ export function parseCupAll(content: string): ParsedTask[] {
         longitude: coord?.lon ?? 0,
         radius_m: oz?.r1 ?? 400,
         type,
+        forceGround: detectForceGround(wpName),
       };
     });
 

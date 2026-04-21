@@ -212,6 +212,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
            json_group_array(json_object(
              'name', tp.name, 'latitude', tp.latitude, 'longitude', tp.longitude,
              'radiusM', tp.radius_m, 'type', tp.type, 'sequenceIndex', tp.sequence_index,
+             'forceGround', json(CASE WHEN tp.force_ground = 1 THEN 'true' ELSE 'false' END),
              'goalLineBearingDeg', tp.goal_line_bearing_deg
            ) ORDER BY tp.sequence_index) FILTER (WHERE tp.id IS NOT NULL) as turnpointsJson
          FROM tasks t
@@ -260,7 +261,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       // Get turnpoints
       const turnpoints = db
         .prepare(
-          `SELECT 
+          `SELECT
            id,
            sequence_index as sequenceIndex,
            name,
@@ -268,6 +269,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
            lng,
            radius_m as radiusM,
            type,
+           force_ground as forceGround,
            goal_line_bearing_deg as goalLineBearingDeg
          FROM turnpoints
          WHERE task_id = ?
@@ -1380,10 +1382,21 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
           db.prepare(
             `INSERT INTO turnpoints (
               id, task_id, sequence_index,
-              name, latitude, longitude, radius_m, type, goal_line_bearing_deg,
+              name, latitude, longitude, radius_m, type, force_ground, goal_line_bearing_deg,
               created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-          ).run(tpId, taskId, i, tp.name, tp.latitude, tp.longitude, tp.radius_m, tp.type, bearing);
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+          ).run(
+            tpId,
+            taskId,
+            i,
+            tp.name,
+            tp.latitude,
+            tp.longitude,
+            tp.radius_m,
+            tp.type,
+            tp.forceGround ? 1 : 0,
+            bearing,
+          );
 
           if (tp.type === 'SSS') sssId = tpId;
           if (tp.type === 'ESS') essId = tpId;
@@ -1426,7 +1439,8 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
 
       const turnpoints = db
         .prepare(
-          `SELECT id, name, latitude, longitude, radius_m as radiusM, type, sequence_index as sequenceIndex
+          `SELECT id, name, latitude, longitude, radius_m as radiusM, type,
+                  force_ground as forceGround, sequence_index as sequenceIndex
          FROM turnpoints WHERE task_id = ? AND deleted_at IS NULL ORDER BY sequence_index`,
         )
         .all(taskId);
@@ -1466,6 +1480,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
             longitude: tp.longitude,
             radius_m: tp.radius_m,
             type: tp.type,
+            forceGround: tp.forceGround ?? false,
           })),
         })),
       });
@@ -1560,10 +1575,21 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
             db.prepare(
               `INSERT INTO turnpoints (
                 id, task_id, sequence_index,
-                name, latitude, longitude, radius_m, type, goal_line_bearing_deg,
+                name, latitude, longitude, radius_m, type, force_ground, goal_line_bearing_deg,
                 created_at, updated_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-            ).run(tpId, taskId, i, tp.name, tp.latitude, tp.longitude, tp.radius_m, tp.type, bearing);
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+            ).run(
+              tpId,
+              taskId,
+              i,
+              tp.name,
+              tp.latitude,
+              tp.longitude,
+              tp.radius_m,
+              tp.type,
+              tp.forceGround ? 1 : 0,
+              bearing,
+            );
 
             if (tp.type === 'SSS') sssId = tpId;
             if (tp.type === 'ESS') essId = tpId;

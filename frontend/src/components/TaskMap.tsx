@@ -48,15 +48,28 @@ function tpColor(type: string) {
 }
 
 function tpRole(tp: Turnpoint, cylIndex: number): string {
-  if (tp.type === 'SSS') return 'SSS';
-  if (tp.type === 'ESS') return 'ESS';
-  if (tp.type === 'GOAL_CYLINDER' || tp.type === 'GOAL_LINE') return 'GOAL';
-  return `D${cylIndex}`;
+  const base =
+    tp.type === 'SSS'
+      ? 'SSS'
+      : tp.type === 'ESS'
+        ? 'ESS'
+        : tp.type === 'GOAL_CYLINDER' || tp.type === 'GOAL_LINE'
+          ? 'GOAL'
+          : `D${cylIndex}`;
+  return tp.forceGround ? `${base}↓` : base;
 }
 
 function toCylinder(tp: Turnpoint): Cylinder {
-  return { lat: tp.latitude, lng: tp.longitude, radiusM: tp.radiusM, type: tp.type };
+  return {
+    lat: tp.latitude,
+    lng: tp.longitude,
+    radiusM: tp.radiusM,
+    type: tp.type,
+    forceGround: tp.forceGround,
+  };
 }
+
+const GROUND_COLOR = '#a97c50';
 
 const LOCATION_TOL = 1e-4;
 const COLOR_PRI: Record<string, number> = { '#4a9eff': 3, '#5db87a': 2, '#e8a842': 1 };
@@ -66,6 +79,7 @@ interface TpEntry {
   color: string;
   radiusM: number;
   isGoalLine: boolean;
+  forceGround: boolean;
 }
 interface TpGroup {
   lng: number;
@@ -82,30 +96,35 @@ function buildGroups(tps: Turnpoint[]): TpGroup[] {
     const role = tpRole(tp, isPlain ? ++cylIdx : 0);
     const color = tpColor(tp.type);
     const isGoalLine = tp.type === 'GOAL_LINE';
+    const forceGround = tp.forceGround === true;
     const g = groups.find(
       (g) => Math.abs(g.lng - tp.longitude) < LOCATION_TOL && Math.abs(g.lat - tp.latitude) < LOCATION_TOL,
     );
-    if (g) g.entries.push({ role, color, radiusM: tp.radiusM, isGoalLine });
+    if (g) g.entries.push({ role, color, radiusM: tp.radiusM, isGoalLine, forceGround });
     else
       groups.push({
         lng: tp.longitude,
         lat: tp.latitude,
         name: tp.name,
-        entries: [{ role, color, radiusM: tp.radiusM, isGoalLine }],
+        entries: [{ role, color, radiusM: tp.radiusM, isGoalLine, forceGround }],
       });
   }
   return groups;
 }
 
-function mergeCircles(entries: TpEntry[]): { radiusM: number; color: string }[] {
-  const m = new Map<number, string>();
-  for (const { radiusM, color } of entries) {
+function mergeCircles(entries: TpEntry[]): { radiusM: number; color: string; forceGround: boolean }[] {
+  const m = new Map<number, { color: string; forceGround: boolean }>();
+  for (const { radiusM, color, forceGround } of entries) {
     const prev = m.get(radiusM);
-    if (!prev || (COLOR_PRI[color] ?? 0) > (COLOR_PRI[prev] ?? 0)) m.set(radiusM, color);
+    if (!prev || (COLOR_PRI[color] ?? 0) > (COLOR_PRI[prev.color] ?? 0)) {
+      m.set(radiusM, { color, forceGround: forceGround || !!prev?.forceGround });
+    } else if (forceGround) {
+      m.set(radiusM, { ...prev, forceGround: true });
+    }
   }
   return Array.from(m.entries())
     .sort((a, b) => b[0] - a[0])
-    .map(([radiusM, color]) => ({ radiusM, color }));
+    .map(([radiusM, v]) => ({ radiusM, color: v.color, forceGround: v.forceGround }));
 }
 
 function optimisedRouteResult(tps: Turnpoint[]) {
@@ -317,18 +336,22 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     }
 
     // ── 5. Coloured dashed rings ──────────────────────────────────────────────
+    // Ground-only cylinders render in earthy brown with a dotted pattern to
+    // signal that a foot crossing is required; role colour still shows on the
+    // centre dot + role badge.
     for (const group of groups) {
-      for (const { radiusM, color } of mergeCircles(group.entries.filter((e) => !e.isGoalLine))) {
+      for (const { radiusM, color, forceGround } of mergeCircles(group.entries.filter((e) => !e.isGoalLine))) {
         const { cx, cy, r } = projR(group.lng, group.lat, radiusM);
         if (r < 1) continue;
+        const ringColor = forceGround ? GROUND_COLOR : color;
         mk('circle', {
           cx: cx.toFixed(1),
           cy: cy.toFixed(1),
           r: r.toFixed(1),
-          fill: color + '28',
-          stroke: color,
+          fill: ringColor + '28',
+          stroke: ringColor,
           'stroke-width': 3,
-          'stroke-dasharray': '10 5',
+          'stroke-dasharray': forceGround ? '3 5' : '10 5',
         });
       }
     }
@@ -576,6 +599,12 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
             color: '#5db87a',
             label: 'ESS / Goal',
             tooltip: 'End of Speed Section / Goal — crossing ESS stops the clock.',
+          },
+          {
+            color: GROUND_COLOR,
+            label: 'Ground-only',
+            tooltip:
+              'Hike-and-fly: pilot must arrive on foot (GPS speed must fall below the threshold during the crossing). Marked with [GND] in the task file.',
           },
         ].map(({ color, label, tooltip }) => (
           <div key={label} style={{ position: 'relative' }}>

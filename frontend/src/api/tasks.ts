@@ -10,6 +10,7 @@ export interface Turnpoint {
   longitude: number;
   radiusM: number;
   type: 'SSS' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE' | 'CYLINDER';
+  forceGround?: boolean; // hike & fly: pilot must arrive on foot (any role)
   sequenceIndex: number;
   goalLineBearingDeg?: number | null;
 }

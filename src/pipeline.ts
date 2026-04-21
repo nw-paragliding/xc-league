@@ -96,7 +96,8 @@ export interface TurnpointDef {
   lat: number;
   lng: number;
   radiusM: number;
-  type: 'SSS' | 'CYLINDER' | 'AIR_OR_GROUND' | 'GROUND_ONLY' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE';
+  type: 'SSS' | 'CYLINDER' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE';
+  forceGround?: boolean; // hike & fly: pilot must arrive on foot (any role)
   goalLineBearingDeg?: number; // GOAL_LINE only
 }
 
@@ -390,7 +391,7 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
       }
 
       if (crossed && crossT !== null) {
-        const groundCheckRequired = tp.type === 'GROUND_ONLY' || tp.type === 'AIR_OR_GROUND';
+        const groundCheckRequired = tp.forceGround === true;
         const crossing: CylinderCrossing = {
           turnpointId: tp.id,
           sequenceIndex: tp.sequenceIndex,
@@ -624,7 +625,7 @@ export function classifyGroundState(
   competitionType: 'XC' | 'HIKE_AND_FLY',
 ): AttemptTrace[] {
   if (competitionType === 'XC') return attempts;
-  // Hike & fly: check max speed in a window around each GROUND_ONLY crossing
+  // Hike & fly: check max speed in a window around each force-ground crossing
   return attempts.map((attempt) => ({
     ...attempt,
     turnpointCrossings: attempt.turnpointCrossings.map((crossing) => {
@@ -659,6 +660,7 @@ export function calculateDistances(attempts: AttemptTrace[], fixes: Fix[], task:
     lng: tp.lng,
     radiusM: tp.radiusM,
     type: tp.type,
+    forceGround: tp.forceGround,
     goalLineBearingDeg: tp.goalLineBearingDeg,
   }));
 
