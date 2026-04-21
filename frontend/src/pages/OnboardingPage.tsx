@@ -27,7 +27,7 @@ export default function OnboardingPage() {
     onSuccess: (res) => {
       queryClient.setQueryData(AUTH_KEY, res.user);
       const first = leaguesData?.leagues?.[0];
-      navigate(first ? `/leagues/${first.slug}` : '/leagues/_/create-league', { replace: true });
+      navigate(first ? `/leagues/${first.slug}` : '/create-league', { replace: true });
     },
   });
 

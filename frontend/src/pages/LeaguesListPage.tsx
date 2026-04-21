@@ -53,7 +53,7 @@ export default function LeaguesListPage() {
               <div style={{ fontWeight: 500, marginBottom: 8 }}>No leagues yet</div>
               {user && (
                 <button
-                  onClick={() => navigate('/leagues/_/create-league')}
+                  onClick={() => navigate('/create-league')}
                   style={{
                     marginTop: 8,
                     padding: '0.5rem 1.25rem',
@@ -155,7 +155,7 @@ export default function LeaguesListPage() {
           {user && leagues.length > 0 && (
             <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border)' }}>
               <button
-                onClick={() => navigate('/leagues/_/create-league')}
+                onClick={() => navigate('/create-league')}
                 style={{
                   padding: '0.5rem 1rem',
                   background: 'none',
