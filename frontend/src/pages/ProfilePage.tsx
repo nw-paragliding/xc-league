@@ -20,7 +20,7 @@ export default function ProfilePage() {
   const { data: standingsData } = useStandings();
   const queryClient = useQueryClient();
 
-  const [wingRating, setWindRating] = useState('');
+  const [wingRating, setWingRating] = useState('');
   const [gliderManufacturer, setGliderManufacturer] = useState('');
   const [gliderModel, setGliderModel] = useState('');
   const [gliderWeightRating, setGliderWeightRating] = useState<string>('');
@@ -30,7 +30,7 @@ export default function ProfilePage() {
   useEffect(() => {
     if (user && !initialized.current) {
       initialized.current = true;
-      setWindRating(user.wingRating ?? '');
+      setWingRating(user.wingRating ?? '');
       setGliderManufacturer(user.gliderManufacturer ?? '');
       setGliderModel(user.gliderModel ?? '');
       setGliderWeightRating(user.gliderWeightRating != null ? String(user.gliderWeightRating) : '');
@@ -150,7 +150,7 @@ export default function ProfilePage() {
                   <button
                     key={r}
                     type="button"
-                    onClick={() => setWindRating(wingRating === r ? '' : r)}
+                    onClick={() => setWingRating(wingRating === r ? '' : r)}
                     style={{
                       padding: '0.375rem 0.875rem',
                       borderRadius: '0.375rem',

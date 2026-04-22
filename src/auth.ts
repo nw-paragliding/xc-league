@@ -719,6 +719,43 @@ export async function handleGoogleAuthCallback(
   }
 }
 
+interface MeRow {
+  id: string;
+  email: string;
+  displayName: string;
+  avatarUrl: string | null;
+  isAdmin: number;
+  wingRating: string | null;
+  gliderManufacturer: string | null;
+  gliderModel: string | null;
+  gliderWeightRating: number | null;
+}
+
+interface MeResponse {
+  id: string;
+  email: string;
+  displayName: string;
+  avatarUrl: string | null;
+  isAdmin: boolean;
+  wingRating: string | null;
+  gliderManufacturer: string | null;
+  gliderModel: string | null;
+  gliderWeightRating: number | null;
+}
+
+function selectMe(db: any, userId: string): MeResponse | null {
+  const row = db
+    .prepare(
+      `SELECT id, email, display_name as displayName, avatar_url as avatarUrl, is_super_admin as isAdmin,
+            wing_rating as wingRating, glider_manufacturer as gliderManufacturer, glider_model as gliderModel,
+            glider_weight_rating as gliderWeightRating
+     FROM users WHERE id = ?`,
+    )
+    .get(userId) as MeRow | undefined;
+  if (!row) return null;
+  return { ...row, isAdmin: Boolean(row.isAdmin) };
+}
+
 /**
  * GET /auth/me
  *
@@ -727,20 +764,12 @@ export async function handleGoogleAuthCallback(
  */
 export async function handleGetMe(request: any, reply: any, db: any): Promise<void> {
   requireAuth(request, reply);
-  const user = db
-    .prepare(
-      `SELECT id, email, display_name as displayName, avatar_url as avatarUrl, is_super_admin as isAdmin,
-            wing_rating as wingRating, glider_manufacturer as gliderManufacturer, glider_model as gliderModel,
-            glider_weight_rating as gliderWeightRating
-     FROM users WHERE id = ?`,
-    )
-    .get(request.user!.userId) as UserRecord | undefined;
-
+  const user = selectMe(db, request.user!.userId);
   if (!user) {
     reply.status(404).send({ error: 'User not found' });
     return;
   }
-  reply.send({ user: { ...user, isAdmin: Boolean((user as any).isAdmin) } });
+  reply.send({ user });
 }
 
 /**
@@ -811,15 +840,11 @@ export async function handleUpdateMe(request: any, reply: any, db: any): Promise
     );
   }
 
-  const user = db
-    .prepare(
-      `SELECT id, email, display_name as displayName, avatar_url as avatarUrl, is_super_admin as isAdmin,
-            wing_rating as wingRating, glider_manufacturer as gliderManufacturer, glider_model as gliderModel,
-            glider_weight_rating as gliderWeightRating
-     FROM users WHERE id = ?`,
-    )
-    .get(request.user!.userId) as UserRecord | undefined;
-
+  const user = selectMe(db, request.user!.userId);
+  if (!user) {
+    reply.status(404).send({ error: 'User not found' });
+    return;
+  }
   reply.send({ user });
 }
 
