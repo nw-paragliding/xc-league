@@ -730,7 +730,7 @@ export async function handleGetMe(request: any, reply: any, db: any): Promise<vo
   const user = db
     .prepare(
       `SELECT id, email, display_name as displayName, avatar_url as avatarUrl, is_super_admin as isAdmin,
-            wind_rating as windRating, glider_manufacturer as gliderManufacturer, glider_model as gliderModel,
+            wing_rating as wingRating, glider_manufacturer as gliderManufacturer, glider_model as gliderModel,
             glider_weight_rating as gliderWeightRating
      FROM users WHERE id = ?`,
     )
@@ -754,13 +754,13 @@ export async function handleUpdateMe(request: any, reply: any, db: any): Promise
   const body = request.body as {
     displayName?: string;
     avatarUrl?: string | null;
-    windRating?: string | null;
+    wingRating?: string | null;
     gliderManufacturer?: string | null;
     gliderModel?: string | null;
     gliderWeightRating?: number | null;
   };
 
-  const VALID_WIND_RATINGS = new Set(['A', 'B', 'C', 'D', 'CCC']);
+  const VALID_WING_RATINGS = new Set(['A', 'B', 'C', 'D', 'CCC']);
 
   // Only update provided fields
   if (body.displayName !== undefined) {
@@ -775,13 +775,13 @@ export async function handleUpdateMe(request: any, reply: any, db: any): Promise
       request.user!.userId,
     );
   }
-  if (body.windRating !== undefined) {
-    if (body.windRating !== null && !VALID_WIND_RATINGS.has(body.windRating)) {
-      reply.status(400).send({ error: 'Invalid wind rating. Must be A, B, C, D, or CCC.' });
+  if (body.wingRating !== undefined) {
+    if (body.wingRating !== null && !VALID_WING_RATINGS.has(body.wingRating)) {
+      reply.status(400).send({ error: 'Invalid wing rating. Must be A, B, C, D, or CCC.' });
       return;
     }
-    db.prepare(`UPDATE users SET wind_rating = ?, updated_at = datetime('now') WHERE id = ?`).run(
-      body.windRating,
+    db.prepare(`UPDATE users SET wing_rating = ?, updated_at = datetime('now') WHERE id = ?`).run(
+      body.wingRating,
       request.user!.userId,
     );
   }
@@ -814,7 +814,7 @@ export async function handleUpdateMe(request: any, reply: any, db: any): Promise
   const user = db
     .prepare(
       `SELECT id, email, display_name as displayName, avatar_url as avatarUrl, is_super_admin as isAdmin,
-            wind_rating as windRating, glider_manufacturer as gliderManufacturer, glider_model as gliderModel,
+            wing_rating as wingRating, glider_manufacturer as gliderManufacturer, glider_model as gliderModel,
             glider_weight_rating as gliderWeightRating
      FROM users WHERE id = ?`,
     )
