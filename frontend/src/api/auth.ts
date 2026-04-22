@@ -6,7 +6,7 @@ export interface User {
   displayName: string;
   avatarUrl: string | null;
   isAdmin: boolean;
-  windRating: string | null;
+  wingRating: string | null;
   gliderManufacturer: string | null;
   gliderModel: string | null;
   gliderWeightRating: number | null;
@@ -19,7 +19,7 @@ export interface MeResponse {
 export interface UpdateMeBody {
   displayName?: string;
   avatarUrl?: string | null;
-  windRating?: string | null;
+  wingRating?: string | null;
   gliderManufacturer?: string | null;
   gliderModel?: string | null;
   gliderWeightRating?: number | null;

@@ -43,8 +43,8 @@ function LeagueLayout() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Redirect authenticated users to onboarding until wind rating is set
-  if (isFetched && user && user.windRating === null) {
+  // Redirect authenticated users to onboarding until wing rating is set
+  if (isFetched && user && user.wingRating === null) {
     return <Navigate to="/onboarding" replace />;
   }
 

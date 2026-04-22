@@ -13,14 +13,14 @@ function initials(name: string) {
     .toUpperCase();
 }
 
-const WIND_RATINGS = ['A', 'B', 'C', 'D', 'CCC'] as const;
+const WING_RATINGS = ['A', 'B', 'C', 'D', 'CCC'] as const;
 
 export default function ProfilePage() {
   const { user, logout, login } = useAuth();
   const { data: standingsData } = useStandings();
   const queryClient = useQueryClient();
 
-  const [windRating, setWindRating] = useState('');
+  const [wingRating, setWindRating] = useState('');
   const [gliderManufacturer, setGliderManufacturer] = useState('');
   const [gliderModel, setGliderModel] = useState('');
   const [gliderWeightRating, setGliderWeightRating] = useState<string>('');
@@ -30,7 +30,7 @@ export default function ProfilePage() {
   useEffect(() => {
     if (user && !initialized.current) {
       initialized.current = true;
-      setWindRating(user.windRating ?? '');
+      setWindRating(user.wingRating ?? '');
       setGliderManufacturer(user.gliderManufacturer ?? '');
       setGliderModel(user.gliderModel ?? '');
       setGliderWeightRating(user.gliderWeightRating != null ? String(user.gliderWeightRating) : '');
@@ -44,7 +44,7 @@ export default function ProfilePage() {
 
   const saveEquipment = () => {
     updateMutation.mutate({
-      windRating: windRating || null,
+      wingRating: wingRating || null,
       gliderManufacturer: gliderManufacturer || null,
       gliderModel: gliderModel || null,
       gliderWeightRating: gliderWeightRating ? parseFloat(gliderWeightRating) : null,
@@ -53,7 +53,7 @@ export default function ProfilePage() {
 
   const savedWeight = user?.gliderWeightRating != null ? String(user.gliderWeightRating) : '';
   const equipmentDirty =
-    (user?.windRating ?? '') !== windRating ||
+    (user?.wingRating ?? '') !== wingRating ||
     (user?.gliderManufacturer ?? '') !== gliderManufacturer ||
     (user?.gliderModel ?? '') !== gliderModel ||
     savedWeight !== gliderWeightRating;
@@ -142,23 +142,23 @@ export default function ProfilePage() {
         </div>
         <div className="card" style={{ marginBottom: 24 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* Wind rating */}
+            {/* Wing rating */}
             <div>
-              <label style={{ marginBottom: 8 }}>Wind Rating</label>
+              <label style={{ marginBottom: 8 }}>Wing Rating</label>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {WIND_RATINGS.map((r) => (
+                {WING_RATINGS.map((r) => (
                   <button
                     key={r}
                     type="button"
-                    onClick={() => setWindRating(windRating === r ? '' : r)}
+                    onClick={() => setWindRating(wingRating === r ? '' : r)}
                     style={{
                       padding: '0.375rem 0.875rem',
                       borderRadius: '0.375rem',
-                      border: `1px solid ${windRating === r ? 'var(--accent)' : 'var(--border)'}`,
-                      background: windRating === r ? 'var(--accent)' : 'var(--bg)',
-                      color: windRating === r ? '#fff' : 'var(--text2)',
+                      border: `1px solid ${wingRating === r ? 'var(--accent)' : 'var(--border)'}`,
+                      background: wingRating === r ? 'var(--accent)' : 'var(--bg)',
+                      color: wingRating === r ? '#fff' : 'var(--text2)',
                       fontSize: '0.875rem',
-                      fontWeight: windRating === r ? 600 : 400,
+                      fontWeight: wingRating === r ? 600 : 400,
                       cursor: 'pointer',
                       transition: 'all 0.15s ease',
                     }}
