@@ -820,7 +820,7 @@ export async function handleUpdateMe(request: any, reply: any, db: any): Promise
     )
     .get(request.user!.userId) as UserRecord | undefined;
 
-  reply.send({ user });
+  reply.send({ user: user ? { ...user, isAdmin: Boolean((user as any).isAdmin) } : user });
 }
 
 /**
