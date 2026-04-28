@@ -85,6 +85,10 @@ export function exportXctsk(task: ExportTask): string {
     return tpOut;
   });
 
+  // The XCTrack v1 spec documents only `CLASSIC` as a task type — the file
+  // format is just an ordered list of turnpoints. League-level distinctions
+  // like RACE_TO_GOAL vs OPEN_DISTANCE don't have a wire representation here,
+  // so emit CLASSIC unconditionally for maximum interop with XCTrack/FlySkyHy.
   const out: XctskV1File = {
     taskType: 'CLASSIC',
     version: 1,

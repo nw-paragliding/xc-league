@@ -83,6 +83,7 @@ interface XctskJsonV1 {
   version: number;
   taskType?: string; // 'CLASSIC' | 'FREE_FLIGHT' | 'OPEN_DISTANCE' | …
   turnpoints: XctskJsonTurnpoint[];
+  goal?: { type?: string }; // 'CYLINDER' | 'LINE'
 }
 
 function parseXctskJson(content: string): ParsedTask {
@@ -143,6 +144,14 @@ function parseXctskJson(content: string): ParsedTask {
   const hasGoal = turnpoints.some((tp) => tp.type === 'GOAL_CYLINDER' || tp.type === 'GOAL_LINE');
   if (!hasGoal && turnpoints.length > 1) {
     turnpoints[turnpoints.length - 1].type = 'GOAL_CYLINDER';
+  }
+
+  // Goal-line vs cylinder is encoded at the top level (`goal.type`), not on
+  // the turnpoint itself. Promote a cylinder goal to GOAL_LINE if the file
+  // says so.
+  if (raw.goal?.type?.toUpperCase() === 'LINE') {
+    const goalIdx = turnpoints.findIndex((tp) => tp.type === 'GOAL_CYLINDER');
+    if (goalIdx >= 0) turnpoints[goalIdx].type = 'GOAL_LINE';
   }
 
   return { taskType, turnpoints, rawContent: content, format: 'xctsk' };

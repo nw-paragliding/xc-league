@@ -104,6 +104,23 @@ describe('exportXctsk — v1 JSON', () => {
     expect(parsed.turnpoints[3].radius_m).toBe(400);
   });
 
+  it('round-trips a line-goal task (preserves GOAL_LINE)', () => {
+    const lineTask: ExportTask = {
+      ...baseTask,
+      turnpoints: baseTask.turnpoints.map((tp, i) =>
+        i === baseTask.turnpoints.length - 1 ? { ...tp, type: 'GOAL_LINE' } : tp,
+      ),
+    };
+    const parsed = parseXctsk(exportXctsk(lineTask));
+    expect(parsed.turnpoints[parsed.turnpoints.length - 1].type).toBe('GOAL_LINE');
+  });
+
+  it('emits CLASSIC even for OPEN_DISTANCE tasks (spec only documents CLASSIC)', () => {
+    const openTask: ExportTask = { ...baseTask, taskType: 'OPEN_DISTANCE' };
+    const json = JSON.parse(exportXctsk(openTask));
+    expect(json.taskType).toBe('CLASSIC');
+  });
+
   it('respects sequenceIndex ordering', () => {
     const shuffled: ExportTask = {
       ...baseTask,
