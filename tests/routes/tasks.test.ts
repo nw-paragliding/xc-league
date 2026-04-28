@@ -169,6 +169,26 @@ describe('parseXctsk — JSON format (v1)', () => {
   it('format is xctsk', () => {
     expect(parseXctsk(XCTSK_JSON).format).toBe('xctsk');
   });
+
+  it('does not double-tag SSS when the file has an explicit SSS', () => {
+    // A spec-valid file: TP0 explicitly typed SSS, TP1 untyped.
+    // Without the explicit-SSS guard, the parser would re-promote TP1 to SSS
+    // (firstUntyped) and produce two starts.
+    const explicitSssTask = JSON.stringify({
+      version: 1,
+      taskType: 'CLASSIC',
+      turnpoints: [
+        { type: 'SSS', waypoint: { name: 'START', lat: 47.5, lon: -122.0, altSmoothed: 0 }, radius: 400 },
+        { waypoint: { name: 'TP1', lat: 47.51, lon: -122.01, altSmoothed: 0 }, radius: 400 },
+        { waypoint: { name: 'GOAL', lat: 47.52, lon: -122.02, altSmoothed: 0 }, radius: 400 },
+      ],
+    });
+    const result = parseXctsk(explicitSssTask);
+    expect(result.turnpoints.filter((tp) => tp.type === 'SSS')).toHaveLength(1);
+    expect(result.turnpoints[0].type).toBe('SSS');
+    expect(result.turnpoints[1].type).toBe('CYLINDER');
+    expect(result.turnpoints[2].type).toBe('GOAL_CYLINDER');
+  });
 });
 
 describe('parseXctsk — [GND] naming convention', () => {
@@ -1092,6 +1112,66 @@ describe('Task QR endpoint — GET /leagues/:slug/seasons/:seasonId/tasks/:taskI
     });
 
     expect(res.statusCode).toBeGreaterThanOrEqual(400);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// .xctsk download endpoint — JSON output regression tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Task download — GET /leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/download?format=xctsk', () => {
+  let app: ReturnType<typeof Fastify>;
+  let db: ReturnType<typeof getTestDb>;
+  let pilotUser: ReturnType<typeof createTestUser>;
+  let testLeague: ReturnType<typeof createTestLeague>;
+  let testSeason: ReturnType<typeof createTestSeason>;
+
+  beforeEach(async () => {
+    resetTestDb();
+    db = getTestDb();
+    setupTestDatabase(db);
+    pilotUser = createTestUser(db);
+    testLeague = createTestLeague(db);
+    testSeason = createTestSeason(db, testLeague.id);
+    addLeagueMember(db, testLeague.id, pilotUser.id, 'pilot');
+    app = await buildTestApp(db);
+  });
+
+  const dlUrl = (taskId: string) =>
+    `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${taskId}/download?format=xctsk`;
+
+  it('re-exports as v1 JSON when stored rawContent is legacy XML', async () => {
+    // Simulate a task imported from the legacy XML form before this fix
+    const task = createTestTask(db, testSeason.id, testLeague.id);
+    addTurnpoint(db, task.id, testLeague.id, 'SSS', 0);
+    addTurnpoint(db, task.id, testLeague.id, 'GOAL_CYLINDER', 1);
+    db.prepare(`UPDATE tasks SET task_data_source = 'xctsk', task_data_raw = ? WHERE id = ?`).run(XCTSK_XML, task.id);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: dlUrl(task.id),
+      headers: { 'x-test-user-id': pilotUser.id },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.trimStart().startsWith('{')).toBe(true);
+    expect(() => JSON.parse(res.body)).not.toThrow();
+  });
+
+  it('passes through stored rawContent when it is already JSON', async () => {
+    const task = createTestTask(db, testSeason.id, testLeague.id);
+    addTurnpoint(db, task.id, testLeague.id, 'SSS', 0);
+    addTurnpoint(db, task.id, testLeague.id, 'GOAL_CYLINDER', 1);
+    db.prepare(`UPDATE tasks SET task_data_source = 'xctsk', task_data_raw = ? WHERE id = ?`).run(XCTSK_JSON, task.id);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: dlUrl(task.id),
+      headers: { 'x-test-user-id': pilotUser.id },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe(XCTSK_JSON);
   });
 });
 

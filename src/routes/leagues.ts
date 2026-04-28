@@ -1993,8 +1993,12 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       let filename: string;
 
       if (format === 'xctsk') {
-        fileContent =
-          taskRow.dataSource === 'xctsk' && taskRow.rawContent ? taskRow.rawContent : exportXctsk(exportTask);
+        // Pass through stored rawContent only when it's already v1 JSON.
+        // Tasks imported from the legacy XML form have rawContent starting
+        // with `<` — modern XCTrack/FlySkyHy fail to parse XML, so re-export
+        // those from the DB to v1 JSON.
+        const stored = taskRow.dataSource === 'xctsk' ? taskRow.rawContent?.trimStart() : null;
+        fileContent = stored?.startsWith('{') ? stored : exportXctsk(exportTask);
         contentType = 'application/octet-stream';
         filename = `${taskRow.name.replace(/[^a-z0-9]/gi, '_')}.xctsk`;
       } else {

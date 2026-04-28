@@ -83,6 +83,7 @@ interface XctskJsonV1 {
   version: number;
   taskType?: string; // 'CLASSIC' | 'FREE_FLIGHT' | 'OPEN_DISTANCE' | …
   turnpoints: XctskJsonTurnpoint[];
+  goal?: { type?: string }; // 'CYLINDER' | 'LINE'
 }
 
 function parseXctskJson(content: string): ParsedTask {
@@ -100,11 +101,13 @@ function parseXctskJson(content: string): ParsedTask {
 
   // In the JSON format, only ESS (and sometimes SSS) are explicitly typed.
   // The convention is:
-  //   - first TP without a type tag  = SSS (start)
-  //   - last  TP without a type tag  = Goal
-  //   - any TP with type === 'ESS'   = ESS
   //   - any TP with type === 'SSS'   = SSS (explicit override)
-  // Find first and last untyped indices so we can assign SSS / Goal:
+  //   - any TP with type === 'ESS'   = ESS
+  //   - first TP without a type tag  = SSS (only if no explicit SSS exists)
+  //   - last  TP without a type tag  = Goal
+  // We skip implicit-SSS assignment when the file has an explicit SSS to
+  // avoid creating a duplicate start.
+  const hasExplicitSss = tps.some((tp) => tp.type?.toUpperCase() === 'SSS');
   const firstUntyped = tps.findIndex((tp) => !tp.type);
   const lastUntyped = tps.length - 1 - [...tps].reverse().findIndex((tp) => !tp.type);
 
@@ -124,7 +127,7 @@ function parseXctskJson(content: string): ParsedTask {
     } else if (rawType === 'ESS') {
       type = 'ESS';
     } else if (!tp.type) {
-      if (idx === firstUntyped) type = 'SSS';
+      if (idx === firstUntyped && !hasExplicitSss) type = 'SSS';
       else if (idx === lastUntyped && lastUntyped !== firstUntyped) type = 'GOAL_CYLINDER';
     }
 
@@ -143,6 +146,18 @@ function parseXctskJson(content: string): ParsedTask {
   const hasGoal = turnpoints.some((tp) => tp.type === 'GOAL_CYLINDER' || tp.type === 'GOAL_LINE');
   if (!hasGoal && turnpoints.length > 1) {
     turnpoints[turnpoints.length - 1].type = 'GOAL_CYLINDER';
+  }
+
+  // Goal-line vs cylinder is encoded at the top level (`goal.type`), not on
+  // the turnpoint itself. Promote the *last* cylinder goal to GOAL_LINE if
+  // the file says so — by convention the goal is the terminal turnpoint.
+  if (raw.goal?.type?.toUpperCase() === 'LINE') {
+    for (let i = turnpoints.length - 1; i >= 0; i--) {
+      if (turnpoints[i].type === 'GOAL_CYLINDER') {
+        turnpoints[i].type = 'GOAL_LINE';
+        break;
+      }
+    }
   }
 
   return { taskType, turnpoints, rawContent: content, format: 'xctsk' };
