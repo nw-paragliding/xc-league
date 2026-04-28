@@ -224,7 +224,7 @@ async function main() {
 
       // League routes
       const { registerLeagueRoutes } = await import('./routes/leagues');
-      await registerLeagueRoutes(api, { db, queue });
+      await registerLeagueRoutes(api, { db });
     },
     { prefix: '/api/v1' },
   );

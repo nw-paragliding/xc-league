@@ -48,7 +48,7 @@ beforeEach(async () => {
 
   app = Fastify();
   await app.register(authPlugin, { config: loadAuthConfig(), db });
-  await registerLeagueRoutes(app, { db, queue: null as any });
+  await registerLeagueRoutes(app, { db });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -405,5 +405,52 @@ describe('rebuildTaskResults', () => {
     expect(byUser.get(pilot3.id).time_points).toBeCloseTo(0, 0); // slowest
     // distance_points are tied at 1000 (all four flew 50km of best=50km).
     for (const r of rows) expect(r.distance_points).toBeCloseTo(1000, 0);
+  });
+
+  // Regression: goalTimes is built per-pilot (fastest), not per-attempt.
+  // A pilot uploading two goal flights for the same task must not contribute
+  // two entries to the goal-time set — that would distort tMin/tMax for
+  // everyone else.
+  it('dedups goal times by pilot when computing time_points', () => {
+    const taskTime = createTestTask(db, season.id, league.id, { name: 'Dedup' });
+    db.prepare(`UPDATE tasks SET normalized_score = 2000 WHERE id = ?`).run(taskTime.id);
+
+    // Pilot A: two goal attempts in one submission — fastest=3600s, slower=4200s.
+    // (Could also be two different submissions; same bug either way since goalTimes
+    // is built from flight_attempts, not submissions.) If we don't dedup,
+    // goalTimes = [3600, 4200, 3000] → tMin=3000, tMax=4200. With dedup,
+    // goalTimes = [3600, 3000] → tMin=3000, tMax=3600.
+    const subA = createTestSubmission(db, taskTime.id, pilot.id, league.id);
+    createTestAttempt(db, subA, taskTime.id, pilot.id, league.id, {
+      reachedGoal: true,
+      distanceFlownKm: 50,
+      taskTimeS: 3600,
+      attemptIndex: 0,
+    });
+    createTestAttempt(db, subA, taskTime.id, pilot.id, league.id, {
+      reachedGoal: true,
+      distanceFlownKm: 50,
+      taskTimeS: 4200,
+      attemptIndex: 1,
+    });
+    const subB = createTestSubmission(db, taskTime.id, pilot2.id, league.id);
+    createTestAttempt(db, subB, taskTime.id, pilot2.id, league.id, {
+      reachedGoal: true,
+      distanceFlownKm: 50,
+      taskTimeS: 3000,
+    });
+
+    rebuildTaskResults(db, taskTime.id);
+
+    const rows = db
+      .prepare('SELECT user_id, time_points FROM task_results WHERE task_id = ?')
+      .all(taskTime.id) as any[];
+    expect(rows).toHaveLength(2);
+    const byUser = new Map(rows.map((r) => [r.user_id, r]));
+    // tMin=3000, tMax=3600 → ratio = (t - 3000) / 600.
+    // Pilot B at 3000: 1000.
+    // Pilot A's *best* is 3600 (slower 4200 is ignored): ratio=1 → 0.
+    expect(byUser.get(pilot2.id).time_points).toBeCloseTo(1000, 0);
+    expect(byUser.get(pilot.id).time_points).toBeCloseTo(0, 0);
   });
 });

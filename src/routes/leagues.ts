@@ -9,7 +9,6 @@ import { randomUUID } from 'crypto';
 import type { FastifyInstance } from 'fastify';
 import QRCode from 'qrcode';
 import { makeResolveLeagueHook, requireAuth, requireLeagueAdmin, requireLeagueMember } from '../auth';
-import type { SQLiteJobQueue } from '../job-queue';
 import { parseAndValidate } from '../pipeline';
 import { type Cylinder, optimiseRoute } from '../shared/task-engine';
 import {
@@ -45,11 +44,10 @@ function computeGoalLineBearing(turnpoints: ParsedTurnpoint[]): number | null {
 
 interface LeagueRouteOptions {
   db: Database.Database;
-  queue: SQLiteJobQueue;
 }
 
 export async function registerLeagueRoutes(fastify: FastifyInstance, opts: LeagueRouteOptions): Promise<void> {
-  const { db, queue } = opts;
+  const { db } = opts;
 
   // ── Public league list ─────────────────────────────────────────────────────
   fastify.get('/leagues', async (request, reply) => {

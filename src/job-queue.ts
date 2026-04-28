@@ -274,9 +274,17 @@ function rebuildTaskResultsInner(db: Database, taskId: string): void {
   // flight_attempts are ignored — they reflect submission-time state, not
   // current task state. This is the single source of truth for scoring.
   const bestDistKm = Math.max(...attempts.map((a) => a.distance_flown_km));
-  const goalTimes = attempts
-    .filter((a) => a.reached_goal === 1 && a.task_time_s !== null)
-    .map((a) => a.task_time_s as number);
+  // Build the goal-times set from the *fastest* goal time per pilot. Without
+  // dedup, a pilot who uploads the same goal flight twice (or two different
+  // goal flights) would contribute multiple entries and shift tMin/tMax for
+  // everyone — scoring should depend on one attempt per pilot.
+  const fastestGoalTimeByPilot = new Map<string, number>();
+  for (const a of attempts) {
+    if (a.reached_goal !== 1 || a.task_time_s === null) continue;
+    const cur = fastestGoalTimeByPilot.get(a.user_id);
+    if (cur === undefined || a.task_time_s < cur) fastestGoalTimeByPilot.set(a.user_id, a.task_time_s);
+  }
+  const goalTimes = Array.from(fastestGoalTimeByPilot.values());
 
   const scored: ScoredAttemptRow[] = attempts.map((a) => {
     const distance_points = computeDistancePoints(a.distance_flown_km, bestDistKm, a.reached_goal === 1);
