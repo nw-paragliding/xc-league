@@ -38,7 +38,6 @@ interface TaskRow {
   status: string;
   open_date: string;
   close_date: string;
-  scores_frozen_at: string | null;
   task_type: string | null;
   competition_type: string;
 }
@@ -126,12 +125,6 @@ export async function handleIgcUpload(
   if (now > new Date(task.close_date)) {
     return reply.status(409).send({
       error: { code: 'TASK_CLOSED', message: 'The submission window for this task has closed.' },
-    });
-  }
-
-  if (task.scores_frozen_at) {
-    return reply.status(409).send({
-      error: { code: 'TASK_SCORES_FROZEN', message: 'This task is closed. No further submissions are accepted.' },
     });
   }
 
@@ -249,13 +242,10 @@ export async function handleIgcUpload(
   };
 
   // ── Run pipeline ───────────────────────────────────────────────────────────
-  const scoresFrozenAt = task.scores_frozen_at ? new Date(task.scores_frozen_at).getTime() : null;
-
   const pipelineResult = await runPipeline(
     pipelineInput,
     task.open_date.slice(0, 10), // YYYY-MM-DD
     task.close_date.slice(0, 10), // YYYY-MM-DD
-    scoresFrozenAt,
     taskBestDistanceKm,
   );
 
@@ -433,7 +423,7 @@ export async function handleIgcUpload(
  * GET /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/igc
  *
  * Returns the original IGC file. Pilots can always download their own;
- * other pilots' are hidden until scores are frozen.
+ * other pilots' are hidden until the task closes (close_date passed).
  */
 export async function handleIgcDownload(
   request: FastifyRequestBase<{ Params: UploadRouteParams & { submissionId: string } }>,
@@ -446,14 +436,14 @@ export async function handleIgcDownload(
 
   const row = db
     .prepare(`
-    SELECT s.user_id, s.igc_data, s.igc_filename, t.scores_frozen_at
+    SELECT s.user_id, s.igc_data, s.igc_filename, t.close_date
     FROM flight_submissions s
     JOIN tasks t ON t.id = s.task_id
     WHERE s.id = ?
       AND s.deleted_at IS NULL
   `)
     .get(submissionId) as
-    | { user_id: string; igc_data: Buffer; igc_filename: string; scores_frozen_at: string | null }
+    | { user_id: string; igc_data: Buffer; igc_filename: string; close_date: string }
     | undefined;
 
   if (!row) {
@@ -461,13 +451,13 @@ export async function handleIgcDownload(
   }
 
   const isOwner = row.user_id === (request as any).user!.userId;
-  const isFrozen = row.scores_frozen_at !== null;
+  const taskClosed = new Date() > new Date(row.close_date);
 
-  if (!isOwner && !isFrozen) {
+  if (!isOwner && !taskClosed) {
     return reply.status(403).send({
       error: {
-        code: 'SCORES_NOT_FROZEN',
-        message: "Other pilots' IGC files are hidden until task scores are finalised",
+        code: 'TASK_STILL_OPEN',
+        message: "Other pilots' IGC files are hidden until the task closes",
       },
     });
   }
@@ -476,6 +466,6 @@ export async function handleIgcDownload(
     .header('Content-Type', 'application/octet-stream')
     .header('Content-Disposition', `attachment; filename="${row.igc_filename.replace(/[^\w.-]/g, '_')}"`)
     .header('Content-Length', row.igc_data.length)
-    .header('Cache-Control', isFrozen ? 'public, max-age=86400' : 'private, no-cache')
+    .header('Cache-Control', taskClosed ? 'public, max-age=86400' : 'private, no-cache')
     .send(row.igc_data);
 }

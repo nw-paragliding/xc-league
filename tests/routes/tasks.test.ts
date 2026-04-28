@@ -603,21 +603,6 @@ describe('Task lifecycle — POST publish / freeze', () => {
     expect(row.status).toBe('published');
   });
 
-  it('freezes a published task', async () => {
-    const task = createTestTask(db, testSeason.id, testLeague.id);
-    db.prepare(`UPDATE tasks SET status = 'published' WHERE id = ?`).run(task.id);
-
-    const res = await app.inject({
-      method: 'POST',
-      url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${task.id}/freeze`,
-      headers: { 'x-test-user-id': adminUser.id },
-    });
-
-    expect(res.statusCode).toBe(200);
-    const row = db.prepare(`SELECT scores_frozen_at FROM tasks WHERE id = ?`).get(task.id) as any;
-    expect(row.scores_frozen_at).not.toBeNull();
-  });
-
   it('returns 403 when a pilot tries to publish', async () => {
     const task = createTestTask(db, testSeason.id, testLeague.id);
 

@@ -199,11 +199,13 @@ export function createTestAttempt(
   submissionId: string,
   taskId: string,
   userId: string,
-  leagueId: string,
+  _leagueId: string,
   opts: {
     reachedGoal?: boolean;
     distanceFlownKm?: number;
     taskTimeS?: number | null;
+    // Score columns are no longer stored on flight_attempts; rebuildTaskResults
+    // computes them on demand. Accept-and-ignore so existing tests still type-check.
     distancePoints?: number;
     timePoints?: number;
     totalPoints?: number;
@@ -218,10 +220,10 @@ export function createTestAttempt(
        id, submission_id, task_id, user_id,
        sss_crossing_time, ess_crossing_time, goal_crossing_time, task_time_s,
        reached_goal, last_turnpoint_index,
-       distance_flown_km, distance_points, time_points, total_points,
+       distance_flown_km,
        has_flagged_crossings, attempt_index,
        created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     submissionId,
@@ -234,9 +236,6 @@ export function createTestAttempt(
     opts.reachedGoal ? 1 : 0,
     0,
     opts.distanceFlownKm ?? 10,
-    opts.distancePoints ?? 100,
-    opts.timePoints ?? 0,
-    opts.totalPoints ?? 100,
     opts.hasFlaggedCrossings ? 1 : 0,
     opts.attemptIndex ?? 0,
     now,
