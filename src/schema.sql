@@ -139,7 +139,7 @@ CREATE TABLE tasks (
     sss_turnpoint_id        TEXT,                  -- FK set after turnpoints are created; see below
     ess_turnpoint_id        TEXT,                  -- null for hike & fly (ESS = goal)
     goal_turnpoint_id       TEXT,                  -- FK set after turnpoints are created
-    scores_frozen_at        TEXT,                  -- set when close_date passes and rescoring is locked
+    scores_frozen_at        TEXT,                  -- dropped in 0013_simplify_scoring_caches.sql
     -- Optimiser outputs: stored so partial distance can be computed without re-optimising
     projection_origin_lat   REAL,                  -- WGS84 lat of the origin used for partial distance projection
     projection_origin_lng   REAL,                  -- WGS84 lng of the origin used for partial distance projection
@@ -244,10 +244,10 @@ CREATE TABLE flight_attempts (
     last_turnpoint_index        INTEGER     NOT NULL DEFAULT 0,  -- furthest TP index achieved (0 = only SSS)
     distance_flown_km           REAL        NOT NULL DEFAULT 0,  -- best achieved distance along optimal route
 
-    -- Score components
-    distance_points             REAL        NOT NULL DEFAULT 0,  -- fixed at processing time
-    time_points                 REAL        NOT NULL DEFAULT 0,  -- recalculated until task closes
-    total_points                REAL        NOT NULL DEFAULT 0,  -- distance_points + time_points
+    -- Score components (dropped in 0013_simplify_scoring_caches.sql)
+    distance_points             REAL        NOT NULL DEFAULT 0,
+    time_points                 REAL        NOT NULL DEFAULT 0,
+    total_points                REAL        NOT NULL DEFAULT 0,
 
     -- Hike & fly ground validation
     has_flagged_crossings       INTEGER     NOT NULL DEFAULT 0,  -- 1 if any GROUND_ONLY TP crossing is unconfirmed
@@ -306,18 +306,18 @@ CREATE INDEX idx_overrides_crossing   ON turnpoint_overrides (crossing_id);
 
 
 -- =============================================================================
--- SEASON STANDINGS (MATERIALISED CACHE)
--- Recomputed whenever a task's scores change
+-- SEASON STANDINGS (dropped in 0013_simplify_scoring_caches.sql)
+-- Replaced by a live SQL aggregate over task_results joined to tasks.
 -- =============================================================================
 
 CREATE TABLE season_standings (
-    id                  TEXT        PRIMARY KEY,  -- UUID
+    id                  TEXT        PRIMARY KEY,
     season_id           TEXT        NOT NULL REFERENCES seasons (id),
     user_id             TEXT        NOT NULL REFERENCES users (id),
     total_points        REAL        NOT NULL DEFAULT 0,
     tasks_flown         INTEGER     NOT NULL DEFAULT 0,
     tasks_with_goal     INTEGER     NOT NULL DEFAULT 0,
-    rank                INTEGER,                    -- recomputed on each rescore
+    rank                INTEGER,
     last_computed_at    TEXT        NOT NULL DEFAULT (datetime('now')),
     created_at          TEXT        NOT NULL DEFAULT (datetime('now')),
     updated_at          TEXT        NOT NULL DEFAULT (datetime('now')),
@@ -331,8 +331,10 @@ CREATE INDEX idx_standings_user   ON season_standings (user_id);
 
 -- =============================================================================
 -- TASK RESULTS (MATERIALISED CACHE)
--- Best attempt per pilot per task — the public-facing result
--- Recomputed after every rescore
+-- Best attempt per pilot per task — the public-facing result.
+-- Recomputed by rebuildTaskResults() on every upload / soft-delete /
+-- undelete. Season standings are computed live as a SUM aggregate over
+-- this table.
 -- =============================================================================
 
 CREATE TABLE task_results (
@@ -361,17 +363,15 @@ CREATE INDEX idx_task_results_user   ON task_results (user_id);
 
 -- =============================================================================
 -- JOB QUEUE
--- Lightweight queue for IGC processing and rescoring jobs
--- Avoids external Redis dependency while on SQLite
+-- Lightweight queue infrastructure. No scoring jobs are registered today —
+-- scoring runs synchronously inside upload / delete paths via
+-- rebuildTaskResults. Kept for future async work (notifications,
+-- IGC re-parsing on turnpoint edits, etc.).
 -- =============================================================================
 
 CREATE TABLE jobs (
     id                  TEXT        PRIMARY KEY,  -- UUID
-    type                TEXT        NOT NULL,
-                        -- 'PROCESS_SUBMISSION'   parse IGC, score attempts
-                        -- 'RESCORE_TASK'         recalculate time points for all attempts
-                        -- 'FREEZE_TASK_SCORES'   lock scores at close_date
-                        -- 'REBUILD_STANDINGS'    recompute season_standings
+    type                TEXT        NOT NULL,     -- handler-specific identifier
     payload             TEXT        NOT NULL,     -- JSON blob
     status              TEXT        NOT NULL DEFAULT 'PENDING',
                         -- 'PENDING' | 'RUNNING' | 'COMPLETE' | 'FAILED'

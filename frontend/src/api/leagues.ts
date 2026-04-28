@@ -85,8 +85,6 @@ export interface Task {
   taskType: 'RACE_TO_GOAL' | 'OPEN_DISTANCE';
   openDate: string;
   closeDate: string;
-  isFrozen?: boolean;
-  scoresFrozenAt?: string;
   taskValue?: number | null;
   status?: 'draft' | 'published';
   createdAt: string;

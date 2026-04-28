@@ -1013,7 +1013,7 @@ function TasksTab() {
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      background: task.scoresFrozenAt ? 'var(--bg2)' : 'transparent',
+                      background: new Date(task.closeDate) < new Date() ? 'var(--bg2)' : 'transparent',
                       cursor: 'grab',
                       userSelect: 'none',
                     }}
@@ -1067,7 +1067,7 @@ function TasksTab() {
                       )}
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                      {!task.scoresFrozenAt && task.status !== 'published' && (
+                      {new Date(task.closeDate) >= new Date() && task.status !== 'published' && (
                         <button
                           onClick={() => publishMutation.mutate(task.id)}
                           disabled={publishMutation.isPending}
@@ -1085,7 +1085,7 @@ function TasksTab() {
                           Publish
                         </button>
                       )}
-                      {!task.scoresFrozenAt && task.status === 'published' && (task.pilotCount ?? 0) === 0 && (
+                      {new Date(task.closeDate) >= new Date() && task.status === 'published' && (task.pilotCount ?? 0) === 0 && (
                         <button
                           onClick={() => {
                             if (confirm(`Unpublish "${task.name}"? It will revert to draft.`))
@@ -1097,7 +1097,7 @@ function TasksTab() {
                           Unpublish
                         </button>
                       )}
-                      {!task.scoresFrozenAt && task.status !== 'published' && (
+                      {new Date(task.closeDate) >= new Date() && task.status !== 'published' && (
                         <>
                           <button
                             onClick={() => setEditingTask(task)}

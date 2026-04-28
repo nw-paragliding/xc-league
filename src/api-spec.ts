@@ -303,7 +303,6 @@
  *       openDate: string,
  *       closeDate: string,
  *       optimisedDistanceKm: number | null,
- *       isFrozen: boolean,
  *       pilotCount: number,         // pilots with at least one submission
  *       goalCount: number,          // pilots who reached goal
  *     }>
@@ -659,33 +658,6 @@
 // ADMIN — TASK MANAGEMENT
 // =============================================================================
 
-/**
- * POST /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/freeze
- * Auth: league admin or super-admin
- *
- * Manually freeze task scores before the close_date.
- * Sets scores_frozen_at to now. Irreversible.
- *
- * Response 200: { task: TaskDetail }
- *
- * Errors:
- *   409 ALREADY_FROZEN
- */
-
-/**
- * POST /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/rescore
- * Auth: league admin or super-admin
- *
- * Manually trigger a rescore job for a task (e.g. after a correction).
- * Only permitted if task is not frozen.
- *
- * Response 202:
- *   { jobId: string, message: 'Rescore job queued' }
- *
- * Errors:
- *   409 TASK_FROZEN — cannot rescore after freeze
- */
-
 // =============================================================================
 // SUPER-ADMIN
 // =============================================================================
@@ -792,8 +764,6 @@
  *   ALREADY_MEMBER
  *   ALREADY_REGISTERED
  *   TASK_HAS_SUBMISSIONS
- *   ALREADY_FROZEN
- *   TASK_FROZEN
  *
  * HTTP 413 Payload Too Large:
  *   FILE_TOO_LARGE
