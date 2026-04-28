@@ -1085,18 +1085,20 @@ function TasksTab() {
                           Publish
                         </button>
                       )}
-                      {new Date(task.closeDate) >= new Date() && task.status === 'published' && (task.pilotCount ?? 0) === 0 && (
-                        <button
-                          onClick={() => {
-                            if (confirm(`Unpublish "${task.name}"? It will revert to draft.`))
-                              unpublishMutation.mutate(task.id);
-                          }}
-                          disabled={unpublishMutation.isPending}
-                          style={secondaryBtn}
-                        >
-                          Unpublish
-                        </button>
-                      )}
+                      {new Date(task.closeDate) >= new Date() &&
+                        task.status === 'published' &&
+                        (task.pilotCount ?? 0) === 0 && (
+                          <button
+                            onClick={() => {
+                              if (confirm(`Unpublish "${task.name}"? It will revert to draft.`))
+                                unpublishMutation.mutate(task.id);
+                            }}
+                            disabled={unpublishMutation.isPending}
+                            style={secondaryBtn}
+                          >
+                            Unpublish
+                          </button>
+                        )}
                       {new Date(task.closeDate) >= new Date() && task.status !== 'published' && (
                         <>
                           <button

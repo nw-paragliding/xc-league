@@ -442,9 +442,7 @@ export async function handleIgcDownload(
     WHERE s.id = ?
       AND s.deleted_at IS NULL
   `)
-    .get(submissionId) as
-    | { user_id: string; igc_data: Buffer; igc_filename: string; close_date: string }
-    | undefined;
+    .get(submissionId) as { user_id: string; igc_data: Buffer; igc_filename: string; close_date: string } | undefined;
 
   if (!row) {
     return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Submission not found' } });
