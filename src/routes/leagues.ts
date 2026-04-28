@@ -606,7 +606,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
          JOIN users u ON u.id = tr.user_id
          WHERE t.season_id = ? AND t.deleted_at IS NULL
          GROUP BY tr.user_id
-         ORDER BY rank`,
+         ORDER BY rank, pilotId`,
         )
         .all(seasonId) as any[];
 

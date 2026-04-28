@@ -157,11 +157,23 @@ export class JobWorker {
   }
 
   private claimNextJob(): JobRecord | null {
+    // Alias snake_case columns to the camelCase JobRecord shape. Without
+    // this, handleJobError() reads job.maxAttempts as undefined and the
+    // attempts >= maxAttempts check is always false, so jobs retry forever
+    // instead of terminally failing.
     const row = this.db
       .prepare(
-        `SELECT * FROM jobs
-       WHERE status = 'PENDING' AND datetime(scheduled_at) <= datetime('now')
-       ORDER BY datetime(scheduled_at) ASC LIMIT 1`,
+        `SELECT id, type, payload, status, attempts,
+                max_attempts AS maxAttempts,
+                last_error   AS lastError,
+                scheduled_at AS scheduledAt,
+                started_at   AS startedAt,
+                completed_at AS completedAt,
+                created_at   AS createdAt,
+                updated_at   AS updatedAt
+         FROM jobs
+         WHERE status = 'PENDING' AND datetime(scheduled_at) <= datetime('now')
+         ORDER BY datetime(scheduled_at) ASC LIMIT 1`,
       )
       .get() as any;
 
