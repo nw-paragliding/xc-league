@@ -9,14 +9,15 @@
 //  - Duplicate detection: SHA-256 of file content; same pilot+task+hash → 409
 //  - IGC stored as BLOB in flight_submissions alongside filename and size
 //  - Scored result written to flight_attempts (one per attempt detected)
-//  - RESCORE_TASK enqueued only when pilot reached goal (time pts provisional)
+//  - task_results rebuilt synchronously inside the upload txn (single source
+//    of truth for scoring); no async rescore jobs are enqueued.
 // =============================================================================
 
 import type { Database } from 'better-sqlite3';
 import { createHash, randomUUID } from 'crypto';
 import type { FastifyReply, FastifyRequest as FastifyRequestBase } from 'fastify';
 import { requireAuth } from './auth';
-import { type RescoreTaskPayload, rebuildTaskResults, type SQLiteJobQueue } from './job-queue';
+import { rebuildTaskResults, type SQLiteJobQueue } from './job-queue';
 import { formatPipelineError, type PipelineInput, runPipeline, type TurnpointDef } from './pipeline';
 
 // =============================================================================
@@ -365,18 +366,11 @@ export async function handleIgcUpload(
     // Link best attempt to submission
     db.prepare(`UPDATE flight_submissions SET best_attempt_id = ? WHERE id = ?`).run(bestAttemptId, submissionId);
 
-    // Immediately materialise task_results for this task so leaderboard is live
+    // Materialise task_results inside the same txn. rebuildTaskResults
+    // re-scores from canonical inputs (best distance, full goal-times set),
+    // so this single call is authoritative — no async rescore needed.
     rebuildTaskResults(db, taskId);
   })();
-
-  // ── Enqueue rescore if goal reached ───────────────────────────────────────
-  if (best.reachedGoal) {
-    queue.enqueue<RescoreTaskPayload>('RESCORE_TASK', {
-      taskId,
-      leagueId: task.league_id,
-      triggeredBySubmissionId: submissionId,
-    });
-  }
 
   // ── Response ───────────────────────────────────────────────────────────────
   const row = db

@@ -104,27 +104,25 @@ async function main() {
   const worker = bootstrapWorker(db, queue);
   worker.start();
 
-  // ── Backfill task_results for any tasks that have attempts but no results ──
-  // Handles uploads that happened before the materialised-view logic was added.
-  const orphanedTasks = db
-    .prepare(
-      `SELECT DISTINCT fa.task_id
-     FROM flight_attempts fa
-     LEFT JOIN task_results tr ON tr.task_id = fa.task_id
-     WHERE tr.id IS NULL AND fa.deleted_at IS NULL`,
-    )
-    .all() as Array<{ task_id: string }>;
+  // ── Boot-time rebuild of task_results ──────────────────────────────────────
+  // rebuildTaskResults now re-scores from canonical inputs (current best
+  // distance, full goal-times set), so previously-cached rows can be stale
+  // under bug fixes. Run it once for every non-deleted task on boot — cheap
+  // (~1ms per task) and self-heals the leaderboard. Standings is now a live
+  // SQL aggregate, so no separate standings rebuild is needed.
+  const tasksToRebuild = db
+    .prepare(`SELECT id FROM tasks WHERE deleted_at IS NULL`)
+    .all() as Array<{ id: string }>;
+  for (const { id } of tasksToRebuild) rebuildTaskResults(db, id);
 
-  for (const { task_id } of orphanedTasks) {
-    rebuildTaskResults(db, task_id);
-    // Enqueue standings rebuild for the season this task belongs to
-    const row = db.prepare(`SELECT t.season_id, t.league_id FROM tasks t WHERE t.id = ?`).get(task_id) as
-      | { season_id: string; league_id: string }
-      | undefined;
-    if (row) {
-      queue.enqueue('REBUILD_STANDINGS', { seasonId: row.season_id, leagueId: row.league_id });
-    }
-  }
+  // Drop any pending jobs that referenced removed handler types so the worker
+  // doesn't fail-loop them after deploy.
+  db.prepare(
+    `DELETE FROM jobs
+     WHERE status = 'PENDING'
+       AND type IN ('RESCORE_TASK', 'FREEZE_TASK_SCORES', 'REBUILD_STANDINGS',
+                    'NOTIFY_PILOTS', 'REPROCESS_ALL_SUBMISSIONS')`,
+  ).run();
 
   // ── Fastify ────────────────────────────────────────────────────────────────
   const app = Fastify({

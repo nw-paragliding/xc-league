@@ -559,19 +559,25 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
 
       if (!season) return reply.status(404).send({ error: 'Season not found' });
 
+      // Live aggregate over task_results: sum per pilot across non-deleted
+      // tasks in this season. Single source of truth — no separate cache.
       const standings = db
         .prepare(
           `SELECT
-           ss.rank,
-           ss.user_id        AS pilotId,
-           u.display_name    AS pilotName,
-           ss.total_points   AS totalPoints,
-           ss.tasks_flown    AS tasksFlown,
-           ss.tasks_with_goal AS tasksWithGoal
-         FROM season_standings ss
-         JOIN users u ON u.id = ss.user_id
-         WHERE ss.season_id = ?
-         ORDER BY ss.rank`,
+           RANK() OVER (
+             ORDER BY SUM(tr.total_points) DESC
+           ) AS rank,
+           tr.user_id AS pilotId,
+           u.display_name AS pilotName,
+           ROUND(SUM(tr.total_points), 1) AS totalPoints,
+           COUNT(tr.task_id) AS tasksFlown,
+           SUM(tr.reached_goal) AS tasksWithGoal
+         FROM task_results tr
+         JOIN tasks t ON t.id = tr.task_id
+         JOIN users u ON u.id = tr.user_id
+         WHERE t.season_id = ? AND t.deleted_at IS NULL
+         GROUP BY tr.user_id
+         ORDER BY rank`,
         )
         .all(seasonId) as any[];
 
@@ -1745,24 +1751,21 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       // Verify task belongs to this season/league
       const task = db
         .prepare(
-          `SELECT t.id, t.scores_frozen_at
+          `SELECT t.id
          FROM tasks t
          JOIN seasons s ON s.id = t.season_id
          WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`,
         )
-        .get(taskId, seasonId, league.id) as { id: string; scores_frozen_at: string | null } | undefined;
+        .get(taskId, seasonId, league.id) as { id: string } | undefined;
 
       if (!task) {
         return reply.status(404).send({ error: 'Task not found' });
       }
 
-      // Prevent deleting frozen tasks
-      if (task.scores_frozen_at) {
-        return reply.status(400).send({ error: 'Cannot delete a frozen task' });
-      }
-
       // Soft delete the task and cascade to related data in one transaction.
       // task_results has no deleted_at (computed data) so hard-delete those rows.
+      // Admin moderation (deleting closed tasks) is allowed; the cascade keeps
+      // standings in sync via the live aggregate.
       db.transaction(() => {
         db.prepare(`UPDATE tasks SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(
           taskId,
