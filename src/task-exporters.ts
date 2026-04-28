@@ -208,7 +208,10 @@ export function buildXctrackDeepLink(task: ExportTask): string {
     e: 0, // WGS84
   };
 
-  if (tps.some((tp) => tp.type === 'GOAL_LINE')) {
+  // Match the file/v1 path: pick the terminal goal TP rather than any match,
+  // so a malformed task with multiple goal-typed TPs still picks the last one.
+  const goalTp = [...tps].reverse().find((tp) => tp.type === 'GOAL_LINE' || tp.type === 'GOAL_CYLINDER');
+  if (goalTp?.type === 'GOAL_LINE') {
     qrTask['g'] = { t: 'LINE' };
   }
 
