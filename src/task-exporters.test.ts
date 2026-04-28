@@ -48,10 +48,14 @@ describe('exportXctsk — v1 JSON', () => {
     expect(wp.lon).toBeCloseTo(-121.991, 4);
   });
 
-  it('marks SSS and ESS turnpoints with type tag', () => {
+  it('marks ESS turnpoints with type tag', () => {
     const json = JSON.parse(exportXctsk(baseTask));
-    expect(json.turnpoints[0].type).toBe('SSS');
     expect(json.turnpoints[2].type).toBe('ESS');
+  });
+
+  it('leaves SSS implicit (XCTrack/parser treat first TP as start)', () => {
+    const json = JSON.parse(exportXctsk(baseTask));
+    expect(json.turnpoints[0]).not.toHaveProperty('type');
   });
 
   it('omits type tag for cylinder and goal turnpoints', () => {
@@ -62,8 +66,8 @@ describe('exportXctsk — v1 JSON', () => {
 
   it('puts type before radius in turnpoint object (spec order)', () => {
     const out = exportXctsk(baseTask);
-    const sss = JSON.parse(out).turnpoints[0];
-    expect(Object.keys(sss)).toEqual(['type', 'radius', 'waypoint']);
+    const ess = JSON.parse(out).turnpoints[2];
+    expect(Object.keys(ess)).toEqual(['type', 'radius', 'waypoint']);
   });
 
   it('encodes goal as top-level goal.type=CYLINDER for cylinder goal', () => {

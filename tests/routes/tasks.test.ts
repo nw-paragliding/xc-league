@@ -169,6 +169,26 @@ describe('parseXctsk — JSON format (v1)', () => {
   it('format is xctsk', () => {
     expect(parseXctsk(XCTSK_JSON).format).toBe('xctsk');
   });
+
+  it('does not double-tag SSS when the file has an explicit SSS', () => {
+    // A spec-valid file: TP0 explicitly typed SSS, TP1 untyped.
+    // Without the explicit-SSS guard, the parser would re-promote TP1 to SSS
+    // (firstUntyped) and produce two starts.
+    const explicitSssTask = JSON.stringify({
+      version: 1,
+      taskType: 'CLASSIC',
+      turnpoints: [
+        { type: 'SSS', waypoint: { name: 'START', lat: 47.5, lon: -122.0, altSmoothed: 0 }, radius: 400 },
+        { waypoint: { name: 'TP1', lat: 47.51, lon: -122.01, altSmoothed: 0 }, radius: 400 },
+        { waypoint: { name: 'GOAL', lat: 47.52, lon: -122.02, altSmoothed: 0 }, radius: 400 },
+      ],
+    });
+    const result = parseXctsk(explicitSssTask);
+    expect(result.turnpoints.filter((tp) => tp.type === 'SSS')).toHaveLength(1);
+    expect(result.turnpoints[0].type).toBe('SSS');
+    expect(result.turnpoints[1].type).toBe('CYLINDER');
+    expect(result.turnpoints[2].type).toBe('GOAL_CYLINDER');
+  });
 });
 
 describe('parseXctsk — [GND] naming convention', () => {
@@ -1099,7 +1119,7 @@ describe('Task QR endpoint — GET /leagues/:slug/seasons/:seasonId/tasks/:taskI
 // .xctsk download endpoint — JSON output regression tests
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Task download — GET /tasks/:taskId/download?format=xctsk', () => {
+describe('Task download — GET /leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/download?format=xctsk', () => {
   let app: ReturnType<typeof Fastify>;
   let db: ReturnType<typeof getTestDb>;
   let pilotUser: ReturnType<typeof createTestUser>;

@@ -77,10 +77,16 @@ export function exportXctsk(task: ExportTask): string {
         altSmoothed: 0,
       },
     };
-    // Spec puts `type` before `radius`; insert it via a fresh object so JSON
+    // SSS is left implicit (XCTrack and our parser both treat the first
+    // turnpoint as the start). Emitting an explicit `type: 'SSS'` has caused
+    // problems in XCTrack when no start time is set, and would also conflict
+    // with our parser's "first untyped TP = SSS" inference (creating a
+    // duplicate start on round-trip). ESS stays explicit.
+    //
+    // Spec puts `type` before `radius`; insert via a fresh object so JSON
     // key order matches the documented order.
-    if (tp.type === 'SSS' || tp.type === 'ESS') {
-      return { type: tp.type, ...tpOut };
+    if (tp.type === 'ESS') {
+      return { type: 'ESS', ...tpOut };
     }
     return tpOut;
   });

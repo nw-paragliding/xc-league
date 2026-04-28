@@ -101,11 +101,13 @@ function parseXctskJson(content: string): ParsedTask {
 
   // In the JSON format, only ESS (and sometimes SSS) are explicitly typed.
   // The convention is:
-  //   - first TP without a type tag  = SSS (start)
-  //   - last  TP without a type tag  = Goal
-  //   - any TP with type === 'ESS'   = ESS
   //   - any TP with type === 'SSS'   = SSS (explicit override)
-  // Find first and last untyped indices so we can assign SSS / Goal:
+  //   - any TP with type === 'ESS'   = ESS
+  //   - first TP without a type tag  = SSS (only if no explicit SSS exists)
+  //   - last  TP without a type tag  = Goal
+  // We skip implicit-SSS assignment when the file has an explicit SSS to
+  // avoid creating a duplicate start.
+  const hasExplicitSss = tps.some((tp) => tp.type?.toUpperCase() === 'SSS');
   const firstUntyped = tps.findIndex((tp) => !tp.type);
   const lastUntyped = tps.length - 1 - [...tps].reverse().findIndex((tp) => !tp.type);
 
@@ -125,7 +127,7 @@ function parseXctskJson(content: string): ParsedTask {
     } else if (rawType === 'ESS') {
       type = 'ESS';
     } else if (!tp.type) {
-      if (idx === firstUntyped) type = 'SSS';
+      if (idx === firstUntyped && !hasExplicitSss) type = 'SSS';
       else if (idx === lastUntyped && lastUntyped !== firstUntyped) type = 'GOAL_CYLINDER';
     }
 
