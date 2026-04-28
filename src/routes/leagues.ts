@@ -375,14 +375,23 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       const userId = (request as any).user!.userId;
       const league = (request as any).league;
 
+      // Per-submission scores come from task_results (the authoritative
+      // post-rebuild row). All of a pilot's submissions for a task show the
+      // same score — that's correct: scoring is per-pilot per-task, not
+      // per-submission. Reading point columns from flight_attempts would
+      // return submission-time snapshots that go stale once another upload
+      // changes the best distance or goal-times set.
       const rows = db
         .prepare(
           `SELECT fs.id, fs.status, fs.igc_filename, fs.igc_size_bytes, fs.submitted_at, fs.igc_date,
-                fa.attempt_index, fa.reached_goal, fa.distance_flown_km, fa.task_time_s,
-                fa.distance_points, fa.time_points, fa.total_points,
-                fa.has_flagged_crossings, fa.last_turnpoint_index
+                fa.attempt_index, fa.last_turnpoint_index,
+                tr.reached_goal, tr.distance_flown_km, tr.task_time_s,
+                tr.distance_points, tr.time_points, tr.total_points,
+                tr.has_flagged_crossings,
+                t.close_date AS task_close_date
          FROM flight_submissions fs
          LEFT JOIN flight_attempts fa ON fa.id = fs.best_attempt_id
+         LEFT JOIN task_results tr ON tr.task_id = fs.task_id AND tr.user_id = fs.user_id
          JOIN tasks t ON t.id = fs.task_id
          JOIN seasons s ON s.id = t.season_id
          WHERE fs.task_id = ? AND s.id = ? AND s.league_id = ?
@@ -391,6 +400,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         )
         .all(taskId, seasonId, league.id, userId) as any[];
 
+      const now = new Date();
       const submissions = rows.map((row) => {
         const bestAttempt =
           row.attempt_index != null
@@ -407,6 +417,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
               }
             : null;
 
+        const taskOpen = now <= new Date(row.task_close_date);
         return {
           id: row.id,
           status: row.status,
@@ -416,7 +427,9 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
           igcDate: row.igc_date ?? null,
           bestAttempt,
           allAttempts: bestAttempt ? [bestAttempt] : [],
-          timePointsProvisional: Boolean(row.reached_goal),
+          // Scores can change while the task is open: any new upload may
+          // shift the best distance or goal-times set and rescore everyone.
+          timePointsProvisional: taskOpen,
         };
       });
 
@@ -463,13 +476,16 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         const lats = fixes.map((f: any) => f.lat);
         const lngs = fixes.map((f: any) => f.lng);
 
-        // Best attempt for score/goal metadata
+        // Best attempt for score/goal metadata. Read from task_results (the
+        // authoritative post-rebuild row) so the metadata matches the
+        // leaderboard rather than the submission-time snapshot on
+        // flight_attempts.
         const bestAttempt = db
           .prepare(
-            `SELECT reached_goal, total_points
-         FROM flight_attempts
-         WHERE submission_id = ? AND deleted_at IS NULL
-         ORDER BY total_points DESC LIMIT 1`,
+            `SELECT tr.reached_goal, tr.total_points
+         FROM task_results tr
+         JOIN flight_submissions s ON s.task_id = tr.task_id AND s.user_id = tr.user_id
+         WHERE s.id = ?`,
           )
           .get(submission.id) as { reached_goal: number; total_points: number } | undefined;
 
@@ -559,11 +575,15 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
 
       // Live aggregate over task_results: sum per pilot across non-deleted
       // tasks in this season. Single source of truth — no separate cache.
+      // Rank by ROUND(SUM, 1) — the same value we expose as totalPoints —
+      // so two pilots whose underlying float sums differ only by IEEE-754
+      // jitter (e.g. 799.99999 vs 800.0, both displayed as 800.0) are
+      // guaranteed to share a rank rather than flicker.
       const standings = db
         .prepare(
           `SELECT
            RANK() OVER (
-             ORDER BY SUM(tr.total_points) DESC
+             ORDER BY ROUND(SUM(tr.total_points), 1) DESC
            ) AS rank,
            tr.user_id AS pilotId,
            u.display_name AS pilotName,

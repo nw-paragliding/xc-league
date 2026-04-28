@@ -372,14 +372,22 @@ export async function handleIgcUpload(
   })();
 
   // ── Response ───────────────────────────────────────────────────────────────
+  // task_results holds the post-rebuild authoritative scores (normalised,
+  // rescored against the live goal-times set). flight_attempts has the
+  // attempt-level metadata we need (attempt_index, last_turnpoint_index).
+  // Reading point columns from flight_attempts would return submission-time
+  // snapshots that go stale once another upload changes the best distance
+  // or goal-times set.
   const row = db
     .prepare(
       `SELECT fs.id, fs.status, fs.igc_filename, fs.igc_size_bytes, fs.submitted_at, fs.igc_date,
-            fa.attempt_index, fa.reached_goal, fa.distance_flown_km, fa.task_time_s,
-            fa.distance_points, fa.time_points, fa.total_points,
-            fa.has_flagged_crossings, fa.last_turnpoint_index
+            fa.attempt_index, fa.last_turnpoint_index,
+            tr.reached_goal, tr.distance_flown_km, tr.task_time_s,
+            tr.distance_points, tr.time_points, tr.total_points,
+            tr.has_flagged_crossings
      FROM flight_submissions fs
      LEFT JOIN flight_attempts fa ON fa.id = fs.best_attempt_id
+     LEFT JOIN task_results tr ON tr.task_id = fs.task_id AND tr.user_id = fs.user_id
      WHERE fs.id = ?`,
     )
     .get(submissionId) as any;
