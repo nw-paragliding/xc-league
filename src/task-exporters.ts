@@ -28,58 +28,76 @@ export interface ExportTask {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// .xctsk export (XCTrack XML)
+// .xctsk export (XCTrack v1 JSON)
+//
+// Spec: https://xctrack.org/Competition_Interfaces.html — "Task definition format"
+//
+// Modern XCTrack (and FlySkyHy) parse .xctsk files as JSON. The XML form is
+// legacy and is rejected by current XCTrack with a Gson MalformedJsonException.
+// QR codes use a separate v2 polyline format — see buildXctrackDeepLink.
+//
+// FlySkyHy is sensitive to top-level key order (see xctrack-public#928), so we
+// emit keys in the order documented by the spec: taskType, version, earthModel,
+// turnpoints, goal.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Format decimal degrees × 10^7 for xctsk (some apps require integer form) */
-function toXctskCoord(deg: number): number {
-  return Math.round(deg * 1e7);
+interface XctskV1Waypoint {
+  name: string;
+  description: string;
+  lat: number;
+  lon: number;
+  altSmoothed: number;
+}
+
+interface XctskV1Turnpoint {
+  type?: 'SSS' | 'ESS';
+  radius: number;
+  waypoint: XctskV1Waypoint;
+}
+
+interface XctskV1File {
+  taskType: 'CLASSIC';
+  version: 1;
+  earthModel: 'WGS84';
+  turnpoints: XctskV1Turnpoint[];
+  goal?: { type: 'CYLINDER' | 'LINE' };
 }
 
 export function exportXctsk(task: ExportTask): string {
   const tps = [...task.turnpoints].sort((a, b) => a.sequenceIndex - b.sequenceIndex);
 
-  const sssIdx = tps.findIndex((t) => t.type === 'SSS');
-  const essIdx = tps.findIndex((t) => t.type === 'ESS');
-  const goalIdx = tps.findIndex((t) => t.type === 'GOAL_CYLINDER' || t.type === 'GOAL_LINE');
+  const turnpoints: XctskV1Turnpoint[] = tps.map((tp) => {
+    const tpOut: XctskV1Turnpoint = {
+      radius: Math.round(tp.radius_m),
+      waypoint: {
+        name: tp.name,
+        description: tp.name,
+        lat: tp.latitude,
+        lon: tp.longitude,
+        altSmoothed: 0,
+      },
+    };
+    // Spec puts `type` before `radius`; insert it via a fresh object so JSON
+    // key order matches the documented order.
+    if (tp.type === 'SSS' || tp.type === 'ESS') {
+      return { type: tp.type, ...tpOut };
+    }
+    return tpOut;
+  });
 
-  const turnpointsXml = tps
-    .map((tp, i) => {
-      const ozType = tp.type === 'GOAL_LINE' ? 'line' : 'cylinder';
-      return [
-        `    <turnpoint index="${i}">`,
-        `      <waypoint name="${escapeXml(tp.name)}" lat="${toXctskCoord(tp.latitude)}" lon="${toXctskCoord(tp.longitude)}" />`,
-        `      <observation-zone type="${ozType}" radius="${Math.round(tp.radius_m)}" />`,
-        `    </turnpoint>`,
-      ].join('\n');
-    })
-    .join('\n');
+  const out: XctskV1File = {
+    taskType: 'CLASSIC',
+    version: 1,
+    earthModel: 'WGS84',
+    turnpoints,
+  };
 
-  const sssTag = sssIdx >= 0 ? `  <sss index="${sssIdx}" />` : '';
-  const essTag = essIdx >= 0 ? `  <ess index="${essIdx}" />` : '';
-  const goalTag = goalIdx >= 0 ? `  <goal index="${goalIdx}" />` : '';
+  const goalTp = tps.find((tp) => tp.type === 'GOAL_LINE' || tp.type === 'GOAL_CYLINDER');
+  if (goalTp) {
+    out.goal = { type: goalTp.type === 'GOAL_LINE' ? 'LINE' : 'CYLINDER' };
+  }
 
-  const typeAttr = task.taskType === 'OPEN_DISTANCE' ? 'OPEN_DISTANCE' : 'RACE_TO_GOAL';
-
-  return [
-    `<?xml version="1.0" encoding="utf-8"?>`,
-    `<xctrack>`,
-    `  <task type="${typeAttr}" version="1">`,
-    `    <turnpoints>`,
-    turnpointsXml,
-    `    </turnpoints>`,
-    sssTag,
-    essTag,
-    goalTag,
-    `  </task>`,
-    `</xctrack>`,
-  ]
-    .filter(Boolean)
-    .join('\n');
-}
-
-function escapeXml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return JSON.stringify(out);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
