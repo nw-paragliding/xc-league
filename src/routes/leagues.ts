@@ -375,23 +375,26 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       const userId = (request as any).user!.userId;
       const league = (request as any).league;
 
-      // Per-submission scores come from task_results (the authoritative
-      // post-rebuild row). All of a pilot's submissions for a task show the
-      // same score — that's correct: scoring is per-pilot per-task, not
-      // per-submission. Reading point columns from flight_attempts would
-      // return submission-time snapshots that go stale once another upload
-      // changes the best distance or goal-times set.
+      // Each row shows the pilot's *current* task state (their best attempt
+      // across all submissions for this task, scored against the live
+      // best-distance + goal-times set). Both the score columns and the
+      // attempt metadata are sourced via tr.best_attempt_id so attempt_index
+      // and turnpointsCrossed always describe the same attempt that produced
+      // the score — no risk of mixing metadata from one submission with
+      // scores from another. Every submission row therefore carries the
+      // same bestAttempt; that's correct because scoring is per-pilot
+      // per-task, not per-submission.
       const rows = db
         .prepare(
           `SELECT fs.id, fs.status, fs.igc_filename, fs.igc_size_bytes, fs.submitted_at, fs.igc_date,
-                fa.attempt_index, fa.last_turnpoint_index,
                 tr.reached_goal, tr.distance_flown_km, tr.task_time_s,
                 tr.distance_points, tr.time_points, tr.total_points,
                 tr.has_flagged_crossings,
+                fa.attempt_index, fa.last_turnpoint_index,
                 t.close_date AS task_close_date
          FROM flight_submissions fs
-         LEFT JOIN flight_attempts fa ON fa.id = fs.best_attempt_id
          LEFT JOIN task_results tr ON tr.task_id = fs.task_id AND tr.user_id = fs.user_id
+         LEFT JOIN flight_attempts fa ON fa.id = tr.best_attempt_id
          JOIN tasks t ON t.id = fs.task_id
          JOIN seasons s ON s.id = t.season_id
          WHERE fs.task_id = ? AND s.id = ? AND s.league_id = ?

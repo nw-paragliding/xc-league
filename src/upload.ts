@@ -372,22 +372,24 @@ export async function handleIgcUpload(
   })();
 
   // ── Response ───────────────────────────────────────────────────────────────
-  // task_results holds the post-rebuild authoritative scores (normalised,
-  // rescored against the live goal-times set). flight_attempts has the
-  // attempt-level metadata we need (attempt_index, last_turnpoint_index).
-  // Reading point columns from flight_attempts would return submission-time
-  // snapshots that go stale once another upload changes the best distance
-  // or goal-times set.
+  // The response reflects the pilot's *current* task state after the upload:
+  // task_results holds their best attempt across all submissions for this
+  // task, scored against the live best-distance + goal-times set. Both the
+  // score columns AND the attempt metadata are sourced via tr.best_attempt_id
+  // so the bestAttempt object is internally consistent — attempt_index and
+  // turnpointsCrossed always describe the same attempt that produced the
+  // score. If the pilot had a previous-better submission, the response will
+  // show that one; that's correct, since it's what the leaderboard shows.
   const row = db
     .prepare(
       `SELECT fs.id, fs.status, fs.igc_filename, fs.igc_size_bytes, fs.submitted_at, fs.igc_date,
-            fa.attempt_index, fa.last_turnpoint_index,
             tr.reached_goal, tr.distance_flown_km, tr.task_time_s,
             tr.distance_points, tr.time_points, tr.total_points,
-            tr.has_flagged_crossings
+            tr.has_flagged_crossings,
+            fa.attempt_index, fa.last_turnpoint_index
      FROM flight_submissions fs
-     LEFT JOIN flight_attempts fa ON fa.id = fs.best_attempt_id
      LEFT JOIN task_results tr ON tr.task_id = fs.task_id AND tr.user_id = fs.user_id
+     LEFT JOIN flight_attempts fa ON fa.id = tr.best_attempt_id
      WHERE fs.id = ?`,
     )
     .get(submissionId) as any;
@@ -414,7 +416,11 @@ export async function handleIgcUpload(
       igcDate: row.igc_date ?? null,
       bestAttempt,
       allAttempts: [bestAttempt],
-      timePointsProvisional: best.reachedGoal,
+      // Scores can shift while the task is open — any later upload may move
+      // the best distance or goal-times set and rescore everyone. The upload
+      // path only accepts submissions before close_date, so the task is
+      // necessarily still open here.
+      timePointsProvisional: true,
     },
   });
 }
