@@ -314,17 +314,18 @@ function rebuildTaskResultsInner(db: Database, taskId: string): void {
   }
   let bestList = Array.from(bestByPilot.values());
 
-  // Optional task-level normalisation: scale distance_points and time_points
-  // independently so the winner's total = normalized_score. Computing both
-  // components under the same scale and re-deriving total preserves the
-  // dp + tp = total invariant (the previous implementation rounded total and
-  // dp separately, then derived tp = total - dp, drifting by ±1).
+  // Task-level normalisation: scale distance_points and time_points
+  // independently so the winner's total = normalized_score (which defaults
+  // to 1000 if the column is NULL). Computing both components under the
+  // same scale and re-deriving total preserves the dp + tp = total
+  // invariant — the previous implementation rounded total and dp
+  // separately and derived tp = total - dp, drifting by ±1.
   const taskRow = db.prepare(`SELECT normalized_score FROM tasks WHERE id = ?`).get(taskId) as
     | { normalized_score: number | null }
     | undefined;
   const normalized = taskRow?.normalized_score ?? 1000;
 
-  if (normalized !== null && bestList.length > 0) {
+  if (bestList.length > 0) {
     const winnerTotal = Math.max(...bestList.map((r) => r.total_points));
     if (winnerTotal > 0) {
       const scale = normalized / winnerTotal;
