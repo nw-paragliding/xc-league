@@ -1667,9 +1667,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
          JOIN seasons s ON s.id = t.season_id
          WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`,
         )
-        .get(taskId, seasonId, league.id) as
-        | { id: string; open_date: string; close_date: string }
-        | undefined;
+        .get(taskId, seasonId, league.id) as { id: string; open_date: string; close_date: string } | undefined;
 
       if (!existingTask) {
         return reply.status(404).send({ error: 'Task not found' });
