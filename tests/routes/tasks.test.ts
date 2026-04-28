@@ -1096,6 +1096,66 @@ describe('Task QR endpoint — GET /leagues/:slug/seasons/:seasonId/tasks/:taskI
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// .xctsk download endpoint — JSON output regression tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Task download — GET /tasks/:taskId/download?format=xctsk', () => {
+  let app: ReturnType<typeof Fastify>;
+  let db: ReturnType<typeof getTestDb>;
+  let pilotUser: ReturnType<typeof createTestUser>;
+  let testLeague: ReturnType<typeof createTestLeague>;
+  let testSeason: ReturnType<typeof createTestSeason>;
+
+  beforeEach(async () => {
+    resetTestDb();
+    db = getTestDb();
+    setupTestDatabase(db);
+    pilotUser = createTestUser(db);
+    testLeague = createTestLeague(db);
+    testSeason = createTestSeason(db, testLeague.id);
+    addLeagueMember(db, testLeague.id, pilotUser.id, 'pilot');
+    app = await buildTestApp(db);
+  });
+
+  const dlUrl = (taskId: string) =>
+    `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${taskId}/download?format=xctsk`;
+
+  it('re-exports as v1 JSON when stored rawContent is legacy XML', async () => {
+    // Simulate a task imported from the legacy XML form before this fix
+    const task = createTestTask(db, testSeason.id, testLeague.id);
+    addTurnpoint(db, task.id, testLeague.id, 'SSS', 0);
+    addTurnpoint(db, task.id, testLeague.id, 'GOAL_CYLINDER', 1);
+    db.prepare(`UPDATE tasks SET task_data_source = 'xctsk', task_data_raw = ? WHERE id = ?`).run(XCTSK_XML, task.id);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: dlUrl(task.id),
+      headers: { 'x-test-user-id': pilotUser.id },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.trimStart().startsWith('{')).toBe(true);
+    expect(() => JSON.parse(res.body)).not.toThrow();
+  });
+
+  it('passes through stored rawContent when it is already JSON', async () => {
+    const task = createTestTask(db, testSeason.id, testLeague.id);
+    addTurnpoint(db, task.id, testLeague.id, 'SSS', 0);
+    addTurnpoint(db, task.id, testLeague.id, 'GOAL_CYLINDER', 1);
+    db.prepare(`UPDATE tasks SET task_data_source = 'xctsk', task_data_raw = ? WHERE id = ?`).run(XCTSK_JSON, task.id);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: dlUrl(task.id),
+      headers: { 'x-test-user-id': pilotUser.id },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe(XCTSK_JSON);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GOAL_LINE import — verify goal_line_bearing_deg is computed and persisted
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -147,11 +147,15 @@ function parseXctskJson(content: string): ParsedTask {
   }
 
   // Goal-line vs cylinder is encoded at the top level (`goal.type`), not on
-  // the turnpoint itself. Promote a cylinder goal to GOAL_LINE if the file
-  // says so.
+  // the turnpoint itself. Promote the *last* cylinder goal to GOAL_LINE if
+  // the file says so — by convention the goal is the terminal turnpoint.
   if (raw.goal?.type?.toUpperCase() === 'LINE') {
-    const goalIdx = turnpoints.findIndex((tp) => tp.type === 'GOAL_CYLINDER');
-    if (goalIdx >= 0) turnpoints[goalIdx].type = 'GOAL_LINE';
+    for (let i = turnpoints.length - 1; i >= 0; i--) {
+      if (turnpoints[i].type === 'GOAL_CYLINDER') {
+        turnpoints[i].type = 'GOAL_LINE';
+        break;
+      }
+    }
   }
 
   return { taskType, turnpoints, rawContent: content, format: 'xctsk' };

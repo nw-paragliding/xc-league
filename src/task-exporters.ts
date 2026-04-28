@@ -96,7 +96,10 @@ export function exportXctsk(task: ExportTask): string {
     turnpoints,
   };
 
-  const goalTp = tps.find((tp) => tp.type === 'GOAL_LINE' || tp.type === 'GOAL_CYLINDER');
+  // Goal is the last turnpoint by convention (matches computeGoalLineBearing
+  // and the rest of the pipeline). Search from the end so malformed data with
+  // multiple goal-typed TPs still picks the terminal one.
+  const goalTp = [...tps].reverse().find((tp) => tp.type === 'GOAL_LINE' || tp.type === 'GOAL_CYLINDER');
   if (goalTp) {
     out.goal = { type: goalTp.type === 'GOAL_LINE' ? 'LINE' : 'CYLINDER' };
   }
