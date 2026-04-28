@@ -2,7 +2,7 @@
 // Task Exporters
 //
 // Produces task file content in formats understood by popular paragliding apps:
-//   • .xctsk  — XCTrack XML (also used by Paragliding Earth and others)
+//   • .xctsk  — XCTrack v1 JSON (also read by FlySkyHy)
 //   • .cup    — SeeYou waypoint + task CSV
 //
 // Also generates deep-link URLs for the QR code utility:

@@ -3,8 +3,8 @@
 // =============================================================================
 
 import { describe, expect, it } from 'vitest';
-import { parseXctsk } from './task-parsers';
 import { type ExportTask, exportXctsk } from './task-exporters';
+import { parseXctsk } from './task-parsers';
 
 const baseTask: ExportTask = {
   id: 'task-1',
