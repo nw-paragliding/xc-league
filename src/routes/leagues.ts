@@ -364,7 +364,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
       },
       async (request, reply) => {
-        return handleIgcUpload(request as any, reply, db, queue);
+        return handleIgcUpload(request as any, reply, db);
       },
     );
 

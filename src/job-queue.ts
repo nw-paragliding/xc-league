@@ -217,7 +217,11 @@ export class JobWorker {
 // canonical inputs (current best distance + full goal-times set) every call,
 // so the result reflects the live state of the task. Safe to call after
 // any change to flight_attempts (upload, soft-delete, undelete).
-// Must be called inside an existing transaction or starts its own.
+//
+// Wraps the DELETE + recompute + INSERTs in a transaction so callers never
+// see a partially-rebuilt cache. better-sqlite3 transactions are reentrant
+// (nested calls become savepoints), so this is safe whether or not the
+// caller has already opened one.
 // =============================================================================
 
 interface ScoredAttemptRow {
@@ -243,6 +247,10 @@ function compareBestAttempt(a: ScoredAttemptRow, b: ScoredAttemptRow): number {
 }
 
 export function rebuildTaskResults(db: Database, taskId: string): void {
+  db.transaction(() => rebuildTaskResultsInner(db, taskId))();
+}
+
+function rebuildTaskResultsInner(db: Database, taskId: string): void {
   db.prepare('DELETE FROM task_results WHERE task_id = ?').run(taskId);
 
   const attempts = db

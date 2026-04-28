@@ -17,7 +17,7 @@ import type { Database } from 'better-sqlite3';
 import { createHash, randomUUID } from 'crypto';
 import type { FastifyReply, FastifyRequest as FastifyRequestBase } from 'fastify';
 import { requireAuth } from './auth';
-import { rebuildTaskResults, type SQLiteJobQueue } from './job-queue';
+import { rebuildTaskResults } from './job-queue';
 import { formatPipelineError, type PipelineInput, runPipeline, type TurnpointDef } from './pipeline';
 
 // =============================================================================
@@ -75,7 +75,6 @@ export async function handleIgcUpload(
   request: FastifyRequestBase<{ Params: UploadRouteParams }>,
   reply: FastifyReply,
   db: Database,
-  queue: SQLiteJobQueue,
 ): Promise<void> {
   requireAuth(request as any, reply);
 
