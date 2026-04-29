@@ -187,7 +187,11 @@ export class JobWorker {
       )
       .run(row.id);
 
-    return { ...row, payload: JSON.parse(row.payload) };
+    // SELECT happened before the UPDATE that incremented attempts, so the
+    // in-memory row is one behind the DB. Bump it so handleJobError reads
+    // the post-claim count (otherwise nextScheduledAt(0) hits RETRY_DELAYS_MS[-1]
+    // on the first failure and the retry-then-fail counters are off by one).
+    return { ...row, attempts: row.attempts + 1, payload: JSON.parse(row.payload) };
   }
 
   private completeJob(jobId: string): void {
