@@ -179,13 +179,20 @@ export class JobWorker {
 
     if (!row) return null;
 
-    this.db
+    // Atomically claim by transitioning PENDING → RUNNING. The WHERE clause
+    // includes status = 'PENDING' so a concurrent claimNextJob that already
+    // grabbed this row reports `changes === 0` here — return null instead of
+    // running the handler twice. processNext is invoked from three places
+    // (start(), poll timer, job:enqueued event) without awaits, so concurrent
+    // calls are possible.
+    const claim = this.db
       .prepare(
         `UPDATE jobs SET status = 'RUNNING', started_at = datetime('now'),
          attempts = attempts + 1, updated_at = datetime('now')
        WHERE id = ? AND status = 'PENDING'`,
       )
       .run(row.id);
+    if (claim.changes === 0) return null;
 
     // SELECT happened before the UPDATE that incremented attempts, so the
     // in-memory row is one behind the DB. Bump it so handleJobError reads
