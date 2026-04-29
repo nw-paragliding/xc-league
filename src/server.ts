@@ -102,27 +102,39 @@ async function main() {
   // ── Job queue + worker ─────────────────────────────────────────────────────
   const queue = new SQLiteJobQueue(db);
   const worker = bootstrapWorker(db, queue);
+
+  // Drop any pending/failed/running jobs that referenced removed handler
+  // types *before* starting the worker. PENDING/FAILED would fail-loop;
+  // RUNNING rows are left over from a prior process that crashed mid-job
+  // (the worker only claims PENDING, so a stuck RUNNING row never advances)
+  // and would otherwise stay forever.
+  db.prepare(
+    `DELETE FROM jobs
+     WHERE status IN ('PENDING', 'FAILED', 'RUNNING')
+       AND type IN ('RESCORE_TASK', 'FREEZE_TASK_SCORES', 'REBUILD_STANDINGS',
+                    'NOTIFY_PILOTS', 'REPROCESS_ALL_SUBMISSIONS')`,
+  ).run();
+
   worker.start();
 
-  // ── Backfill task_results for any tasks that have attempts but no results ──
-  // Handles uploads that happened before the materialised-view logic was added.
-  const orphanedTasks = db
-    .prepare(
-      `SELECT DISTINCT fa.task_id
-     FROM flight_attempts fa
-     LEFT JOIN task_results tr ON tr.task_id = fa.task_id
-     WHERE tr.id IS NULL AND fa.deleted_at IS NULL`,
-    )
-    .all() as Array<{ task_id: string }>;
-
-  for (const { task_id } of orphanedTasks) {
-    rebuildTaskResults(db, task_id);
-    // Enqueue standings rebuild for the season this task belongs to
-    const row = db.prepare(`SELECT t.season_id, t.league_id FROM tasks t WHERE t.id = ?`).get(task_id) as
-      | { season_id: string; league_id: string }
-      | undefined;
-    if (row) {
-      queue.enqueue('REBUILD_STANDINGS', { seasonId: row.season_id, leagueId: row.league_id });
+  // ── Boot-time rebuild of task_results ──────────────────────────────────────
+  // rebuildTaskResults now re-scores from canonical inputs (current best
+  // distance, full goal-times set), so previously-cached rows can be stale
+  // under bug fixes. Run it once for every non-deleted task on boot — cheap
+  // (~1ms per task) and self-heals the leaderboard. Standings is now a live
+  // SQL aggregate, so no separate standings rebuild is needed.
+  //
+  // Wrap each task in try/catch so a single bad row (corrupted attempt, FK
+  // orphan, schema drift) can't crash startup before Fastify binds. Errors
+  // are logged with the offending taskId and the boot continues; the broken
+  // task's leaderboard stays at its prior cached state until the next
+  // upload triggers another rebuild.
+  const tasksToRebuild = db.prepare(`SELECT id FROM tasks WHERE deleted_at IS NULL`).all() as Array<{ id: string }>;
+  for (const { id } of tasksToRebuild) {
+    try {
+      rebuildTaskResults(db, id);
+    } catch (err) {
+      console.error(`[boot] rebuildTaskResults failed for task ${id}:`, err);
     }
   }
 
@@ -227,7 +239,7 @@ async function main() {
 
       // League routes
       const { registerLeagueRoutes } = await import('./routes/leagues');
-      await registerLeagueRoutes(api, { db, queue });
+      await registerLeagueRoutes(api, { db });
     },
     { prefix: '/api/v1' },
   );

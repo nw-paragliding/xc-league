@@ -290,38 +290,3 @@ export function createTestTaskResult(
   );
   return id;
 }
-
-export function createTestSeasonStanding(
-  db: Database.Database,
-  seasonId: string,
-  userId: string,
-  leagueId: string,
-  opts: {
-    rank?: number;
-    totalPoints?: number;
-    tasksFlown?: number;
-    tasksWithGoal?: number;
-  } = {},
-) {
-  const id = randomUUID();
-  const now = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO season_standings (
-       id, season_id, user_id,
-       total_points, tasks_flown, tasks_with_goal,
-       rank, last_computed_at, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    seasonId,
-    userId,
-    opts.totalPoints ?? 100,
-    opts.tasksFlown ?? 1,
-    opts.tasksWithGoal ?? 0,
-    opts.rank ?? 1,
-    now,
-    now,
-    now,
-  );
-  return id;
-}

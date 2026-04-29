@@ -9,14 +9,15 @@
 //  - Duplicate detection: SHA-256 of file content; same pilot+task+hash → 409
 //  - IGC stored as BLOB in flight_submissions alongside filename and size
 //  - Scored result written to flight_attempts (one per attempt detected)
-//  - RESCORE_TASK enqueued only when pilot reached goal (time pts provisional)
+//  - task_results rebuilt synchronously inside the upload txn (single source
+//    of truth for scoring); no async rescore jobs are enqueued.
 // =============================================================================
 
 import type { Database } from 'better-sqlite3';
 import { createHash, randomUUID } from 'crypto';
 import type { FastifyReply, FastifyRequest as FastifyRequestBase } from 'fastify';
 import { requireAuth } from './auth';
-import { type RescoreTaskPayload, rebuildTaskResults, type SQLiteJobQueue } from './job-queue';
+import { rebuildTaskResults } from './job-queue';
 import { formatPipelineError, type PipelineInput, runPipeline, type TurnpointDef } from './pipeline';
 
 // =============================================================================
@@ -74,7 +75,6 @@ export async function handleIgcUpload(
   request: FastifyRequestBase<{ Params: UploadRouteParams }>,
   reply: FastifyReply,
   db: Database,
-  queue: SQLiteJobQueue,
 ): Promise<void> {
   requireAuth(request as any, reply);
 
@@ -365,28 +365,31 @@ export async function handleIgcUpload(
     // Link best attempt to submission
     db.prepare(`UPDATE flight_submissions SET best_attempt_id = ? WHERE id = ?`).run(bestAttemptId, submissionId);
 
-    // Immediately materialise task_results for this task so leaderboard is live
+    // Materialise task_results inside the same txn. rebuildTaskResults
+    // re-scores from canonical inputs (best distance, full goal-times set),
+    // so this single call is authoritative — no async rescore needed.
     rebuildTaskResults(db, taskId);
   })();
 
-  // ── Enqueue rescore if goal reached ───────────────────────────────────────
-  if (best.reachedGoal) {
-    queue.enqueue<RescoreTaskPayload>('RESCORE_TASK', {
-      taskId,
-      leagueId: task.league_id,
-      triggeredBySubmissionId: submissionId,
-    });
-  }
-
   // ── Response ───────────────────────────────────────────────────────────────
+  // The response reflects the pilot's *current* task state after the upload:
+  // task_results holds their best attempt across all submissions for this
+  // task, scored against the live best-distance + goal-times set. Both the
+  // score columns AND the attempt metadata are sourced via tr.best_attempt_id
+  // so the bestAttempt object is internally consistent — attempt_index and
+  // turnpointsCrossed always describe the same attempt that produced the
+  // score. If the pilot had a previous-better submission, the response will
+  // show that one; that's correct, since it's what the leaderboard shows.
   const row = db
     .prepare(
       `SELECT fs.id, fs.status, fs.igc_filename, fs.igc_size_bytes, fs.submitted_at, fs.igc_date,
-            fa.attempt_index, fa.reached_goal, fa.distance_flown_km, fa.task_time_s,
-            fa.distance_points, fa.time_points, fa.total_points,
-            fa.has_flagged_crossings, fa.last_turnpoint_index
+            tr.reached_goal, tr.distance_flown_km, tr.task_time_s,
+            tr.distance_points, tr.time_points, tr.total_points,
+            tr.has_flagged_crossings,
+            fa.attempt_index, fa.last_turnpoint_index
      FROM flight_submissions fs
-     LEFT JOIN flight_attempts fa ON fa.id = fs.best_attempt_id
+     LEFT JOIN task_results tr ON tr.task_id = fs.task_id AND tr.user_id = fs.user_id
+     LEFT JOIN flight_attempts fa ON fa.id = tr.best_attempt_id
      WHERE fs.id = ?`,
     )
     .get(submissionId) as any;
@@ -413,7 +416,11 @@ export async function handleIgcUpload(
       igcDate: row.igc_date ?? null,
       bestAttempt,
       allAttempts: [bestAttempt],
-      timePointsProvisional: best.reachedGoal,
+      // Scores can shift while the task is open — any later upload may move
+      // the best distance or goal-times set and rescore everyone. The upload
+      // path only accepts submissions before close_date, so the task is
+      // necessarily still open here.
+      timePointsProvisional: true,
     },
   });
 }

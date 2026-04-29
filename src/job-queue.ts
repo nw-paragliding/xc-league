@@ -2,7 +2,9 @@
 // XC / Hike & Fly League Platform — Job Queue
 //
 // Infrastructure: SQLiteJobQueue + JobWorker (better-sqlite3 native API).
-// Handlers: RESCORE_TASK, FREEZE_TASK_SCORES, REBUILD_STANDINGS, NOTIFY_PILOTS.
+// Scoring is fully synchronous (rebuildTaskResults runs inline on upload and
+// delete paths) so the queue currently has no registered handlers. The
+// infrastructure stays for future async work (notifications, reprocessing).
 //
 // Single-process design: Fastify API + worker loop share one SQLite connection.
 // Worker wakes immediately on job enqueue via EventEmitter; polling fallback
@@ -11,7 +13,7 @@
 
 import type { Database } from 'better-sqlite3';
 import { randomUUID } from 'crypto';
-import { computeTimePoints } from './shared/task-engine';
+import { computeDistancePoints, computeTimePoints } from './shared/task-engine';
 
 // ── Minimal typed EventEmitter (no @types/node dependency) ───────────────────
 
@@ -29,55 +31,14 @@ class TypedEmitter {
 
 // =============================================================================
 // JOB PAYLOAD TYPES
+//
+// No job types are registered today — scoring is synchronous. The generic
+// JobType / JobPayload aliases let future async work (notifications, IGC
+// re-parsing on turnpoint edits, etc.) plug into the same infrastructure.
 // =============================================================================
 
-export type JobType =
-  | 'RESCORE_TASK'
-  | 'FREEZE_TASK_SCORES'
-  | 'REBUILD_STANDINGS'
-  | 'REPROCESS_ALL_SUBMISSIONS'
-  | 'NOTIFY_PILOTS';
-
-/** Recalculate time points for all goal attempts on a task. */
-export interface RescoreTaskPayload {
-  taskId: string;
-  leagueId: string;
-  triggeredBySubmissionId: string;
-}
-
-/** Lock task scores at close_date. */
-export interface FreezeTaskScoresPayload {
-  taskId: string;
-  leagueId: string;
-}
-
-/** Recompute season_standings from task_results. */
-export interface RebuildStandingsPayload {
-  seasonId: string;
-  leagueId: string;
-}
-
-/** Re-parse and re-score all IGC files for a task after turnpoints change. */
-export interface ReprocessAllSubmissionsPayload {
-  taskId: string;
-  leagueId: string;
-  submissionIds: string[];
-}
-
-/** Fan-out notifications to pilots whose score changed. */
-export interface NotifyPilotsPayload {
-  taskId: string;
-  leagueId: string;
-  taskName: string;
-  scoreChanges: Record<string, { oldTotalPoints: number; newTotalPoints: number }>;
-}
-
-export type JobPayload =
-  | RescoreTaskPayload
-  | FreezeTaskScoresPayload
-  | RebuildStandingsPayload
-  | ReprocessAllSubmissionsPayload
-  | NotifyPilotsPayload;
+export type JobType = string;
+export type JobPayload = unknown;
 
 export interface JobRecord {
   id: string;
@@ -100,7 +61,7 @@ export interface EnqueueOptions {
 }
 
 export interface JobQueue {
-  enqueue<T extends JobPayload>(type: JobType, payload: T, options?: EnqueueOptions): Promise<string>;
+  enqueue<T>(type: string, payload: T, options?: EnqueueOptions): Promise<string>;
 }
 
 // =============================================================================
@@ -123,7 +84,7 @@ export class SQLiteJobQueue extends TypedEmitter implements JobQueue {
     super();
   }
 
-  async enqueue<T extends JobPayload>(type: JobType, payload: T, options: EnqueueOptions = {}): Promise<string> {
+  async enqueue<T>(type: string, payload: T, options: EnqueueOptions = {}): Promise<string> {
     const id = randomUUID();
     const scheduledAt = (options.scheduledAt ?? new Date()).toISOString();
     const maxAttempts = options.maxAttempts ?? 3;
@@ -144,12 +105,12 @@ export class SQLiteJobQueue extends TypedEmitter implements JobQueue {
 // WORKER
 // =============================================================================
 
-type JobHandler<T extends JobPayload> = (payload: T, jobId: string) => Promise<void>;
+type JobHandler<T> = (payload: T, jobId: string) => Promise<void>;
 
 export class JobWorker {
   private running = false;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
-  private handlers = new Map<JobType, JobHandler<any>>();
+  private handlers = new Map<string, JobHandler<any>>();
 
   constructor(
     private readonly db: Database,
@@ -158,7 +119,7 @@ export class JobWorker {
     (queue as TypedEmitter).on('job:enqueued', () => this.processNext());
   }
 
-  register<T extends JobPayload>(type: JobType, handler: JobHandler<T>): void {
+  register<T>(type: string, handler: JobHandler<T>): void {
     this.handlers.set(type, handler);
   }
 
@@ -196,11 +157,23 @@ export class JobWorker {
   }
 
   private claimNextJob(): JobRecord | null {
+    // Alias snake_case columns to the camelCase JobRecord shape. Without
+    // this, handleJobError() reads job.maxAttempts as undefined and the
+    // attempts >= maxAttempts check is always false, so jobs retry forever
+    // instead of terminally failing.
     const row = this.db
       .prepare(
-        `SELECT * FROM jobs
-       WHERE status = 'PENDING' AND datetime(scheduled_at) <= datetime('now')
-       ORDER BY datetime(scheduled_at) ASC LIMIT 1`,
+        `SELECT id, type, payload, status, attempts,
+                max_attempts AS maxAttempts,
+                last_error   AS lastError,
+                scheduled_at AS scheduledAt,
+                started_at   AS startedAt,
+                completed_at AS completedAt,
+                created_at   AS createdAt,
+                updated_at   AS updatedAt
+         FROM jobs
+         WHERE status = 'PENDING' AND datetime(scheduled_at) <= datetime('now')
+         ORDER BY datetime(scheduled_at) ASC LIMIT 1`,
       )
       .get() as any;
 
@@ -214,7 +187,11 @@ export class JobWorker {
       )
       .run(row.id);
 
-    return { ...row, payload: JSON.parse(row.payload) };
+    // SELECT happened before the UPDATE that incremented attempts, so the
+    // in-memory row is one behind the DB. Bump it so handleJobError reads
+    // the post-claim count (otherwise nextScheduledAt(0) hits RETRY_DELAYS_MS[-1]
+    // on the first failure and the retry-then-fail counters are off by one).
+    return { ...row, attempts: row.attempts + 1, payload: JSON.parse(row.payload) };
   }
 
   private completeJob(jobId: string): void {
@@ -252,75 +229,144 @@ export class JobWorker {
 // =============================================================================
 // SHARED UTILITY: rebuild task_results
 //
-// Materialised best-attempt-per-pilot cache for a task.
-// Called from: upload handler (immediate) + RESCORE_TASK (after rescore).
-// Must be called inside an existing transaction or starts its own.
+// Materialised best-attempt-per-pilot cache for a task. Re-scores from
+// canonical inputs (current best distance + full goal-times set) every call,
+// so the result reflects the live state of the task. Safe to call after
+// any change to flight_attempts (upload, soft-delete, undelete).
+//
+// Wraps the DELETE + recompute + INSERTs in a transaction so callers never
+// see a partially-rebuilt cache. better-sqlite3 transactions are reentrant
+// (nested calls become savepoints), so this is safe whether or not the
+// caller has already opened one.
 // =============================================================================
 
+interface ScoredAttemptRow {
+  id: string;
+  user_id: string;
+  distance_flown_km: number;
+  reached_goal: number;
+  task_time_s: number | null;
+  has_flagged_crossings: number;
+  distance_points: number;
+  time_points: number;
+  total_points: number;
+}
+
+// Goal first, then highest points, then fastest time (NULLs last).
+// Returns negative if a is the better attempt.
+//
+// Note: this priority order intentionally differs from the rank-sort below
+// (which is total_points → task_time_s → reached_goal). For the *picker*
+// goal-attempt > non-goal-attempt is meaningful even at equal total_points
+// because we want the goal-recording attempt's metadata (task_time_s,
+// crossings) preferred. For the *rank* a goal pilot's total_points already
+// exceeds any non-goal pilot's by construction, so the reached_goal tier is
+// never load-bearing — kept only as a final tiebreaker. If a future scoring
+// change ever lets non-goal pilots out-score goal pilots, this divergence
+// will need a second look.
+function compareBestAttempt(a: ScoredAttemptRow, b: ScoredAttemptRow): number {
+  if (a.reached_goal !== b.reached_goal) return b.reached_goal - a.reached_goal;
+  if (a.total_points !== b.total_points) return b.total_points - a.total_points;
+  const at = a.task_time_s ?? Number.POSITIVE_INFINITY;
+  const bt = b.task_time_s ?? Number.POSITIVE_INFINITY;
+  return at - bt;
+}
+
 export function rebuildTaskResults(db: Database, taskId: string): void {
-  // Full rebuild: delete old rows, recompute from flight_attempts.
+  db.transaction(() => rebuildTaskResultsInner(db, taskId))();
+}
+
+function rebuildTaskResultsInner(db: Database, taskId: string): void {
   db.prepare('DELETE FROM task_results WHERE task_id = ?').run(taskId);
 
-  // Best attempt per pilot: goal first, then highest points, then fastest time.
-  // Then rank all pilots by total_points DESC.
-  const rows = db
-    .prepare(`
-    WITH ranked AS (
-      SELECT
-        id, user_id,
-        distance_flown_km, reached_goal, task_time_s,
-        distance_points, time_points, total_points, has_flagged_crossings,
-        ROW_NUMBER() OVER (
-          PARTITION BY user_id
-          ORDER BY reached_goal DESC, total_points DESC,
-                   CASE WHEN task_time_s IS NULL THEN 1 ELSE 0 END,
-                   task_time_s ASC
-        ) AS rn
-      FROM flight_attempts
-      WHERE task_id = ? AND deleted_at IS NULL
+  const attempts = db
+    .prepare(
+      `SELECT id, user_id, distance_flown_km, reached_goal, task_time_s, has_flagged_crossings
+       FROM flight_attempts
+       WHERE task_id = ? AND deleted_at IS NULL`,
     )
-    SELECT
-      id, user_id, distance_flown_km, reached_goal, task_time_s,
-      distance_points, time_points, total_points, has_flagged_crossings,
-      RANK() OVER (
-        ORDER BY total_points DESC,
-                 CASE WHEN task_time_s IS NULL THEN 1 ELSE 0 END,
-                 task_time_s ASC
-      ) AS pilot_rank
-    FROM ranked WHERE rn = 1
-  `)
     .all(taskId) as Array<{
     id: string;
     user_id: string;
     distance_flown_km: number;
     reached_goal: number;
     task_time_s: number | null;
-    distance_points: number;
-    time_points: number;
-    total_points: number;
     has_flagged_crossings: number;
-    pilot_rank: number;
   }>;
 
-  // Apply score normalization if configured on this task.
+  if (attempts.length === 0) return;
+
+  // Re-score from canonical inputs. The previously-stored point values on
+  // flight_attempts are ignored — they reflect submission-time state, not
+  // current task state. This is the single source of truth for scoring.
+  // (Use reduce instead of `Math.max(...arr)` — V8 throws RangeError on
+  // spreads of ~100k+ elements, and the boot-time backfill iterates every
+  // task in the DB.)
+  let bestDistKm = 0;
+  for (const a of attempts) if (a.distance_flown_km > bestDistKm) bestDistKm = a.distance_flown_km;
+  // Build the goal-times set from the *fastest* goal time per pilot. Without
+  // dedup, a pilot who uploads the same goal flight twice (or two different
+  // goal flights) would contribute multiple entries and shift tMin/tMax for
+  // everyone — scoring should depend on one attempt per pilot.
+  const fastestGoalTimeByPilot = new Map<string, number>();
+  for (const a of attempts) {
+    if (a.reached_goal !== 1 || a.task_time_s === null) continue;
+    const cur = fastestGoalTimeByPilot.get(a.user_id);
+    if (cur === undefined || a.task_time_s < cur) fastestGoalTimeByPilot.set(a.user_id, a.task_time_s);
+  }
+  const goalTimes = Array.from(fastestGoalTimeByPilot.values());
+
+  const scored: ScoredAttemptRow[] = attempts.map((a) => {
+    const distance_points = computeDistancePoints(a.distance_flown_km, bestDistKm, a.reached_goal === 1);
+    const time_points =
+      a.reached_goal === 1 && a.task_time_s !== null ? computeTimePoints(a.task_time_s, goalTimes) : 0;
+    const total_points = Math.round((distance_points + time_points) * 10) / 10;
+    return { ...a, distance_points, time_points, total_points };
+  });
+
+  // Pick best attempt per pilot.
+  const bestByPilot = new Map<string, ScoredAttemptRow>();
+  for (const a of scored) {
+    const cur = bestByPilot.get(a.user_id);
+    if (!cur || compareBestAttempt(a, cur) < 0) bestByPilot.set(a.user_id, a);
+  }
+  let bestList = Array.from(bestByPilot.values());
+
+  // Task-level normalisation: scale distance_points and time_points
+  // independently so the winner's total = normalized_score (which defaults
+  // to 1000 if the column is NULL). Computing both components under the
+  // same scale and re-deriving total preserves the dp + tp = total
+  // invariant — the previous implementation rounded total and dp
+  // separately and derived tp = total - dp, drifting by ±1.
   const taskRow = db.prepare(`SELECT normalized_score FROM tasks WHERE id = ?`).get(taskId) as
     | { normalized_score: number | null }
     | undefined;
   const normalized = taskRow?.normalized_score ?? 1000;
 
-  let finalRows = rows;
-  if (normalized !== null && rows.length > 0) {
-    const winnerTotal = Math.max(...rows.map((r) => r.total_points));
+  if (bestList.length > 0) {
+    // reduce, not Math.max(...arr): see note at bestDistKm above.
+    let winnerTotal = 0;
+    for (const r of bestList) if (r.total_points > winnerTotal) winnerTotal = r.total_points;
     if (winnerTotal > 0) {
       const scale = normalized / winnerTotal;
-      finalRows = rows.map((r) => {
-        const total = Math.round(r.total_points * scale);
-        const dp = Math.round(r.distance_points * scale);
-        const tp = total - dp;
-        return { ...r, distance_points: dp, time_points: tp, total_points: total };
+      bestList = bestList.map((r) => {
+        const distance_points = Math.round(r.distance_points * scale * 10) / 10;
+        const time_points = Math.round(r.time_points * scale * 10) / 10;
+        const total_points = Math.round((distance_points + time_points) * 10) / 10;
+        return { ...r, distance_points, time_points, total_points };
       });
     }
   }
+
+  // Rank by total_points DESC, task_time_s ASC (NULLs last), reached_goal DESC.
+  // Ties share a rank (RANK semantics, matching the previous SQL window).
+  bestList.sort((a, b) => {
+    if (b.total_points !== a.total_points) return b.total_points - a.total_points;
+    const at = a.task_time_s ?? Number.POSITIVE_INFINITY;
+    const bt = b.task_time_s ?? Number.POSITIVE_INFINITY;
+    if (at !== bt) return at - bt;
+    return b.reached_goal - a.reached_goal;
+  });
 
   const now = new Date().toISOString();
   const ins = db.prepare(`
@@ -332,7 +378,14 @@ export function rebuildTaskResults(db: Database, taskId: string): void {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  for (const r of finalRows) {
+  let prevKey: string | null = null;
+  let prevRank = 0;
+  for (let i = 0; i < bestList.length; i++) {
+    const r = bestList[i];
+    const key = `${r.total_points}|${r.task_time_s ?? 'null'}|${r.reached_goal}`;
+    const rank = key === prevKey ? prevRank : i + 1;
+    prevKey = key;
+    prevRank = rank;
     ins.run(
       randomUUID(),
       taskId,
@@ -345,7 +398,7 @@ export function rebuildTaskResults(db: Database, taskId: string): void {
       r.time_points,
       r.total_points,
       r.has_flagged_crossings,
-      r.pilot_rank,
+      rank,
       now,
       now,
       now,
@@ -354,180 +407,9 @@ export function rebuildTaskResults(db: Database, taskId: string): void {
 }
 
 // =============================================================================
-// HANDLER: RESCORE_TASK
-//
-// 1. Bail if task is frozen or deleted.
-// 2. Load all goal attempts for the task.
-// 3. Recompute time_points using the full set of goal times.
-// 4. Write updated scores + rebuild task_results in one transaction.
-// 5. Enqueue REBUILD_STANDINGS.
-// =============================================================================
-
-async function handleRescoreTask(payload: RescoreTaskPayload, db: Database, queue: SQLiteJobQueue): Promise<void> {
-  const task = db
-    .prepare(`SELECT id, season_id, scores_frozen_at FROM tasks WHERE id = ? AND deleted_at IS NULL`)
-    .get(payload.taskId) as { id: string; season_id: string; scores_frozen_at: string | null } | undefined;
-
-  if (!task || task.scores_frozen_at !== null) return;
-
-  // Load all goal attempts (reached_goal = 1) with their current scores
-  const goalAttempts = db
-    .prepare(
-      `SELECT id, task_time_s, distance_points, total_points
-     FROM flight_attempts
-     WHERE task_id = ? AND reached_goal = 1 AND deleted_at IS NULL`,
-    )
-    .all(payload.taskId) as Array<{
-    id: string;
-    task_time_s: number | null;
-    distance_points: number;
-    total_points: number;
-  }>;
-
-  const goalTimes = goalAttempts.filter((a) => a.task_time_s != null).map((a) => a.task_time_s!);
-
-  db.transaction(() => {
-    const update = db.prepare(
-      `UPDATE flight_attempts
-       SET time_points = ?, total_points = ?, updated_at = datetime('now')
-       WHERE id = ?`,
-    );
-
-    for (const attempt of goalAttempts) {
-      const tp = computeTimePoints(attempt.task_time_s ?? 0, goalTimes);
-      update.run(tp, attempt.distance_points + tp, attempt.id);
-    }
-
-    rebuildTaskResults(db, payload.taskId);
-  })();
-
-  await queue.enqueue<RebuildStandingsPayload>('REBUILD_STANDINGS', {
-    seasonId: task.season_id,
-    leagueId: payload.leagueId,
-  });
-}
-
-// =============================================================================
-// HANDLER: FREEZE_TASK_SCORES
-//
-// Sets scores_frozen_at on the task, then enqueues a final RESCORE_TASK to
-// lock in time points at the exact moment of close.
-// =============================================================================
-
-async function handleFreezeTaskScores(
-  payload: FreezeTaskScoresPayload,
-  db: Database,
-  queue: SQLiteJobQueue,
-): Promise<void> {
-  const result = db
-    .prepare(
-      `UPDATE tasks SET scores_frozen_at = datetime('now'), updated_at = datetime('now')
-     WHERE id = ? AND scores_frozen_at IS NULL AND deleted_at IS NULL`,
-    )
-    .run(payload.taskId);
-
-  if (result.changes === 0) return; // already frozen or deleted
-
-  await queue.enqueue<RescoreTaskPayload>('RESCORE_TASK', {
-    taskId: payload.taskId,
-    leagueId: payload.leagueId,
-    triggeredBySubmissionId: 'FREEZE',
-  });
-}
-
-// =============================================================================
-// HANDLER: REBUILD_STANDINGS
-//
-// Aggregates task_results per pilot across all tasks in a season, then
-// upserts season_standings with updated totals and ranks.
-// =============================================================================
-
-async function handleRebuildStandings(payload: RebuildStandingsPayload, db: Database): Promise<void> {
-  const rows = db
-    .prepare(`
-    SELECT
-      tr.user_id,
-      SUM(tr.total_points)  AS total_points,
-      COUNT(tr.task_id)     AS tasks_flown,
-      SUM(tr.reached_goal)  AS tasks_with_goal
-    FROM task_results tr
-    JOIN tasks t ON t.id = tr.task_id
-    WHERE t.season_id = ? AND t.deleted_at IS NULL
-    GROUP BY tr.user_id
-    ORDER BY total_points DESC
-  `)
-    .all(payload.seasonId) as Array<{
-    user_id: string;
-    total_points: number;
-    tasks_flown: number;
-    tasks_with_goal: number;
-  }>;
-
-  const now = new Date().toISOString();
-
-  db.transaction(() => {
-    const upsert = db.prepare(`
-      INSERT INTO season_standings
-        (id, season_id, user_id, total_points, tasks_flown, tasks_with_goal,
-         rank, last_computed_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT (season_id, user_id) DO UPDATE SET
-        total_points     = excluded.total_points,
-        tasks_flown      = excluded.tasks_flown,
-        tasks_with_goal  = excluded.tasks_with_goal,
-        rank             = excluded.rank,
-        last_computed_at = excluded.last_computed_at,
-        updated_at       = excluded.updated_at
-    `);
-
-    rows.forEach((row, i) => {
-      upsert.run(
-        randomUUID(),
-        payload.seasonId,
-        row.user_id,
-        row.total_points,
-        row.tasks_flown,
-        row.tasks_with_goal,
-        i + 1,
-        now,
-        now,
-        now,
-      );
-    });
-  })();
-}
-
-// =============================================================================
-// HANDLER: NOTIFY_PILOTS
-// Placeholder — notification delivery not yet implemented.
-// =============================================================================
-
-async function handleNotifyPilots(_payload: NotifyPilotsPayload, _db: Database): Promise<void> {
-  // TODO: implement push / email notifications
-}
-
-// =============================================================================
 // BOOTSTRAP
-// Wires all handlers into the worker and returns it ready to start().
 // =============================================================================
 
 export function bootstrapWorker(db: Database, queue: SQLiteJobQueue): JobWorker {
-  const worker = new JobWorker(db, queue);
-
-  worker.register<RescoreTaskPayload>('RESCORE_TASK', (payload) => handleRescoreTask(payload, db, queue));
-
-  worker.register<FreezeTaskScoresPayload>('FREEZE_TASK_SCORES', (payload) =>
-    handleFreezeTaskScores(payload, db, queue),
-  );
-
-  worker.register<RebuildStandingsPayload>('REBUILD_STANDINGS', (payload) => handleRebuildStandings(payload, db));
-
-  worker.register<NotifyPilotsPayload>('NOTIFY_PILOTS', (payload) => handleNotifyPilots(payload, db));
-
-  // REPROCESS_ALL_SUBMISSIONS is not yet triggered by any API endpoint
-  worker.register<ReprocessAllSubmissionsPayload>('REPROCESS_ALL_SUBMISSIONS', async () => {
-    /* not yet implemented */
-  });
-
-  return worker;
+  return new JobWorker(db, queue);
 }

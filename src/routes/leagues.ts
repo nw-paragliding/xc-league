@@ -9,7 +9,6 @@ import { randomUUID } from 'crypto';
 import type { FastifyInstance } from 'fastify';
 import QRCode from 'qrcode';
 import { makeResolveLeagueHook, requireAuth, requireLeagueAdmin, requireLeagueMember } from '../auth';
-import type { SQLiteJobQueue } from '../job-queue';
 import { parseAndValidate } from '../pipeline';
 import { type Cylinder, optimiseRoute } from '../shared/task-engine';
 import {
@@ -45,11 +44,10 @@ function computeGoalLineBearing(turnpoints: ParsedTurnpoint[]): number | null {
 
 interface LeagueRouteOptions {
   db: Database.Database;
-  queue: SQLiteJobQueue;
 }
 
 export async function registerLeagueRoutes(fastify: FastifyInstance, opts: LeagueRouteOptions): Promise<void> {
-  const { db, queue } = opts;
+  const { db } = opts;
 
   // ── Public league list ─────────────────────────────────────────────────────
   fastify.get('/leagues', async (request, reply) => {
@@ -364,7 +362,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
       },
       async (request, reply) => {
-        return handleIgcUpload(request as any, reply, db, queue);
+        return handleIgcUpload(request as any, reply, db);
       },
     );
 
@@ -377,14 +375,27 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       const userId = (request as any).user!.userId;
       const league = (request as any).league;
 
+      // Each row shows the pilot's *current* task state (their best attempt
+      // across all submissions for this task, scored against the live
+      // best-distance + goal-times set). Both the score columns and the
+      // attempt metadata are sourced via tr.best_attempt_id so attempt_index
+      // and turnpointsCrossed always describe the same attempt that produced
+      // the score — no risk of mixing metadata from one submission with
+      // scores from another. Every submission row therefore carries the
+      // same bestAttempt; that's correct because scoring is per-pilot
+      // per-task, not per-submission.
       const rows = db
         .prepare(
           `SELECT fs.id, fs.status, fs.igc_filename, fs.igc_size_bytes, fs.submitted_at, fs.igc_date,
-                fa.attempt_index, fa.reached_goal, fa.distance_flown_km, fa.task_time_s,
-                fa.distance_points, fa.time_points, fa.total_points,
-                fa.has_flagged_crossings, fa.last_turnpoint_index
+                tr.reached_goal, tr.distance_flown_km, tr.task_time_s,
+                tr.distance_points, tr.time_points, tr.total_points,
+                tr.has_flagged_crossings,
+                fa.attempt_index, fa.last_turnpoint_index,
+                t.close_date AS task_close_date,
+                t.scores_frozen_at AS task_scores_frozen_at
          FROM flight_submissions fs
-         LEFT JOIN flight_attempts fa ON fa.id = fs.best_attempt_id
+         LEFT JOIN task_results tr ON tr.task_id = fs.task_id AND tr.user_id = fs.user_id
+         LEFT JOIN flight_attempts fa ON fa.id = tr.best_attempt_id
          JOIN tasks t ON t.id = fs.task_id
          JOIN seasons s ON s.id = t.season_id
          WHERE fs.task_id = ? AND s.id = ? AND s.league_id = ?
@@ -393,6 +404,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         )
         .all(taskId, seasonId, league.id, userId) as any[];
 
+      const now = new Date();
       const submissions = rows.map((row) => {
         const bestAttempt =
           row.attempt_index != null
@@ -409,6 +421,11 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
               }
             : null;
 
+        // Scores are provisional while the task is still accepting changes:
+        // close_date hasn't passed AND scores aren't manually frozen. An
+        // admin can freeze before close_date via /freeze, in which case
+        // task_results will no longer change even though now <= close_date.
+        const taskOpen = now <= new Date(row.task_close_date) && row.task_scores_frozen_at === null;
         return {
           id: row.id,
           status: row.status,
@@ -418,7 +435,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
           igcDate: row.igc_date ?? null,
           bestAttempt,
           allAttempts: bestAttempt ? [bestAttempt] : [],
-          timePointsProvisional: Boolean(row.reached_goal),
+          timePointsProvisional: taskOpen,
         };
       });
 
@@ -465,17 +482,26 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         const lats = fixes.map((f: any) => f.lat);
         const lngs = fixes.map((f: any) => f.lng);
 
-        // Best attempt for score/goal metadata
+        // Best attempt for score/goal metadata. Read from task_results (the
+        // authoritative post-rebuild row) so the metadata matches the
+        // leaderboard rather than the submission-time snapshot on
+        // flight_attempts. Also pull tr.best_attempt_id so the crossings
+        // query below can scope to the same attempt that produced the score.
         const bestAttempt = db
           .prepare(
-            `SELECT reached_goal, total_points
-         FROM flight_attempts
-         WHERE submission_id = ? AND deleted_at IS NULL
-         ORDER BY total_points DESC LIMIT 1`,
+            `SELECT tr.reached_goal, tr.total_points, tr.best_attempt_id
+         FROM task_results tr
+         JOIN flight_submissions s ON s.task_id = tr.task_id AND s.user_id = tr.user_id
+         WHERE s.id = ?`,
           )
-          .get(submission.id) as { reached_goal: number; total_points: number } | undefined;
+          .get(submission.id) as { reached_goal: number; total_points: number; best_attempt_id: string } | undefined;
 
-        // Turnpoint crossings from best attempt
+        // Turnpoint crossings for the *exact attempt that was scored*. If
+        // the IGC contained multiple SSS crossings (multiple attempts in one
+        // file), filtering only by submission_id would return crossings for
+        // all attempts and the displayed sequence wouldn't match the score.
+        // Scoping to best_attempt_id keeps the displayed turnpoint sequence
+        // consistent with bestAttempt.
         const crossings = bestAttempt
           ? (db
               .prepare(
@@ -491,12 +517,11 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
            tc.ground_confirmed       AS groundConfirmed,
            tc.ground_check_required  AS groundCheckRequired
          FROM turnpoint_crossings tc
-         JOIN flight_attempts fa ON fa.id = tc.attempt_id
          JOIN turnpoints t ON t.id = tc.turnpoint_id
-         WHERE fa.submission_id = ? AND fa.deleted_at IS NULL
+         WHERE tc.attempt_id = ?
          ORDER BY t.sequence_index`,
               )
-              .all(submission.id) as any[])
+              .all(bestAttempt.best_attempt_id) as any[])
           : [];
 
         return reply.send({
@@ -559,19 +584,29 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
 
       if (!season) return reply.status(404).send({ error: 'Season not found' });
 
+      // Live aggregate over task_results: sum per pilot across non-deleted
+      // tasks in this season. Single source of truth — no separate cache.
+      // Rank by ROUND(SUM, 1) — the same value we expose as totalPoints —
+      // so two pilots whose underlying float sums differ only by IEEE-754
+      // jitter (e.g. 799.99999 vs 800.0, both displayed as 800.0) are
+      // guaranteed to share a rank rather than flicker.
       const standings = db
         .prepare(
           `SELECT
-           ss.rank,
-           ss.user_id        AS pilotId,
-           u.display_name    AS pilotName,
-           ss.total_points   AS totalPoints,
-           ss.tasks_flown    AS tasksFlown,
-           ss.tasks_with_goal AS tasksWithGoal
-         FROM season_standings ss
-         JOIN users u ON u.id = ss.user_id
-         WHERE ss.season_id = ?
-         ORDER BY ss.rank`,
+           RANK() OVER (
+             ORDER BY ROUND(SUM(tr.total_points), 1) DESC
+           ) AS rank,
+           tr.user_id AS pilotId,
+           u.display_name AS pilotName,
+           ROUND(SUM(tr.total_points), 1) AS totalPoints,
+           COUNT(tr.task_id) AS tasksFlown,
+           SUM(tr.reached_goal) AS tasksWithGoal
+         FROM task_results tr
+         JOIN tasks t ON t.id = tr.task_id
+         JOIN users u ON u.id = tr.user_id
+         WHERE t.season_id = ? AND t.deleted_at IS NULL
+         GROUP BY tr.user_id
+         ORDER BY rank, pilotId`,
         )
         .all(seasonId) as any[];
 
@@ -1745,24 +1780,21 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       // Verify task belongs to this season/league
       const task = db
         .prepare(
-          `SELECT t.id, t.scores_frozen_at
+          `SELECT t.id
          FROM tasks t
          JOIN seasons s ON s.id = t.season_id
          WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`,
         )
-        .get(taskId, seasonId, league.id) as { id: string; scores_frozen_at: string | null } | undefined;
+        .get(taskId, seasonId, league.id) as { id: string } | undefined;
 
       if (!task) {
         return reply.status(404).send({ error: 'Task not found' });
       }
 
-      // Prevent deleting frozen tasks
-      if (task.scores_frozen_at) {
-        return reply.status(400).send({ error: 'Cannot delete a frozen task' });
-      }
-
       // Soft delete the task and cascade to related data in one transaction.
       // task_results has no deleted_at (computed data) so hard-delete those rows.
+      // Admin moderation (deleting closed tasks) is allowed; the cascade keeps
+      // standings in sync via the live aggregate.
       db.transaction(() => {
         db.prepare(`UPDATE tasks SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(
           taskId,
