@@ -254,6 +254,16 @@ interface ScoredAttemptRow {
 
 // Goal first, then highest points, then fastest time (NULLs last).
 // Returns negative if a is the better attempt.
+//
+// Note: this priority order intentionally differs from the rank-sort below
+// (which is total_points → task_time_s → reached_goal). For the *picker*
+// goal-attempt > non-goal-attempt is meaningful even at equal total_points
+// because we want the goal-recording attempt's metadata (task_time_s,
+// crossings) preferred. For the *rank* a goal pilot's total_points already
+// exceeds any non-goal pilot's by construction, so the reached_goal tier is
+// never load-bearing — kept only as a final tiebreaker. If a future scoring
+// change ever lets non-goal pilots out-score goal pilots, this divergence
+// will need a second look.
 function compareBestAttempt(a: ScoredAttemptRow, b: ScoredAttemptRow): number {
   if (a.reached_goal !== b.reached_goal) return b.reached_goal - a.reached_goal;
   if (a.total_points !== b.total_points) return b.total_points - a.total_points;
@@ -289,7 +299,11 @@ function rebuildTaskResultsInner(db: Database, taskId: string): void {
   // Re-score from canonical inputs. The previously-stored point values on
   // flight_attempts are ignored — they reflect submission-time state, not
   // current task state. This is the single source of truth for scoring.
-  const bestDistKm = Math.max(...attempts.map((a) => a.distance_flown_km));
+  // (Use reduce instead of `Math.max(...arr)` — V8 throws RangeError on
+  // spreads of ~100k+ elements, and the boot-time backfill iterates every
+  // task in the DB.)
+  let bestDistKm = 0;
+  for (const a of attempts) if (a.distance_flown_km > bestDistKm) bestDistKm = a.distance_flown_km;
   // Build the goal-times set from the *fastest* goal time per pilot. Without
   // dedup, a pilot who uploads the same goal flight twice (or two different
   // goal flights) would contribute multiple entries and shift tMin/tMax for
@@ -330,7 +344,9 @@ function rebuildTaskResultsInner(db: Database, taskId: string): void {
   const normalized = taskRow?.normalized_score ?? 1000;
 
   if (bestList.length > 0) {
-    const winnerTotal = Math.max(...bestList.map((r) => r.total_points));
+    // reduce, not Math.max(...arr): see note at bestDistKm above.
+    let winnerTotal = 0;
+    for (const r of bestList) if (r.total_points > winnerTotal) winnerTotal = r.total_points;
     if (winnerTotal > 0) {
       const scale = normalized / winnerTotal;
       bestList = bestList.map((r) => {

@@ -123,8 +123,20 @@ async function main() {
   // under bug fixes. Run it once for every non-deleted task on boot — cheap
   // (~1ms per task) and self-heals the leaderboard. Standings is now a live
   // SQL aggregate, so no separate standings rebuild is needed.
+  //
+  // Wrap each task in try/catch so a single bad row (corrupted attempt, FK
+  // orphan, schema drift) can't crash startup before Fastify binds. Errors
+  // are logged with the offending taskId and the boot continues; the broken
+  // task's leaderboard stays at its prior cached state until the next
+  // upload triggers another rebuild.
   const tasksToRebuild = db.prepare(`SELECT id FROM tasks WHERE deleted_at IS NULL`).all() as Array<{ id: string }>;
-  for (const { id } of tasksToRebuild) rebuildTaskResults(db, id);
+  for (const { id } of tasksToRebuild) {
+    try {
+      rebuildTaskResults(db, id);
+    } catch (err) {
+      console.error(`[boot] rebuildTaskResults failed for task ${id}:`, err);
+    }
+  }
 
   // ── Fastify ────────────────────────────────────────────────────────────────
   const app = Fastify({
