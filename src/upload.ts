@@ -299,15 +299,18 @@ export async function handleIgcUpload(
       const essCrossingTime = attempt.essCrossing ? new Date(attempt.essCrossing.crossingTime).toISOString() : null;
       const goalCrossingTime = attempt.goalCrossing ? new Date(attempt.goalCrossing.crossingTime).toISOString() : null;
 
+      // Score columns (distance/time/total_points) were removed in 0013;
+      // task_results is the single source of truth for scoring. Pipeline
+      // results are kept in-memory for the immediate response only.
       db.prepare(`
         INSERT INTO flight_attempts (
           id, submission_id, task_id, user_id,
           sss_crossing_time, ess_crossing_time, goal_crossing_time, task_time_s,
           reached_goal, last_turnpoint_index,
-          distance_flown_km, distance_points, time_points, total_points,
+          distance_flown_km,
           has_flagged_crossings, attempt_index,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         attemptId,
         submissionId,
@@ -320,9 +323,6 @@ export async function handleIgcUpload(
         attempt.reachedGoal ? 1 : 0,
         attempt.lastTurnpointIndex,
         attempt.distanceFlownKm,
-        attempt.distancePoints,
-        attempt.timePoints,
-        attempt.totalPoints,
         attempt.hasFlaggedCrossings ? 1 : 0,
         attempt.attemptIndex,
         nowIso,

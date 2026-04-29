@@ -559,10 +559,10 @@ describe('Task Import API — POST /leagues/:slug/seasons/:seasonId/tasks/import
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Task lifecycle — publish / freeze
+// Task lifecycle — publish + closed-task immutability
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Task lifecycle — POST publish / freeze', () => {
+describe('Task lifecycle — POST publish + closed-task edit guard', () => {
   let app: ReturnType<typeof Fastify>;
   let db: ReturnType<typeof getTestDb>;
   let adminUser: ReturnType<typeof createTestUser>;
@@ -613,6 +613,48 @@ describe('Task lifecycle — POST publish / freeze', () => {
     });
 
     expect(res.statusCode).toBe(403);
+  });
+
+  // Regression for the new closed-task immutability rule. Once close_date
+  // has passed, PUT must reject — admins can soft-delete a closed task or
+  // its submissions, but not edit task config.
+  it('rejects PUT on a task whose close_date is in the past', async () => {
+    const task = createTestTask(db, testSeason.id, testLeague.id, {
+      openDate: '2025-01-01T09:00:00Z',
+      closeDate: '2025-01-01T18:00:00Z',
+    });
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${task.id}`,
+      headers: { 'x-test-user-id': adminUser.id, 'content-type': 'application/json' },
+      payload: JSON.stringify({ name: 'Renamed after close' }),
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/closed/i);
+    // Original name must be unchanged.
+    const row = db.prepare(`SELECT name FROM tasks WHERE id = ?`).get(task.id) as any;
+    expect(row.name).toBe(task.name);
+  });
+
+  it('allows PUT on a task whose close_date is still in the future', async () => {
+    const futureClose = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const task = createTestTask(db, testSeason.id, testLeague.id, {
+      openDate: new Date().toISOString(),
+      closeDate: futureClose,
+    });
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${task.id}`,
+      headers: { 'x-test-user-id': adminUser.id, 'content-type': 'application/json' },
+      payload: JSON.stringify({ name: 'Renamed before close' }),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const row = db.prepare(`SELECT name FROM tasks WHERE id = ?`).get(task.id) as any;
+    expect(row.name).toBe('Renamed before close');
   });
 });
 
