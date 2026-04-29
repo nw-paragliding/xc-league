@@ -103,11 +103,14 @@ async function main() {
   const queue = new SQLiteJobQueue(db);
   const worker = bootstrapWorker(db, queue);
 
-  // Drop any pending/failed jobs that referenced removed handler types
-  // *before* starting the worker, so it doesn't fail-loop them after deploy.
+  // Drop any pending/failed/running jobs that referenced removed handler
+  // types *before* starting the worker. PENDING/FAILED would fail-loop;
+  // RUNNING rows are left over from a prior process that crashed mid-job
+  // (the worker only claims PENDING, so a stuck RUNNING row never advances)
+  // and would otherwise stay forever.
   db.prepare(
     `DELETE FROM jobs
-     WHERE status IN ('PENDING', 'FAILED')
+     WHERE status IN ('PENDING', 'FAILED', 'RUNNING')
        AND type IN ('RESCORE_TASK', 'FREEZE_TASK_SCORES', 'REBUILD_STANDINGS',
                     'NOTIFY_PILOTS', 'REPROCESS_ALL_SUBMISSIONS')`,
   ).run();
