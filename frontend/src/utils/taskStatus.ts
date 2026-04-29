@@ -5,7 +5,10 @@ export type TaskStatus = 'OPEN' | 'UPCOMING' | 'CLOSED' | 'DRAFT';
 export function getTaskStatus(task: Task): TaskStatus {
   if (task.status === 'draft') return 'DRAFT';
   const now = Date.now();
-  if (now >= new Date(task.closeDate).getTime()) return 'CLOSED';
+  // Match server semantics: the upload handler rejects with `now > close_date`,
+  // so the task is still considered open at the exact close timestamp. Using
+  // `>` here (not `>=`) keeps the UI badge in lockstep with the server gate.
+  if (now > new Date(task.closeDate).getTime()) return 'CLOSED';
   if (now >= new Date(task.openDate).getTime()) return 'OPEN';
   return 'UPCOMING';
 }
