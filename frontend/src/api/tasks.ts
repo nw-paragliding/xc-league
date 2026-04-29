@@ -23,8 +23,6 @@ export interface Task {
   status: 'draft' | 'published';
   openDate: string;
   closeDate: string;
-  isFrozen: boolean;
-  scoresFrozenAt: string | null;
   taskValue: number | null;
   pilotCount: number;
   goalCount: number;
