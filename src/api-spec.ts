@@ -464,7 +464,8 @@
  *
  * Errors:
  *   400 NOT_REGISTERED         — pilot not registered for this season
- *   400 TASK_CLOSED            — task close_date has passed
+ *   409 TASK_NOT_OPEN          — task status is not 'published'
+ *   409 TASK_CLOSED            — task close_date has passed
  *   413 FILE_TOO_LARGE         — > 5MB
  *   415 INVALID_FILE_TYPE      — not .igc
  *
@@ -583,7 +584,7 @@
  * Errors:
  *   400 CROSSING_NOT_FLAGGED     — crossing was already ground-confirmed, no override needed
  *   400 OVERRIDE_ALREADY_EXISTS  — already declared for this crossing
- *   400 TASK_CLOSED              — cannot override after task close_date
+ *   409 TASK_CLOSED              — cannot override after task close_date
  *   403 NOT_OWN_SUBMISSION
  */
 
@@ -653,10 +654,6 @@
  *
  * Response 200: { markedCount: number }
  */
-
-// =============================================================================
-// ADMIN — TASK MANAGEMENT
-// =============================================================================
 
 // =============================================================================
 // SUPER-ADMIN
@@ -736,7 +733,6 @@
  *   INVALID_TURNPOINT_SEQUENCE
  *   OPEN_DATE_AFTER_CLOSE_DATE
  *   NOT_REGISTERED
- *   TASK_CLOSED
  *   HAS_SUBMISSIONS
  *   CROSSING_NOT_FLAGGED
  *   OVERRIDE_ALREADY_EXISTS
@@ -764,6 +760,8 @@
  *   ALREADY_MEMBER
  *   ALREADY_REGISTERED
  *   TASK_HAS_SUBMISSIONS
+ *   TASK_NOT_OPEN              — task status is not 'published'
+ *   TASK_CLOSED                — task close_date has passed
  *
  * HTTP 413 Payload Too Large:
  *   FILE_TOO_LARGE
@@ -811,8 +809,6 @@
  * public      GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId       Task + results
  * admin       PATCH    /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId       Update task
  * member      GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/download  .xctsk file
- * admin       POST     /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/freeze    Freeze scores
- * admin       POST     /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/rescore   Trigger rescore
  *
  * member      POST     /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions          Upload IGC
  * self/admin  GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions          Own submissions
