@@ -185,9 +185,12 @@ async function reprocessOne(db: Database, sub: SubmissionRow): Promise<void> {
        WHERE best_attempt_id IN (SELECT id FROM flight_attempts WHERE submission_id = ?)`,
     ).run(sub.id);
 
-    // Drop old attempt + crossing rows for this submission. turnpoint_crossings
-    // has no soft-delete column so hard-delete; flight_attempts has one but
-    // the upload path overwrites in place — do the same here.
+    // Drop old attempt + crossing rows for this submission. Reprocess is
+    // re-scoring the same IGC against a newer SCORER_VERSION, so we need
+    // to replace the existing rows wholesale; soft-delete would leave the
+    // stale attempts visible alongside the freshly-scored ones, so hard-
+    // delete is the right call. turnpoint_crossings has no soft-delete
+    // column either, so the same delete-and-reinsert applies.
     db.prepare(
       `DELETE FROM turnpoint_crossings
        WHERE attempt_id IN (SELECT id FROM flight_attempts WHERE submission_id = ?)`,

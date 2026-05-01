@@ -296,9 +296,9 @@ describe('cylinder tolerance boundary (segmentIntersectsCircle + tagToleranceM)'
     expect(t).toBeNull();
   });
 
-  it('uses the 0.5% floor for large cylinders (4000 m → 20 m tolerance)', () => {
+  it('uses the 0.5% rule above the floor (4000 m → 20 m tolerance)', () => {
     const r = 4000;
-    const effectiveR = r + tagToleranceM(r); // 4020
+    const effectiveR = r + tagToleranceM(r); // 4020 — 0.5 % of 4000 = 20 m, above the 5 m floor
     // 15 m short of the strict edge — within 20 m tolerance
     const t = segmentIntersectsCircle({ x: 5000, y: 0 }, { x: 4015, y: 0 }, effectiveR);
     expect(t).not.toBeNull();
