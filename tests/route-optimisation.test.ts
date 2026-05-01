@@ -115,9 +115,14 @@ describe('optimiseRoute — miss case (regression: tangent still works)', () => 
     const result = optimiseRoute(cylinders);
 
     // Touch point should sit on the cylinder boundary (tangent case).
+    // Per-touch CONVERGENCE_M is 0.1 m, so the boundary distance should
+    // match the radius within ~1 m once the haversine ↔ equirectangular
+    // discrepancy at this scale is folded in. Compare in metres so the
+    // assertion's failure mode is "off the boundary by N m" rather than
+    // "off in the third km decimal".
     const tp2 = result.touchPoints[1];
-    const distFromCentreKm = haversineKm(tp2.lat, tp2.lng, 47.2, -121.9);
-    expect(distFromCentreKm).toBeCloseTo(1.0, 1); // ~1 km radius
+    const distFromCentreM = haversineKm(tp2.lat, tp2.lng, 47.2, -121.9) * 1000;
+    expect(Math.abs(distFromCentreM - 1000)).toBeLessThan(2);
 
     // Touch should be on the western edge (closer to the SSS→ESS chord).
     expect(tp2.lng).toBeLessThan(-121.9);
