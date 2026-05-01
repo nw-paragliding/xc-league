@@ -3,14 +3,15 @@
 //
 // Triggered at boot when any flight_attempts.scorer_version differs from the
 // pipeline's current SCORER_VERSION constant. Re-parses each affected IGC
-// blob, replaces its flight_attempts + turnpoint_crossings rows, and rebuilds
-// the touched tasks' task_results. All writes per-submission are inside a
-// transaction so a parse failure on one IGC leaves the rest intact.
+// blob and replaces its flight_attempts + turnpoint_crossings rows. The
+// boot-time task_results sweep in server.ts runs immediately afterward and
+// re-derives per-task scores once over the new full attempt set. All writes
+// per-submission are inside a transaction so a failure on one IGC leaves
+// the rest intact.
 // =============================================================================
 
 import type { Database } from 'better-sqlite3';
 import { randomUUID } from 'crypto';
-import { rebuildTaskResults } from './job-queue';
 import { type PipelineInput, runPipeline, SCORER_VERSION, type TurnpointDef } from './pipeline';
 
 interface SubmissionRow {
@@ -71,10 +72,9 @@ export async function reprocessStaleSubmissions(db: Database): Promise<{ reproce
     }
   }
 
-  // No post-loop rebuildTaskResults needed: each reprocessOne rebuilds
-  // task_results inside its own transaction (required for FK ordering — see
-  // comment in reprocessOne), and server.ts boot sweeps rebuildTaskResults
-  // for every non-deleted task immediately after this returns.
+  // No post-loop rebuildTaskResults needed: server.ts boot sweeps
+  // rebuildTaskResults for every non-deleted task immediately after this
+  // returns, which is the single point that re-derives task_results.
   console.log(`[reprocess] done: ${reprocessed} re-scored, ${failed} failed`);
   return { reprocessed, failed };
 }
@@ -108,8 +108,26 @@ async function reprocessOne(db: Database, sub: SubmissionRow): Promise<void> {
     goalLineBearingDeg: tp.goal_line_bearing_deg ?? undefined,
   }));
 
-  // Goal times from *other* submissions on the same task — needed for time-points
-  // scoring, even though rebuildTaskResults will overwrite the score columns.
+  // turnpoint_overrides has hard FKs to crossings/attempts with no
+  // ON DELETE CASCADE — if any exist for this submission we'd trip the FK
+  // mid-txn and abort. Overrides are immutable audit records, so the
+  // correct behaviour is to skip and surface them for manual reconciliation
+  // rather than silently rewrite the world out from under the audit row.
+  const hasOverrides = db
+    .prepare(
+      `SELECT 1 FROM turnpoint_overrides
+       WHERE attempt_id IN (SELECT id FROM flight_attempts WHERE submission_id = ?)
+       LIMIT 1`,
+    )
+    .get(sub.id);
+  if (hasOverrides) {
+    throw new Error(`submission has turnpoint_overrides — manual reconciliation required`);
+  }
+
+  // Goal times from *other* submissions on the same task — needed by the
+  // pipeline's time-points calculation when scoring this submission's
+  // attempts. The boot-time task_results sweep in server.ts re-derives
+  // per-task scores afterward from the full attempt set.
   const otherGoalTimes = db
     .prepare(
       `SELECT task_time_s FROM flight_attempts
@@ -157,13 +175,15 @@ async function reprocessOne(db: Database, sub: SubmissionRow): Promise<void> {
   const nowIso = new Date().toISOString();
 
   db.transaction(() => {
-    // Drop task_results for this task FIRST. Without this the next DELETE
-    // FROM flight_attempts trips the FK constraint
-    //   task_results.best_attempt_id REFERENCES flight_attempts(id)
-    // because the cached task_results row still points at the old attempt.
-    // The rebuildTaskResults call at the end of this txn re-creates
-    // task_results from the new flight_attempts.
-    db.prepare(`DELETE FROM task_results WHERE task_id = ?`).run(sub.task_id);
+    // Drop only the task_results rows that point at this submission's
+    // attempts — the FK is task_results.best_attempt_id → flight_attempts(id),
+    // and we're about to delete those attempts. A full per-task DELETE +
+    // rebuild here would be O(N²) when many stale submissions share a task;
+    // the boot sweep in server.ts re-derives the whole table once afterward.
+    db.prepare(
+      `DELETE FROM task_results
+       WHERE best_attempt_id IN (SELECT id FROM flight_attempts WHERE submission_id = ?)`,
+    ).run(sub.id);
 
     // Drop old attempt + crossing rows for this submission. turnpoint_crossings
     // has no soft-delete column so hard-delete; flight_attempts has one but
@@ -239,11 +259,5 @@ async function reprocessOne(db: Database, sub: SubmissionRow): Promise<void> {
       nowIso,
       sub.id,
     );
-
-    // Re-create task_results for this task from the new flight_attempts,
-    // inside the same txn so the FK constraint stays satisfied at commit.
-    // better-sqlite3 transactions are reentrant via savepoints, so the
-    // nested rebuildTaskResults transaction is safe here.
-    rebuildTaskResults(db, sub.task_id);
   })();
 }
