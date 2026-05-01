@@ -571,38 +571,20 @@ export function segmentIntersectsGoalLine(
 }
 
 /**
- * Closest distance from a point to a finite line segment, plus the
- * parametric position [0,1] along that segment of the foot of the
- * perpendicular (clamped to the endpoints).
- */
-function pointToSegmentDistAndT(p: Point2D, segA: Point2D, segB: Point2D): { dist: number; tOnSeg: number } {
-  const dx = segB.x - segA.x;
-  const dy = segB.y - segA.y;
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq < 1e-10) {
-    return { dist: Math.hypot(p.x - segA.x, p.y - segA.y), tOnSeg: 0 };
-  }
-  const tRaw = ((p.x - segA.x) * dx + (p.y - segA.y) * dy) / lenSq;
-  const tClamped = Math.max(0, Math.min(1, tRaw));
-  const cx = segA.x + tClamped * dx;
-  const cy = segA.y + tClamped * dy;
-  return { dist: Math.hypot(p.x - cx, p.y - cy), tOnSeg: tClamped };
-}
-
-/**
- * Does segment A→B come within `toleranceM` of the goal-line chord?
+ * Does segment A→B enter the goal-line "stadium"?
  *
  * Per FAI §9.1.3 the chord gets its own benefit-of-doubt tolerance applied
  * separately from the semi-circle. Treating that tolerance as a perpendicular
  * thickness — i.e. the chord becomes a "stadium" (chord segment Minkowski-
- * summed with a disk of radius toleranceM) — handles two cases the bare
+ * summed with a disk of radius toleranceM) — handles two cases that bare
  * line-line intersection misses:
  *   - a track segment ending just short of the chord (GPS noise)
  *   - a track segment passing parallel to the chord at < tolerance offset.
  *
- * Returns the parametric t ∈ [0,1] on segment A→B at the closest approach
- * (or the intersection itself), or null if no point on A→B is within
- * tolerance of the chord.
+ * Returns the smallest t ∈ [0,1] on A→B at which the segment first enters
+ * the stadium (matching the entry-time semantics of `segmentIntersectsCircle`
+ * and `segmentEntersGoalSemiCircle`), or null if no point on A→B is within
+ * tolerance of the chord. Returns 0 if A is already inside the stadium.
  */
 export function segmentNearGoalLine(
   a: Point2D,
@@ -612,36 +594,82 @@ export function segmentNearGoalLine(
   bearingDeg: number,
   toleranceM: number,
 ): number | null {
-  // Fast path: actual crossing of the chord (tolerance irrelevant).
-  const tIntersect = segmentIntersectsGoalLine(a, b, lineMidpoint, halfLengthM, bearingDeg);
-  if (tIntersect !== null) return tIntersect;
-
-  // Build chord endpoints (same as inside segmentIntersectsGoalLine).
+  // Rotate into a local frame where the chord lies along the x-axis from
+  // (-L, 0) to (+L, 0). Bearing is clockwise from north → chord direction
+  // unit vector is (sin, cos); the perpendicular (rotated -90° so positive
+  // y is "right of the chord direction") is (cos, -sin).
   const rad = (bearingDeg * Math.PI) / 180;
-  const dx = Math.sin(rad) * halfLengthM;
-  const dy = Math.cos(rad) * halfLengthM;
-  const p1: Point2D = { x: lineMidpoint.x - dx, y: lineMidpoint.y - dy };
-  const p2: Point2D = { x: lineMidpoint.x + dx, y: lineMidpoint.y + dy };
+  const ux = Math.sin(rad);
+  const uy = Math.cos(rad);
+  const px = uy;
+  const py = -ux;
+  const toLocal = (pt: Point2D): Point2D => {
+    const dx = pt.x - lineMidpoint.x;
+    const dy = pt.y - lineMidpoint.y;
+    return { x: dx * ux + dy * uy, y: dx * px + dy * py };
+  };
 
-  // Min distance between two non-intersecting segments lives at one of the
-  // four endpoint-to-other-segment distances. Pick the smallest one whose
-  // distance is within tolerance, and use its t-on-AB for time interpolation.
-  const candidates: Array<{ dist: number; tOnAB: number }> = [
-    { dist: pointToSegmentDistAndT(a, p1, p2).dist, tOnAB: 0 },
-    { dist: pointToSegmentDistAndT(b, p1, p2).dist, tOnAB: 1 },
-  ];
-  const fromP1 = pointToSegmentDistAndT(p1, a, b);
-  candidates.push({ dist: fromP1.dist, tOnAB: fromP1.tOnSeg });
-  const fromP2 = pointToSegmentDistAndT(p2, a, b);
-  candidates.push({ dist: fromP2.dist, tOnAB: fromP2.tOnSeg });
+  const A = toLocal(a);
+  const B = toLocal(b);
+  const L = halfLengthM;
+  const tol = toleranceM;
+  const tol2 = tol * tol;
 
-  let best: { dist: number; tOnAB: number } | null = null;
-  for (const c of candidates) {
-    if (c.dist <= toleranceM && (best === null || c.dist < best.dist)) {
-      best = c;
+  // The stadium = {(x, y) | distance((x, y), chord segment) ≤ tol}, which
+  // decomposes into a 2L × 2*tol rectangle plus two end-cap disks of
+  // radius tol centred at (±L, 0).
+  const insideStadium = (p: Point2D): boolean => {
+    if (Math.abs(p.x) <= L) return Math.abs(p.y) <= tol;
+    const dxCap = p.x > L ? p.x - L : p.x + L;
+    return dxCap * dxCap + p.y * p.y <= tol2;
+  };
+
+  if (insideStadium(A)) return 0;
+
+  // Collect every t ∈ [0,1] at which AB crosses the stadium boundary, then
+  // return the earliest. The boundary has 4 pieces:
+  //   - top edge:    y = +tol, |x| ≤ L
+  //   - bottom edge: y = -tol, |x| ≤ L
+  //   - right cap:   (x - L)² + y² = tol², x ≥ L
+  //   - left cap:    (x + L)² + y² = tol², x ≤ -L
+  const dxAB = B.x - A.x;
+  const dyAB = B.y - A.y;
+  const candidates: number[] = [];
+
+  // Top / bottom edges
+  if (dyAB !== 0) {
+    for (const yEdge of [tol, -tol]) {
+      const t = (yEdge - A.y) / dyAB;
+      if (t < 0 || t > 1) continue;
+      const xAtT = A.x + t * dxAB;
+      if (xAtT >= -L && xAtT <= L) candidates.push(t);
     }
   }
-  return best?.tOnAB ?? null;
+
+  // End caps (right at x = L, left at x = -L)
+  const a2 = dxAB * dxAB + dyAB * dyAB;
+  if (a2 >= 1e-12) {
+    for (const xCenter of [-L, L]) {
+      const b2 = 2 * ((A.x - xCenter) * dxAB + A.y * dyAB);
+      const c2 = (A.x - xCenter) * (A.x - xCenter) + A.y * A.y - tol2;
+      const disc = b2 * b2 - 4 * a2 * c2;
+      if (disc < 0) continue;
+      const sqd = Math.sqrt(disc);
+      for (const t of [(-b2 - sqd) / (2 * a2), (-b2 + sqd) / (2 * a2)]) {
+        if (t < 0 || t > 1) continue;
+        const xAtT = A.x + t * dxAB;
+        // Only count the part of each disk that lives outside the rectangle —
+        // the half inside is already covered by the top/bottom edges and
+        // counting it would yield a t past the actual boundary.
+        if (xCenter === -L && xAtT > -L) continue;
+        if (xCenter === L && xAtT < L) continue;
+        candidates.push(t);
+      }
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  return Math.min(...candidates);
 }
 
 /**

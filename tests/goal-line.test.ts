@@ -211,33 +211,38 @@ describe('segmentNearGoalLine', () => {
   const BRG = 90;
   const TOL = 5;
 
-  it('returns the line-line intersection t when the segment actually crosses', () => {
+  it('returns the stadium entry t when the segment actually crosses the chord', () => {
+    // y goes -50 → 50; the stadium's bottom edge sits at y = -tol = -5,
+    // so the segment enters the stadium at y = -5: t = 45/100.
     const t = segmentNearGoalLine({ x: 0, y: -50 }, { x: 0, y: 50 }, ORIGIN, R, BRG, TOL);
-    expect(t).toBeCloseTo(0.5, 5);
+    expect(t).toBeCloseTo(0.45, 5);
   });
 
   it('tags a segment ending exactly at the chord (no overshoot)', () => {
+    // y goes -50 → 0; entry into the stadium at y = -5: t = 45/50.
     const t = segmentNearGoalLine({ x: 0, y: -50 }, { x: 0, y: 0 }, ORIGIN, R, BRG, TOL);
     expect(t).not.toBeNull();
-    expect(t!).toBeCloseTo(1, 5);
+    expect(t!).toBeCloseTo(0.9, 5);
   });
 
   it('tags a segment that misses the chord by less than tolerance (perpendicular short)', () => {
-    // Endpoint b sits 3 m short of the chord on the inbound side
+    // y goes -20 → -3; the segment ends 3 m short of the chord on the
+    // inbound side, but enters the stadium at y = -5: t = 15/17 ≈ 0.882.
     const t = segmentNearGoalLine({ x: 0, y: -20 }, { x: 0, y: -3 }, ORIGIN, R, BRG, TOL);
     expect(t).not.toBeNull();
+    expect(t!).toBeCloseTo(15 / 17, 4);
   });
 
   it('rejects a segment that misses the chord by more than tolerance', () => {
-    // Endpoint b sits 8 m short — outside 5 m tolerance
+    // y goes -20 → -8 — both endpoints outside the 5 m tolerance band
     const t = segmentNearGoalLine({ x: 0, y: -20 }, { x: 0, y: -8 }, ORIGIN, R, BRG, TOL);
     expect(t).toBeNull();
   });
 
-  it('tags a segment that flies parallel to the chord at < tolerance offset', () => {
-    // Track parallel to the chord at y = 4 m offset (< 5 m tolerance)
+  it('returns 0 when A starts inside the stadium (parallel < tolerance)', () => {
+    // Parallel to the chord at y = 4 (< 5 m tolerance) — A is already inside.
     const t = segmentNearGoalLine({ x: -50, y: 4 }, { x: 50, y: 4 }, ORIGIN, R, BRG, TOL);
-    expect(t).not.toBeNull();
+    expect(t).toBe(0);
   });
 
   it('rejects a segment that flies parallel to the chord at > tolerance offset', () => {
@@ -245,16 +250,27 @@ describe('segmentNearGoalLine', () => {
     expect(t).toBeNull();
   });
 
-  it('tags a segment passing within tolerance of a chord endpoint', () => {
-    // Track that ends 3 m beyond the +x chord endpoint at (100, 0). The endpoint
-    // is the closest point on the chord; track endpoint b is 3 m away.
+  it('tags a segment entering the right end-cap', () => {
+    // A at (100, -20) — at chord-x boundary, far from cap → outside.
+    // B at (103, 0) — 3 m past the +x chord endpoint → inside the cap.
+    // First-entry comes from the right-cap circle ((x−100)² + y² = 25).
     const t = segmentNearGoalLine({ x: 100, y: -20 }, { x: 103, y: 0 }, ORIGIN, R, BRG, TOL);
     expect(t).not.toBeNull();
+    expect(t!).toBeGreaterThan(0);
+    expect(t!).toBeLessThan(1);
   });
 
   it('rejects a segment > tolerance beyond the chord endpoint', () => {
     const t = segmentNearGoalLine({ x: 100, y: -20 }, { x: 110, y: 0 }, ORIGIN, R, BRG, TOL);
     expect(t).toBeNull();
+  });
+
+  it('returns the earlier of two stadium intersections when AB enters and exits', () => {
+    // A at (0, -20) outside; B at (0, 20) outside; AB punches straight
+    // through the stadium. First entry is at y = -5: t = 15/40 = 0.375.
+    // Confirms that we never accidentally return the exit t.
+    const t = segmentNearGoalLine({ x: 0, y: -20 }, { x: 0, y: 20 }, ORIGIN, R, BRG, TOL);
+    expect(t).toBeCloseTo(0.375, 5);
   });
 });
 
