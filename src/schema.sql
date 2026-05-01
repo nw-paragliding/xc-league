@@ -134,7 +134,7 @@ CREATE TABLE tasks (
     description             TEXT,
     task_type               TEXT        NOT NULL,  -- 'RACE_TO_GOAL' | 'OPEN_DISTANCE'
     open_date               TEXT        NOT NULL,  -- ISO 8601 datetime; pilots may fly from this point
-    close_date              TEXT        NOT NULL,  -- ISO 8601 datetime; scores freeze after this
+    close_date              TEXT        NOT NULL,  -- ISO 8601 datetime; submission window ends and the task becomes immutable after this
     optimised_distance_km   REAL,                  -- pre-computed optimal route distance; null until computed
     sss_turnpoint_id        TEXT,                  -- FK set after turnpoints are created; see below
     ess_turnpoint_id        TEXT,                  -- null for hike & fly (ESS = goal)

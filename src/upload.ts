@@ -235,7 +235,6 @@ export async function handleIgcUpload(
     task: {
       id: taskId,
       turnpoints: turnpointDefs,
-      closeDate: new Date(task.close_date).getTime(),
     },
     existingGoalTimes: existingGoalTimesS,
     competitionType: task.competition_type === 'HIKE_AND_FLY' ? 'HIKE_AND_FLY' : 'XC',

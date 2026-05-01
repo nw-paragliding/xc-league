@@ -28,7 +28,6 @@ function fix(tSec: number, speedKmh: number, lat = TP_LAT, lng = TP_LNG): Fix {
 function buildTask(): TaskDefinition {
   return {
     id: 'task-1',
-    closeDate: Date.now() + 86_400_000,
     turnpoints: [
       {
         id: 'tp-sss',

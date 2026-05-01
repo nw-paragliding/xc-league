@@ -112,7 +112,6 @@ export interface PipelineInput {
 export interface TaskDefinition {
   id: string;
   turnpoints: TurnpointDef[]; // ordered: [SSS, TP1, TP2, ..., ESS/goal]
-  closeDate: number; // Unix ms — used to check if scoring is frozen
 }
 
 export interface TurnpointDef {
@@ -252,7 +251,6 @@ export type DateValidationError = {
 
 export function validateFlightDate(
   track: ParsedTrack,
-  _task: TaskDefinition,
   taskOpenDate: string,
   taskCloseDate: string,
 ): Result<ParsedTrack, DateValidationError> {
@@ -1025,7 +1023,7 @@ export async function runPipeline(
   const track = parseResult.value;
 
   // Stage 2: Date validation
-  const dateResult = validateFlightDate(track, input.task, taskOpenDate, taskCloseDate);
+  const dateResult = validateFlightDate(track, taskOpenDate, taskCloseDate);
   if (!dateResult.ok) return err({ stage: 'DATE', error: dateResult.error });
 
   // Stage 3: Attempt detection

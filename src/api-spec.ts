@@ -430,35 +430,40 @@
  * Body (form fields):
  *   igcFile: File    (required, .igc extension, max 5MB)
  *
- * Processing:
- *   1. Store raw IGC to object storage
- *   2. Insert flight_submission with status PENDING
- *   3. Run pipeline synchronously:
- *      - If pipeline returns a hard error (PARSE, DATE): set status INVALID,
- *        return 422 immediately with the error message
- *      - If pipeline returns NO_SSS_CROSSING: set status PROCESSED with zero score,
- *        return 200 with result (pilot gets feedback, can resubmit)
- *      - If pipeline succeeds: set status PROCESSED, write attempts, update task_results,
- *        enqueue RESCORE_TASK job, return 200 with result
+ * Processing (single SQLite transaction, fully synchronous):
+ *   1. Run pipeline:
+ *      - On hard error (PARSE / DATE / DETECTION): return 422 with
+ *        { error: { code: 'PIPELINE_ERROR', message } }
+ *      - On success: continue
+ *   2. Insert flight_submissions row (status PROCESSED, igc blob stored
+ *      in `igc_data`).
+ *   3. Insert one flight_attempts row per scored attempt + the matching
+ *      turnpoint_crossings rows.
+ *   4. Set flight_submissions.best_attempt_id.
+ *   5. Call rebuildTaskResults(taskId) — recomputes the whole task's
+ *      task_results from the new full set of attempts.
+ *   6. Return 201 with the response below.
  *
- * Response 200 (processed):
+ * Response 201:
  *   {
  *     submission: {
  *       id: string,
  *       status: 'PROCESSED',
  *       submittedAt: string,
- *     },
- *     bestAttempt: AttemptResult,
- *     allAttempts: Array<AttemptResult>,    // visible only to the submitting pilot
- *     replacedPreviousBest: boolean,        // true if this beats their prior best
+ *       igcFilename: string,
+ *       igcSizeBytes: number,
+ *       igcDate: string | null,
+ *       bestAttempt: AttemptResult,
+ *       allAttempts: AttemptResult[],
+ *       timePointsProvisional: boolean,   // true while task is open
+ *     }
  *   }
  *
- * Response 422 (invalid IGC):
+ * Response 422 (pipeline rejected):
  *   {
  *     error: {
- *       code: 'IGC_INVALID',
+ *       code: 'PIPELINE_ERROR',
  *       message: string,      // human-readable from formatPipelineError()
- *       stage: 'PARSE' | 'DATE' | 'DETECTION',
  *     }
  *   }
  *

@@ -438,7 +438,18 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
     leagueScope.get(
       '/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/track',
       async (request, reply) => {
-        const { submissionId } = request.params as { submissionId: string; seasonId: string; taskId: string };
+        // The track payload contains every IGC fix. The submissionId is
+        // exposed via the public leaderboard, so without auth anyone could
+        // pull any pilot's track at any time. Gate on league membership to
+        // match the /submissions listing.
+        requireAuth(request, reply);
+        requireLeagueMember(request, reply);
+
+        const { seasonId, taskId, submissionId } = request.params as {
+          submissionId: string;
+          seasonId: string;
+          taskId: string;
+        };
 
         const submission = db
           .prepare(
@@ -454,9 +465,13 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
          JOIN tasks t ON t.id = s.task_id
          JOIN seasons se ON se.id = t.season_id
          JOIN users u ON u.id = s.user_id
-         WHERE s.id = ? AND se.league_id = ? AND s.deleted_at IS NULL`,
+         WHERE s.id = ?
+           AND s.task_id = ?
+           AND t.season_id = ?
+           AND se.league_id = ?
+           AND s.deleted_at IS NULL`,
           )
-          .get(submissionId, (request as any).league.id) as any;
+          .get(submissionId, taskId, seasonId, (request as any).league.id) as any;
 
         if (!submission) {
           return reply.status(404).send({ error: 'Submission not found' });
