@@ -198,19 +198,36 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     // arcs at mid-latitudes (Mercator's secant changes across a 4 km radius),
     // making tracks appear inside the cylinder while actually outside. 96
     // segments gives sub-pixel accuracy at any reasonable zoom for our radii.
+    //
+    // Cached per (group, radiusM) so the shadow ring and coloured ring share
+    // one set of ~97 map.project calls instead of doubling the work each
+    // pan/zoom.
+    const cylinderPathCache = new Map<string, string>();
     const cylinderPath = (lng: number, lat: number, radiusM: number, segments = 96): string => {
+      const key = `${lng},${lat},${radiusM},${segments}`;
+      const cached = cylinderPathCache.get(key);
+      if (cached !== undefined) return cached;
       const R = 6371000;
       const DEG = Math.PI / 180;
-      const cosLat = Math.cos(lat * DEG);
-      let d = '';
+      // cos(lat) approaches 0 near the poles and would blow dLng up to ±∞,
+      // producing NaN coordinates downstream. Clamp to a tiny epsilon so the
+      // polygon stays bounded — purely defensive; our actual TPs are at
+      // mid-latitudes where this guard never fires.
+      const COS_LAT_EPSILON = 1e-12;
+      const cosLatRaw = Math.cos(lat * DEG);
+      const cosLat = Math.abs(cosLatRaw) < COS_LAT_EPSILON ? Math.sign(cosLatRaw || 1) * COS_LAT_EPSILON : cosLatRaw;
+      const cmds: string[] = [];
       for (let i = 0; i <= segments; i++) {
         const theta = (i / segments) * 2 * Math.PI;
         const dLat = ((radiusM * Math.sin(theta)) / R) * (180 / Math.PI);
         const dLng = ((radiusM * Math.cos(theta)) / (R * cosLat)) * (180 / Math.PI);
         const p = map.project([lng + dLng, lat + dLat]);
-        d += `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+        cmds.push(`${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`);
       }
-      return d + 'Z';
+      cmds.push('Z');
+      const d = cmds.join('');
+      cylinderPathCache.set(key, d);
+      return d;
     };
 
     // ── 1. Optimized route line ───────────────────────────────────────────────
