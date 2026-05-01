@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { segmentEntersGoalSemiCircle, segmentIntersectsGoalLine } from '../src/pipeline';
+import {
+  segmentEntersGoalSemiCircle,
+  segmentIntersectsCircle,
+  segmentIntersectsGoalLine,
+  segmentNearGoalLine,
+  tagToleranceM,
+} from '../src/pipeline';
 import { type Cylinder, optimiseRoute } from '../src/shared/task-engine';
 
 // =============================================================================
@@ -191,6 +197,111 @@ describe('goal D-shape: chord + semi-circle together', () => {
     const tArc = segmentEntersGoalSemiCircle({ x: 0, y: -200 }, { x: 0, y: -10 }, ORIGIN, R, BRG);
     expect(tChord).toBeNull();
     expect(tArc).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// segmentNearGoalLine — FAI §9.1.3 perpendicular tolerance on the chord
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('segmentNearGoalLine', () => {
+  // East-west chord at origin, half-length 100 m, bearing 90°. The chord is
+  // sized off a 100 m goal cylinder, so tolerance = tagToleranceM(100) = 5 m
+  // (the 5 m floor; 0.5 % of 100 m is 0.5 m, below the floor).
+  const R = 100;
+  const BRG = 90;
+  const TOL = 5;
+
+  it('returns the stadium entry t when the segment actually crosses the chord', () => {
+    // y goes -50 → 50; the stadium's bottom edge sits at y = -tol = -5,
+    // so the segment enters the stadium at y = -5: t = 45/100.
+    const t = segmentNearGoalLine({ x: 0, y: -50 }, { x: 0, y: 50 }, ORIGIN, R, BRG, TOL);
+    expect(t).toBeCloseTo(0.45, 5);
+  });
+
+  it('tags a segment ending exactly at the chord (no overshoot)', () => {
+    // y goes -50 → 0; entry into the stadium at y = -5: t = 45/50.
+    const t = segmentNearGoalLine({ x: 0, y: -50 }, { x: 0, y: 0 }, ORIGIN, R, BRG, TOL);
+    expect(t).not.toBeNull();
+    expect(t!).toBeCloseTo(0.9, 5);
+  });
+
+  it('tags a segment that misses the chord by less than tolerance (perpendicular short)', () => {
+    // y goes -20 → -3; the segment ends 3 m short of the chord on the
+    // inbound side, but enters the stadium at y = -5: t = 15/17 ≈ 0.882.
+    const t = segmentNearGoalLine({ x: 0, y: -20 }, { x: 0, y: -3 }, ORIGIN, R, BRG, TOL);
+    expect(t).not.toBeNull();
+    expect(t!).toBeCloseTo(15 / 17, 4);
+  });
+
+  it('rejects a segment that misses the chord by more than tolerance', () => {
+    // y goes -20 → -8 — both endpoints outside the 5 m tolerance band
+    const t = segmentNearGoalLine({ x: 0, y: -20 }, { x: 0, y: -8 }, ORIGIN, R, BRG, TOL);
+    expect(t).toBeNull();
+  });
+
+  it('returns 0 when A starts inside the stadium (parallel < tolerance)', () => {
+    // Parallel to the chord at y = 4 (< 5 m tolerance) — A is already inside.
+    const t = segmentNearGoalLine({ x: -50, y: 4 }, { x: 50, y: 4 }, ORIGIN, R, BRG, TOL);
+    expect(t).toBe(0);
+  });
+
+  it('rejects a segment that flies parallel to the chord at > tolerance offset', () => {
+    const t = segmentNearGoalLine({ x: -50, y: 7 }, { x: 50, y: 7 }, ORIGIN, R, BRG, TOL);
+    expect(t).toBeNull();
+  });
+
+  it('tags a segment entering the right end-cap', () => {
+    // A at (100, -20) — at chord-x boundary, far from cap → outside.
+    // B at (103, 0) — 3 m past the +x chord endpoint → inside the cap.
+    // First-entry comes from the right-cap circle ((x−100)² + y² = 25).
+    const t = segmentNearGoalLine({ x: 100, y: -20 }, { x: 103, y: 0 }, ORIGIN, R, BRG, TOL);
+    expect(t).not.toBeNull();
+    expect(t!).toBeGreaterThan(0);
+    expect(t!).toBeLessThan(1);
+  });
+
+  it('rejects a segment > tolerance beyond the chord endpoint', () => {
+    const t = segmentNearGoalLine({ x: 100, y: -20 }, { x: 110, y: 0 }, ORIGIN, R, BRG, TOL);
+    expect(t).toBeNull();
+  });
+
+  it('returns the earlier of two stadium intersections when AB enters and exits', () => {
+    // A at (0, -20) outside; B at (0, 20) outside; AB punches straight
+    // through the stadium. First entry is at y = -5: t = 15/40 = 0.375.
+    // Confirms that we never accidentally return the exit t.
+    const t = segmentNearGoalLine({ x: 0, y: -20 }, { x: 0, y: 20 }, ORIGIN, R, BRG, TOL);
+    expect(t).toBeCloseTo(0.375, 5);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FAI §9.1.3 cylinder tolerance — boundary cases through detection helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('cylinder tolerance boundary (segmentIntersectsCircle + tagToleranceM)', () => {
+  // A 400 m cylinder gets a 5 m tolerance (the floor — 0.5% of 400 is 2 m)
+  it('tags an inbound segment ending 4 m short of a 400 m cylinder', () => {
+    const r = 400;
+    const effectiveR = r + tagToleranceM(r); // 405
+    // Track running west→east, ending 4 m short of the cylinder edge
+    const t = segmentIntersectsCircle({ x: 500, y: 0 }, { x: 404, y: 0 }, effectiveR);
+    expect(t).not.toBeNull();
+  });
+
+  it('rejects an inbound segment ending 8 m short of a 400 m cylinder', () => {
+    const r = 400;
+    const effectiveR = r + tagToleranceM(r); // 405
+    const t = segmentIntersectsCircle({ x: 500, y: 0 }, { x: 408, y: 0 }, effectiveR);
+    expect(t).toBeNull();
+  });
+
+  it('uses the 0.5% rule above the floor (4000 m → 20 m tolerance)', () => {
+    const r = 4000;
+    const effectiveR = r + tagToleranceM(r); // 4020 — 0.5 % of 4000 = 20 m, above the 5 m floor
+    // 15 m short of the strict edge — within 20 m tolerance
+    const t = segmentIntersectsCircle({ x: 5000, y: 0 }, { x: 4015, y: 0 }, effectiveR);
+    expect(t).not.toBeNull();
   });
 });
 

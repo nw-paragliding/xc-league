@@ -17,6 +17,31 @@ import {
 } from './shared/task-engine';
 
 // =============================================================================
+// SCORER VERSION
+//
+// Bump on any change that affects detection or scoring numbers. The boot
+// re-process loop in src/server.ts re-runs the pipeline against every IGC
+// whose stored flight_attempts.scorer_version differs from this constant.
+// =============================================================================
+
+export const SCORER_VERSION = '1.1';
+
+// =============================================================================
+// FAI §9.1.3 cylinder tolerance
+//
+// "Tolerance is applied separately to the straight portion and to the
+// semi-circle." Standard practice across FAI scoring tools is 0.5% of the
+// radius with a minimum of 5 m. The boundary effectively shifts outward by
+// `tagToleranceM(r)` — a fix at distance ≤ r + tolerance is considered
+// inside. The optimised-route geometry continues to use the strict radius;
+// tolerance only governs whether a track tags the cylinder.
+// =============================================================================
+
+export function tagToleranceM(radiusM: number): number {
+  return Math.max(5, radiusM * 0.005);
+}
+
+// =============================================================================
 // SHARED TYPES
 // =============================================================================
 
@@ -285,7 +310,13 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
   const sss = task.turnpoints[0];
 
   // ── Step 1: Find all SSS outward crossings ──────────────────────────────────
+  // FAI Sporting Code S7F §9.1.3 tolerance: a fix at distance d from the
+  // cylinder centre is "inside" iff d ≤ r + tolerance. The boundary effectively
+  // shifts outward by `tagToleranceM(r)`. For SSS this means the exit gate
+  // widens — pilots get the benefit of the doubt that they are still inside
+  // near the boundary.
   const sssCrossings: Array<{ fixIndex: number; t: number; crossingTime: number }> = [];
+  const sssEffectiveR = sss.radiusM + tagToleranceM(sss.radiusM);
 
   for (let i = 0; i < fixes.length - 1; i++) {
     const a = fixes[i];
@@ -295,9 +326,9 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
     const distA = Math.sqrt(aLocal.x ** 2 + aLocal.y ** 2);
     const distB = Math.sqrt(bLocal.x ** 2 + bLocal.y ** 2);
 
-    // Outward: inside → outside
-    if (distA <= sss.radiusM && distB > sss.radiusM) {
-      const t = segmentIntersectsCircle(aLocal, bLocal, sss.radiusM);
+    // Outward: inside → outside (against the effective boundary)
+    if (distA <= sssEffectiveR && distB > sssEffectiveR) {
+      const t = segmentIntersectsCircle(aLocal, bLocal, sssEffectiveR);
       if (t !== null) {
         sssCrossings.push({ fixIndex: i, t, crossingTime: interpolateCrossingTime(a, b, t) });
       }
@@ -369,21 +400,32 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
       let crossed = false;
       let crossT: number | null = null;
 
+      // Apply FAI §9.1.3 tolerance to the inward tag detection. The boundary
+      // is treated as r + tolerance for the in/out check; the optimised route
+      // and partial-distance geometry continue to use the strict radius.
+      const tolerance = tagToleranceM(tp.radiusM);
+      const effectiveR = tp.radiusM + tolerance;
+
       if (tp.type === 'GOAL_LINE' && cachedGoalBearing != null) {
         const bearingDeg = cachedGoalBearing;
-        const tChord = segmentIntersectsGoalLine(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);
-        const tArc = segmentEntersGoalSemiCircle(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);
+        // Per §9.1.3 tolerance applies separately to the chord and the
+        // semi-circle. The chord gets a perpendicular "stadium" thickness
+        // of `tolerance` (segmentNearGoalLine); the semi-circle gets the
+        // same tolerance as a radius extension (effectiveR).
+        const tChord = segmentNearGoalLine(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg, tolerance);
+        const tArc = segmentEntersGoalSemiCircle(aLocal, bLocal, { x: 0, y: 0 }, effectiveR, bearingDeg);
         if (tChord !== null || tArc !== null) {
           crossT = Math.min(tChord !== null ? tChord : Infinity, tArc !== null ? tArc : Infinity);
           crossed = true;
         }
-      } else if (distA < tp.radiusM) {
-        // Already inside this cylinder — count as immediately achieved
+      } else if (distA <= effectiveR) {
+        // Already inside this cylinder (within tolerance) — immediately tagged.
+        // §9.1.3 contract: a fix at distance d is "inside" iff d ≤ r + tolerance.
         crossT = 0;
         crossed = true;
       } else {
         // Look for inward crossing (outside → inside, or graze-through)
-        const t = segmentIntersectsCircle(aLocal, bLocal, tp.radiusM);
+        const t = segmentIntersectsCircle(aLocal, bLocal, effectiveR);
         if (t !== null) {
           crossT = t;
           crossed = true;
@@ -526,6 +568,108 @@ export function segmentIntersectsGoalLine(
 
   if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return t;
   return null;
+}
+
+/**
+ * Does segment A→B enter the goal-line "stadium"?
+ *
+ * Per FAI §9.1.3 the chord gets its own benefit-of-doubt tolerance applied
+ * separately from the semi-circle. Treating that tolerance as a perpendicular
+ * thickness — i.e. the chord becomes a "stadium" (chord segment Minkowski-
+ * summed with a disk of radius toleranceM) — handles two cases that bare
+ * line-line intersection misses:
+ *   - a track segment ending just short of the chord (GPS noise)
+ *   - a track segment passing parallel to the chord at < tolerance offset.
+ *
+ * Returns the smallest t ∈ [0,1] on A→B at which the segment first enters
+ * the stadium (matching the entry-time semantics of `segmentIntersectsCircle`
+ * and `segmentEntersGoalSemiCircle`), or null if no point on A→B is within
+ * tolerance of the chord. Returns 0 if A is already inside the stadium.
+ */
+export function segmentNearGoalLine(
+  a: Point2D,
+  b: Point2D,
+  lineMidpoint: Point2D,
+  halfLengthM: number,
+  bearingDeg: number,
+  toleranceM: number,
+): number | null {
+  // Rotate into a local frame where the chord lies along the x-axis from
+  // (-L, 0) to (+L, 0). Bearing is clockwise from north → chord direction
+  // unit vector is (sin, cos); the perpendicular (rotated -90° so positive
+  // y is "right of the chord direction") is (cos, -sin).
+  const rad = (bearingDeg * Math.PI) / 180;
+  const ux = Math.sin(rad);
+  const uy = Math.cos(rad);
+  const px = uy;
+  const py = -ux;
+  const toLocal = (pt: Point2D): Point2D => {
+    const dx = pt.x - lineMidpoint.x;
+    const dy = pt.y - lineMidpoint.y;
+    return { x: dx * ux + dy * uy, y: dx * px + dy * py };
+  };
+
+  const A = toLocal(a);
+  const B = toLocal(b);
+  const L = halfLengthM;
+  const tol = toleranceM;
+  const tol2 = tol * tol;
+
+  // The stadium = {(x, y) | distance((x, y), chord segment) ≤ tol}, which
+  // decomposes into a 2L × 2*tol rectangle plus two end-cap disks of
+  // radius tol centred at (±L, 0).
+  const insideStadium = (p: Point2D): boolean => {
+    if (Math.abs(p.x) <= L) return Math.abs(p.y) <= tol;
+    const dxCap = p.x > L ? p.x - L : p.x + L;
+    return dxCap * dxCap + p.y * p.y <= tol2;
+  };
+
+  if (insideStadium(A)) return 0;
+
+  // Collect every t ∈ [0,1] at which AB crosses the stadium boundary, then
+  // return the earliest. The boundary has 4 pieces:
+  //   - top edge:    y = +tol, |x| ≤ L
+  //   - bottom edge: y = -tol, |x| ≤ L
+  //   - right cap:   (x - L)² + y² = tol², x ≥ L
+  //   - left cap:    (x + L)² + y² = tol², x ≤ -L
+  const dxAB = B.x - A.x;
+  const dyAB = B.y - A.y;
+  const candidates: number[] = [];
+
+  // Top / bottom edges
+  if (dyAB !== 0) {
+    for (const yEdge of [tol, -tol]) {
+      const t = (yEdge - A.y) / dyAB;
+      if (t < 0 || t > 1) continue;
+      const xAtT = A.x + t * dxAB;
+      if (xAtT >= -L && xAtT <= L) candidates.push(t);
+    }
+  }
+
+  // End caps (right at x = L, left at x = -L)
+  const a2 = dxAB * dxAB + dyAB * dyAB;
+  if (a2 >= 1e-12) {
+    for (const xCenter of [-L, L]) {
+      const b2 = 2 * ((A.x - xCenter) * dxAB + A.y * dyAB);
+      const c2 = (A.x - xCenter) * (A.x - xCenter) + A.y * A.y - tol2;
+      const disc = b2 * b2 - 4 * a2 * c2;
+      if (disc < 0) continue;
+      const sqd = Math.sqrt(disc);
+      for (const t of [(-b2 - sqd) / (2 * a2), (-b2 + sqd) / (2 * a2)]) {
+        if (t < 0 || t > 1) continue;
+        const xAtT = A.x + t * dxAB;
+        // Only count the part of each disk that lives outside the rectangle —
+        // the half inside is already covered by the top/bottom edges and
+        // counting it would yield a t past the actual boundary.
+        if (xCenter === -L && xAtT > -L) continue;
+        if (xCenter === L && xAtT < L) continue;
+        candidates.push(t);
+      }
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  return Math.min(...candidates);
 }
 
 /**
@@ -679,8 +823,12 @@ export function classifyGroundState(
       if (!tp) return { ...crossing, groundConfirmed: false };
 
       // Fixes that are geographically inside the cylinder after the crossing.
+      // Use the same effective radius as the tag-detection step so a pilot
+      // who tagged "within tolerance" has their fixes counted for the
+      // ground-state check too.
+      const groundCheckR = tp.radiusM + tagToleranceM(tp.radiusM);
       const insideFixes = fixes.filter(
-        (f) => f.timestamp >= crossing.crossingTime && fixDistanceToTpM(f, tp) <= tp.radiusM,
+        (f) => f.timestamp >= crossing.crossingTime && fixDistanceToTpM(f, tp) <= groundCheckR,
       );
 
       // Slowest observed ground speed — informational, stored on the crossing.
