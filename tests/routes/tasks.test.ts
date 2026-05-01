@@ -98,7 +98,7 @@ async function buildTestApp(db: ReturnType<typeof getTestDb>) {
 
   await app.register(import('@fastify/multipart'), { limits: { fileSize: 5 * 1024 * 1024 } });
   await app.register(authPlugin, { config: loadAuthConfig(), db });
-  await registerLeagueRoutes(app, { db, queue: null as any });
+  await registerLeagueRoutes(app, { db });
   await app.ready();
   return app;
 }

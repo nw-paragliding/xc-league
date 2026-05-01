@@ -34,7 +34,7 @@ describe('Season Management API', () => {
     authConfig = loadAuthConfig();
 
     await app.register(authPlugin, { config: authConfig, db });
-    await registerLeagueRoutes(app, { db, queue: null as any });
+    await registerLeagueRoutes(app, { db });
   });
 
   describe('POST /leagues/:slug/seasons', () => {

@@ -33,7 +33,7 @@ describe('League Settings API', () => {
     app = Fastify();
     authConfig = loadAuthConfig();
     await app.register(authPlugin, { config: authConfig, db });
-    await registerLeagueRoutes(app, { db, queue: null as any });
+    await registerLeagueRoutes(app, { db });
   });
 
   // ── GET /leagues/:leagueSlug ─────────────────────────────────────────────
