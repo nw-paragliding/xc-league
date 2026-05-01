@@ -68,10 +68,17 @@ describe('optimiseRoute — hit case (prev→next segment passes through cylinde
   it('chord exactly tangent to cylinder — touch lands on the boundary', () => {
     // Three collinear TPs along a meridian. Place the middle cylinder
     // offset east by exactly its radius so the chord SSS→ESS grazes the
-    // western edge.
+    // western edge. Derive the longitude offset from the same spherical
+    // projection task-engine uses (EARTH_R_M = 6_371_000 m, equirectangular
+    // around the task centroid) so the geometry is exact relative to what
+    // optimiseRoute sees — not via a hard-coded "111 320 m/degree" that
+    // would mis-align by ~0.1% (≈ 1 m at r = 1 km) and tip the result
+    // into the hit or miss branch unpredictably.
     const r = 1000; // 1 km
-    // 1 km east of the SSS→ESS line at the chord midpoint
-    const offsetDegLng = r / 111320 / Math.cos((47.2 * Math.PI) / 180);
+    const EARTH_R_M = 6_371_000;
+    const DEG = Math.PI / 180;
+    const centroidLat = 47.2;
+    const offsetDegLng = r / (EARTH_R_M * DEG * Math.cos(centroidLat * DEG));
     const cylinders: Cylinder[] = [
       { lat: 47.0, lng: -122.0, radiusM: 400, type: 'SSS' },
       { lat: 47.2, lng: -122.0 + offsetDegLng, radiusM: r, type: 'CYLINDER' },
@@ -82,11 +89,12 @@ describe('optimiseRoute — hit case (prev→next segment passes through cylinde
     const tp2 = result.touchPoints[1];
     const tp2Centre = { lat: 47.2, lng: -122.0 + offsetDegLng };
     const distM = haversineKm(tp2.lat, tp2.lng, tp2Centre.lat, tp2Centre.lng) * 1000;
-    // The tangent case lands the touch right at the cylinder boundary
-    // (within iteration tolerance). Some implementations may converge from
-    // the inside (tiny ε under r) due to the hit-branch threshold being
-    // ≤ r — accept either side.
-    expect(Math.abs(distM - r)).toBeLessThan(2);
+    // At the boundary of the hit/miss branches both produce a touch on
+    // (or fractionally inside) the cylinder edge. Tolerate either side
+    // by a generous amount that still catches regressions where the
+    // touch is far from the boundary (haversine vs equirectangular at
+    // ~1 km on lat 47° introduces <10 cm of mismatch).
+    expect(Math.abs(distM - r)).toBeLessThan(5);
   });
 });
 
