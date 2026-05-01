@@ -415,8 +415,9 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
           crossT = Math.min(tChord !== null ? tChord : Infinity, tArc !== null ? tArc : Infinity);
           crossed = true;
         }
-      } else if (distA < effectiveR) {
-        // Already inside this cylinder (within tolerance) — immediately tagged
+      } else if (distA <= effectiveR) {
+        // Already inside this cylinder (within tolerance) — immediately tagged.
+        // §9.1.3 contract: a fix at distance d is "inside" iff d ≤ r + tolerance.
         crossT = 0;
         crossed = true;
       } else {

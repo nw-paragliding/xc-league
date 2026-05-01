@@ -57,14 +57,12 @@ export async function reprocessStaleSubmissions(db: Database): Promise<{ reproce
     `[reprocess] re-running pipeline against ${stale.length} submissions for SCORER_VERSION=${SCORER_VERSION}`,
   );
 
-  const affectedTasks = new Set<string>();
   let reprocessed = 0;
   let failed = 0;
 
   for (const sub of stale) {
     try {
       await reprocessOne(db, sub);
-      affectedTasks.add(sub.task_id);
       reprocessed++;
     } catch (err) {
       // Log and skip: a single bad IGC must not block the rest of the boot.
@@ -73,15 +71,11 @@ export async function reprocessStaleSubmissions(db: Database): Promise<{ reproce
     }
   }
 
-  for (const taskId of affectedTasks) {
-    try {
-      rebuildTaskResults(db, taskId);
-    } catch (err) {
-      console.error(`[reprocess] rebuildTaskResults failed for task ${taskId}:`, err);
-    }
-  }
-
-  console.log(`[reprocess] done: ${reprocessed} re-scored, ${failed} failed, ${affectedTasks.size} tasks touched`);
+  // No post-loop rebuildTaskResults needed: each reprocessOne rebuilds
+  // task_results inside its own transaction (required for FK ordering — see
+  // comment in reprocessOne), and server.ts boot sweeps rebuildTaskResults
+  // for every non-deleted task immediately after this returns.
+  console.log(`[reprocess] done: ${reprocessed} re-scored, ${failed} failed`);
   return { reprocessed, failed };
 }
 
@@ -163,9 +157,17 @@ async function reprocessOne(db: Database, sub: SubmissionRow): Promise<void> {
   const nowIso = new Date().toISOString();
 
   db.transaction(() => {
-    // Drop old attempt + crossing rows for this submission. flight_attempts
-    // has soft-delete but the upload path overwrites in place; do the same
-    // here. turnpoint_crossings has no soft-delete column so hard-delete.
+    // Drop task_results for this task FIRST. Without this the next DELETE
+    // FROM flight_attempts trips the FK constraint
+    //   task_results.best_attempt_id REFERENCES flight_attempts(id)
+    // because the cached task_results row still points at the old attempt.
+    // The rebuildTaskResults call at the end of this txn re-creates
+    // task_results from the new flight_attempts.
+    db.prepare(`DELETE FROM task_results WHERE task_id = ?`).run(sub.task_id);
+
+    // Drop old attempt + crossing rows for this submission. turnpoint_crossings
+    // has no soft-delete column so hard-delete; flight_attempts has one but
+    // the upload path overwrites in place — do the same here.
     db.prepare(
       `DELETE FROM turnpoint_crossings
        WHERE attempt_id IN (SELECT id FROM flight_attempts WHERE submission_id = ?)`,
@@ -237,5 +239,11 @@ async function reprocessOne(db: Database, sub: SubmissionRow): Promise<void> {
       nowIso,
       sub.id,
     );
+
+    // Re-create task_results for this task from the new flight_attempts,
+    // inside the same txn so the FK constraint stays satisfied at commit.
+    // better-sqlite3 transactions are reentrant via savepoints, so the
+    // nested rebuildTaskResults transaction is safe here.
+    rebuildTaskResults(db, sub.task_id);
   })();
 }
