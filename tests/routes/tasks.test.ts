@@ -619,9 +619,13 @@ describe('Task lifecycle — POST publish + closed-task edit guard', () => {
   // has passed, PUT must reject — admins can soft-delete a closed task or
   // its submissions, but not edit task config.
   it('rejects PUT on a task whose close_date is in the past', async () => {
+    // Use timestamps relative to the current wall clock so the test stays
+    // green regardless of when it runs (or under mocked time). 1 day ago
+    // → 1 hour ago is unambiguously "closed".
+    const dayMs = 24 * 60 * 60 * 1000;
     const task = createTestTask(db, testSeason.id, testLeague.id, {
-      openDate: '2025-01-01T09:00:00Z',
-      closeDate: '2025-01-01T18:00:00Z',
+      openDate: new Date(Date.now() - dayMs).toISOString(),
+      closeDate: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
     });
 
     const res = await app.inject({
