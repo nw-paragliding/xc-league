@@ -403,13 +403,16 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
       // Apply FAI §9.1.3 tolerance to the inward tag detection. The boundary
       // is treated as r + tolerance for the in/out check; the optimised route
       // and partial-distance geometry continue to use the strict radius.
-      const effectiveR = tp.radiusM + tagToleranceM(tp.radiusM);
+      const tolerance = tagToleranceM(tp.radiusM);
+      const effectiveR = tp.radiusM + tolerance;
 
       if (tp.type === 'GOAL_LINE' && cachedGoalBearing != null) {
         const bearingDeg = cachedGoalBearing;
         // Per §9.1.3 tolerance applies separately to the chord and the
-        // semi-circle; we widen both by the same tolerance value.
-        const tChord = segmentIntersectsGoalLine(aLocal, bLocal, { x: 0, y: 0 }, effectiveR, bearingDeg);
+        // semi-circle. The chord gets a perpendicular "stadium" thickness
+        // of `tolerance` (segmentNearGoalLine); the semi-circle gets the
+        // same tolerance as a radius extension (effectiveR).
+        const tChord = segmentNearGoalLine(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg, tolerance);
         const tArc = segmentEntersGoalSemiCircle(aLocal, bLocal, { x: 0, y: 0 }, effectiveR, bearingDeg);
         if (tChord !== null || tArc !== null) {
           crossT = Math.min(tChord !== null ? tChord : Infinity, tArc !== null ? tArc : Infinity);
@@ -565,6 +568,80 @@ export function segmentIntersectsGoalLine(
 
   if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return t;
   return null;
+}
+
+/**
+ * Closest distance from a point to a finite line segment, plus the
+ * parametric position [0,1] along that segment of the foot of the
+ * perpendicular (clamped to the endpoints).
+ */
+function pointToSegmentDistAndT(p: Point2D, segA: Point2D, segB: Point2D): { dist: number; tOnSeg: number } {
+  const dx = segB.x - segA.x;
+  const dy = segB.y - segA.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 1e-10) {
+    return { dist: Math.hypot(p.x - segA.x, p.y - segA.y), tOnSeg: 0 };
+  }
+  const tRaw = ((p.x - segA.x) * dx + (p.y - segA.y) * dy) / lenSq;
+  const tClamped = Math.max(0, Math.min(1, tRaw));
+  const cx = segA.x + tClamped * dx;
+  const cy = segA.y + tClamped * dy;
+  return { dist: Math.hypot(p.x - cx, p.y - cy), tOnSeg: tClamped };
+}
+
+/**
+ * Does segment A→B come within `toleranceM` of the goal-line chord?
+ *
+ * Per FAI §9.1.3 the chord gets its own benefit-of-doubt tolerance applied
+ * separately from the semi-circle. Treating that tolerance as a perpendicular
+ * thickness — i.e. the chord becomes a "stadium" (chord segment Minkowski-
+ * summed with a disk of radius toleranceM) — handles two cases the bare
+ * line-line intersection misses:
+ *   - a track segment ending just short of the chord (GPS noise)
+ *   - a track segment passing parallel to the chord at < tolerance offset.
+ *
+ * Returns the parametric t ∈ [0,1] on segment A→B at the closest approach
+ * (or the intersection itself), or null if no point on A→B is within
+ * tolerance of the chord.
+ */
+export function segmentNearGoalLine(
+  a: Point2D,
+  b: Point2D,
+  lineMidpoint: Point2D,
+  halfLengthM: number,
+  bearingDeg: number,
+  toleranceM: number,
+): number | null {
+  // Fast path: actual crossing of the chord (tolerance irrelevant).
+  const tIntersect = segmentIntersectsGoalLine(a, b, lineMidpoint, halfLengthM, bearingDeg);
+  if (tIntersect !== null) return tIntersect;
+
+  // Build chord endpoints (same as inside segmentIntersectsGoalLine).
+  const rad = (bearingDeg * Math.PI) / 180;
+  const dx = Math.sin(rad) * halfLengthM;
+  const dy = Math.cos(rad) * halfLengthM;
+  const p1: Point2D = { x: lineMidpoint.x - dx, y: lineMidpoint.y - dy };
+  const p2: Point2D = { x: lineMidpoint.x + dx, y: lineMidpoint.y + dy };
+
+  // Min distance between two non-intersecting segments lives at one of the
+  // four endpoint-to-other-segment distances. Pick the smallest one whose
+  // distance is within tolerance, and use its t-on-AB for time interpolation.
+  const candidates: Array<{ dist: number; tOnAB: number }> = [
+    { dist: pointToSegmentDistAndT(a, p1, p2).dist, tOnAB: 0 },
+    { dist: pointToSegmentDistAndT(b, p1, p2).dist, tOnAB: 1 },
+  ];
+  const fromP1 = pointToSegmentDistAndT(p1, a, b);
+  candidates.push({ dist: fromP1.dist, tOnAB: fromP1.tOnSeg });
+  const fromP2 = pointToSegmentDistAndT(p2, a, b);
+  candidates.push({ dist: fromP2.dist, tOnAB: fromP2.tOnSeg });
+
+  let best: { dist: number; tOnAB: number } | null = null;
+  for (const c of candidates) {
+    if (c.dist <= toleranceM && (best === null || c.dist < best.dist)) {
+      best = c;
+    }
+  }
+  return best?.tOnAB ?? null;
 }
 
 /**

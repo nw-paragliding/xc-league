@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { segmentEntersGoalSemiCircle, segmentIntersectsGoalLine } from '../src/pipeline';
+import {
+  segmentEntersGoalSemiCircle,
+  segmentIntersectsCircle,
+  segmentIntersectsGoalLine,
+  segmentNearGoalLine,
+  tagToleranceM,
+} from '../src/pipeline';
 import { type Cylinder, optimiseRoute } from '../src/shared/task-engine';
 
 // =============================================================================
@@ -191,6 +197,94 @@ describe('goal D-shape: chord + semi-circle together', () => {
     const tArc = segmentEntersGoalSemiCircle({ x: 0, y: -200 }, { x: 0, y: -10 }, ORIGIN, R, BRG);
     expect(tChord).toBeNull();
     expect(tArc).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// segmentNearGoalLine — FAI §9.1.3 perpendicular tolerance on the chord
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('segmentNearGoalLine', () => {
+  // East-west chord at origin, half-length 100 m, bearing 90°. Tolerance is
+  // tagToleranceM(200) === 5m for the cylinder these endpoints came from.
+  const R = 100;
+  const BRG = 90;
+  const TOL = 5;
+
+  it('returns the line-line intersection t when the segment actually crosses', () => {
+    const t = segmentNearGoalLine({ x: 0, y: -50 }, { x: 0, y: 50 }, ORIGIN, R, BRG, TOL);
+    expect(t).toBeCloseTo(0.5, 5);
+  });
+
+  it('tags a segment ending exactly at the chord (no overshoot)', () => {
+    const t = segmentNearGoalLine({ x: 0, y: -50 }, { x: 0, y: 0 }, ORIGIN, R, BRG, TOL);
+    expect(t).not.toBeNull();
+    expect(t!).toBeCloseTo(1, 5);
+  });
+
+  it('tags a segment that misses the chord by less than tolerance (perpendicular short)', () => {
+    // Endpoint b sits 3 m short of the chord on the inbound side
+    const t = segmentNearGoalLine({ x: 0, y: -20 }, { x: 0, y: -3 }, ORIGIN, R, BRG, TOL);
+    expect(t).not.toBeNull();
+  });
+
+  it('rejects a segment that misses the chord by more than tolerance', () => {
+    // Endpoint b sits 8 m short — outside 5 m tolerance
+    const t = segmentNearGoalLine({ x: 0, y: -20 }, { x: 0, y: -8 }, ORIGIN, R, BRG, TOL);
+    expect(t).toBeNull();
+  });
+
+  it('tags a segment that flies parallel to the chord at < tolerance offset', () => {
+    // Track parallel to the chord at y = 4 m offset (< 5 m tolerance)
+    const t = segmentNearGoalLine({ x: -50, y: 4 }, { x: 50, y: 4 }, ORIGIN, R, BRG, TOL);
+    expect(t).not.toBeNull();
+  });
+
+  it('rejects a segment that flies parallel to the chord at > tolerance offset', () => {
+    const t = segmentNearGoalLine({ x: -50, y: 7 }, { x: 50, y: 7 }, ORIGIN, R, BRG, TOL);
+    expect(t).toBeNull();
+  });
+
+  it('tags a segment passing within tolerance of a chord endpoint', () => {
+    // Track that ends 3 m beyond the +x chord endpoint at (100, 0). The endpoint
+    // is the closest point on the chord; track endpoint b is 3 m away.
+    const t = segmentNearGoalLine({ x: 100, y: -20 }, { x: 103, y: 0 }, ORIGIN, R, BRG, TOL);
+    expect(t).not.toBeNull();
+  });
+
+  it('rejects a segment > tolerance beyond the chord endpoint', () => {
+    const t = segmentNearGoalLine({ x: 100, y: -20 }, { x: 110, y: 0 }, ORIGIN, R, BRG, TOL);
+    expect(t).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FAI §9.1.3 cylinder tolerance — boundary cases through detection helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('cylinder tolerance boundary (segmentIntersectsCircle + tagToleranceM)', () => {
+  // A 400 m cylinder gets a 5 m tolerance (the floor — 0.5% of 400 is 2 m)
+  it('tags an inbound segment ending 4 m short of a 400 m cylinder', () => {
+    const r = 400;
+    const effectiveR = r + tagToleranceM(r); // 405
+    // Track running west→east, ending 4 m short of the cylinder edge
+    const t = segmentIntersectsCircle({ x: 500, y: 0 }, { x: 404, y: 0 }, effectiveR);
+    expect(t).not.toBeNull();
+  });
+
+  it('rejects an inbound segment ending 8 m short of a 400 m cylinder', () => {
+    const r = 400;
+    const effectiveR = r + tagToleranceM(r); // 405
+    const t = segmentIntersectsCircle({ x: 500, y: 0 }, { x: 408, y: 0 }, effectiveR);
+    expect(t).toBeNull();
+  });
+
+  it('uses the 0.5% floor for large cylinders (4000 m → 20 m tolerance)', () => {
+    const r = 4000;
+    const effectiveR = r + tagToleranceM(r); // 4020
+    // 15 m short of the strict edge — within 20 m tolerance
+    const t = segmentIntersectsCircle({ x: 5000, y: 0 }, { x: 4015, y: 0 }, effectiveR);
+    expect(t).not.toBeNull();
   });
 });
 
