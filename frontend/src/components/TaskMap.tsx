@@ -192,6 +192,44 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       return { cx: c.x, cy: c.y, r: Math.hypot(c.x - e.x, c.y - e.y) };
     };
 
+    // Render the cylinder boundary as a polygon, with each vertex projected
+    // through map.project individually. A uniform-radius SVG <circle> based on
+    // projR's N-direction value over-renders the boundary on the south/east
+    // arcs at mid-latitudes (Mercator's secant changes across a 4 km radius),
+    // making tracks appear inside the cylinder while actually outside. 96
+    // segments gives sub-pixel accuracy at any reasonable zoom for our radii.
+    //
+    // Cached per (group, radiusM) so the shadow ring and coloured ring share
+    // one set of ~97 map.project calls instead of doubling the work each
+    // pan/zoom.
+    const cylinderPathCache = new Map<string, string>();
+    const cylinderPath = (lng: number, lat: number, radiusM: number, segments = 96): string => {
+      const key = `${lng},${lat},${radiusM},${segments}`;
+      const cached = cylinderPathCache.get(key);
+      if (cached !== undefined) return cached;
+      const R = 6371000;
+      const DEG = Math.PI / 180;
+      // cos(lat) approaches 0 near the poles and would blow dLng up to ±∞,
+      // producing NaN coordinates downstream. Clamp to a tiny epsilon so the
+      // polygon stays bounded — purely defensive; our actual TPs are at
+      // mid-latitudes where this guard never fires.
+      const COS_LAT_EPSILON = 1e-12;
+      const cosLatRaw = Math.cos(lat * DEG);
+      const cosLat = Math.abs(cosLatRaw) < COS_LAT_EPSILON ? Math.sign(cosLatRaw || 1) * COS_LAT_EPSILON : cosLatRaw;
+      const cmds: string[] = [];
+      for (let i = 0; i <= segments; i++) {
+        const theta = (i / segments) * 2 * Math.PI;
+        const dLat = ((radiusM * Math.sin(theta)) / R) * (180 / Math.PI);
+        const dLng = ((radiusM * Math.cos(theta)) / (R * cosLat)) * (180 / Math.PI);
+        const p = map.project([lng + dLng, lat + dLat]);
+        cmds.push(`${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`);
+      }
+      cmds.push('Z');
+      const d = cmds.join('');
+      cylinderPathCache.set(key, d);
+      return d;
+    };
+
     // ── 1. Optimized route line ───────────────────────────────────────────────
     const routeResult = routeRef.current;
     const linePts = routeResult
@@ -322,12 +360,10 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     // ── 4. Cylinder shadow rings ──────────────────────────────────────────────
     for (const group of groups) {
       for (const { radiusM } of mergeCircles(group.entries.filter((e) => !e.isGoalLine))) {
-        const { cx, cy, r } = projR(group.lng, group.lat, radiusM);
+        const { r } = projR(group.lng, group.lat, radiusM);
         if (r < 1) continue;
-        mk('circle', {
-          cx: cx.toFixed(1),
-          cy: cy.toFixed(1),
-          r: r.toFixed(1),
+        mk('path', {
+          d: cylinderPath(group.lng, group.lat, radiusM),
           fill: 'none',
           stroke: 'rgba(0,0,0,0.55)',
           'stroke-width': 8,
@@ -340,12 +376,10 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     // stroke switches to earthy brown with a tighter dash for force-ground TPs.
     for (const group of groups) {
       for (const { radiusM, color, forceGround } of mergeCircles(group.entries.filter((e) => !e.isGoalLine))) {
-        const { cx, cy, r } = projR(group.lng, group.lat, radiusM);
+        const { r } = projR(group.lng, group.lat, radiusM);
         if (r < 1) continue;
-        mk('circle', {
-          cx: cx.toFixed(1),
-          cy: cy.toFixed(1),
-          r: r.toFixed(1),
+        mk('path', {
+          d: cylinderPath(group.lng, group.lat, radiusM),
           fill: color + '28',
           stroke: forceGround ? GROUND_COLOR : color,
           'stroke-width': 3,
