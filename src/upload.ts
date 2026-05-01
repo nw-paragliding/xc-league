@@ -18,7 +18,7 @@ import { createHash, randomUUID } from 'crypto';
 import type { FastifyReply, FastifyRequest as FastifyRequestBase } from 'fastify';
 import { requireAuth } from './auth';
 import { rebuildTaskResults } from './job-queue';
-import { formatPipelineError, type PipelineInput, runPipeline, type TurnpointDef } from './pipeline';
+import { formatPipelineError, type PipelineInput, runPipeline, SCORER_VERSION, type TurnpointDef } from './pipeline';
 
 // =============================================================================
 // TYPES
@@ -315,9 +315,9 @@ export async function handleIgcUpload(
           sss_crossing_time, ess_crossing_time, goal_crossing_time, task_time_s,
           reached_goal, last_turnpoint_index,
           distance_flown_km, distance_points, time_points, total_points,
-          has_flagged_crossings, attempt_index,
+          has_flagged_crossings, attempt_index, scorer_version,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         attemptId,
         submissionId,
@@ -335,6 +335,7 @@ export async function handleIgcUpload(
         attempt.totalPoints,
         attempt.hasFlaggedCrossings ? 1 : 0,
         attempt.attemptIndex,
+        SCORER_VERSION,
         nowIso,
         nowIso,
       );

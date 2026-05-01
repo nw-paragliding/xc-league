@@ -1,11 +1,11 @@
 // =============================================================================
-// Unit tests for pipeline Stage 4 (classifyGroundState).
-// Focuses on the HAF sustained-stillness ground check.
+// Unit tests for pipeline Stage 4 (classifyGroundState) and the §9.1.3
+// cylinder tolerance helper.
 // =============================================================================
 
 import { describe, expect, it } from 'vitest';
 import type { CylinderCrossing, Fix, TaskDefinition } from './pipeline';
-import { classifyGroundState } from './pipeline';
+import { classifyGroundState, SCORER_VERSION, tagToleranceM } from './pipeline';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -167,5 +167,33 @@ describe('classifyGroundState', () => {
     const nonGround: CylinderCrossing = { ...groundCrossing(60_000), groundCheckRequired: false };
     const out = classifyGroundState([], buildAttempt([sssCrossing, nonGround]), 'HIKE_AND_FLY', task);
     expect(out[0].turnpointCrossings[1]).toBe(nonGround);
+  });
+});
+
+// =============================================================================
+// FAI §9.1.3 tolerance: max(5 m, 0.5% × radius). Documents the contract that
+// the detection code in pipeline.ts depends on.
+// =============================================================================
+
+describe('tagToleranceM', () => {
+  it('floors at 5 m for small cylinders', () => {
+    expect(tagToleranceM(200)).toBe(5);
+    expect(tagToleranceM(500)).toBe(5);
+    expect(tagToleranceM(999)).toBe(5);
+    // 1000 m × 0.5% = 5 m exactly — still 5 m at the boundary
+    expect(tagToleranceM(1000)).toBe(5);
+  });
+
+  it('uses 0.5% of radius once it exceeds the floor', () => {
+    expect(tagToleranceM(2000)).toBeCloseTo(10, 9);
+    expect(tagToleranceM(4000)).toBeCloseTo(20, 9);
+    expect(tagToleranceM(10000)).toBeCloseTo(50, 9);
+  });
+});
+
+describe('SCORER_VERSION', () => {
+  it('is set so the boot reprocess loop has a concrete current value to compare', () => {
+    // If you bump the version intentionally, update this expectation.
+    expect(SCORER_VERSION).toBe('1.1');
   });
 });

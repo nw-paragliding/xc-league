@@ -21,6 +21,7 @@ import { join } from 'path';
 import { authPlugin, loadAuthConfig } from './auth';
 import { bootstrapWorker, rebuildTaskResults, SQLiteJobQueue } from './job-queue';
 import { dropRedundantLeagueIdColumns } from './migration-helpers';
+import { reprocessStaleSubmissions } from './reprocess';
 
 // =============================================================================
 // CONSTANTS
@@ -116,6 +117,16 @@ async function main() {
   ).run();
 
   worker.start();
+
+  // ── Boot-time IGC reprocess (only fires if scorer_version is stale) ───────
+  // No-op when every flight_attempt is at the current SCORER_VERSION; runs in
+  // ~50 ms per submission otherwise. Per-submission errors are logged and
+  // skipped so a single bad IGC can't block startup.
+  try {
+    await reprocessStaleSubmissions(db);
+  } catch (err) {
+    console.error('[boot] reprocessStaleSubmissions threw:', err);
+  }
 
   // ── Boot-time rebuild of task_results ──────────────────────────────────────
   // rebuildTaskResults now re-scores from canonical inputs (current best

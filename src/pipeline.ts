@@ -17,6 +17,31 @@ import {
 } from './shared/task-engine';
 
 // =============================================================================
+// SCORER VERSION
+//
+// Bump on any change that affects detection or scoring numbers. The boot
+// re-process loop in src/server.ts re-runs the pipeline against every IGC
+// whose stored flight_attempts.scorer_version differs from this constant.
+// =============================================================================
+
+export const SCORER_VERSION = '1.1';
+
+// =============================================================================
+// FAI §9.1.3 cylinder tolerance
+//
+// "Tolerance is applied separately to the straight portion and to the
+// semi-circle." Standard practice across FAI scoring tools is 0.5% of the
+// radius with a minimum of 5 m. The boundary effectively shifts outward by
+// `tagToleranceM(r)` — a fix at distance ≤ r + tolerance is considered
+// inside. The optimised-route geometry continues to use the strict radius;
+// tolerance only governs whether a track tags the cylinder.
+// =============================================================================
+
+export function tagToleranceM(radiusM: number): number {
+  return Math.max(5, radiusM * 0.005);
+}
+
+// =============================================================================
 // SHARED TYPES
 // =============================================================================
 
@@ -285,7 +310,13 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
   const sss = task.turnpoints[0];
 
   // ── Step 1: Find all SSS outward crossings ──────────────────────────────────
+  // FAI Sporting Code S7F §9.1.3 tolerance: a fix at distance d from the
+  // cylinder centre is "inside" iff d ≤ r + tolerance. The boundary effectively
+  // shifts outward by `tolerance(r)`. For SSS this means the exit gate widens
+  // — pilots get the benefit of the doubt that they are still inside near the
+  // boundary.
   const sssCrossings: Array<{ fixIndex: number; t: number; crossingTime: number }> = [];
+  const sssEffectiveR = sss.radiusM + tagToleranceM(sss.radiusM);
 
   for (let i = 0; i < fixes.length - 1; i++) {
     const a = fixes[i];
@@ -295,9 +326,9 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
     const distA = Math.sqrt(aLocal.x ** 2 + aLocal.y ** 2);
     const distB = Math.sqrt(bLocal.x ** 2 + bLocal.y ** 2);
 
-    // Outward: inside → outside
-    if (distA <= sss.radiusM && distB > sss.radiusM) {
-      const t = segmentIntersectsCircle(aLocal, bLocal, sss.radiusM);
+    // Outward: inside → outside (against the effective boundary)
+    if (distA <= sssEffectiveR && distB > sssEffectiveR) {
+      const t = segmentIntersectsCircle(aLocal, bLocal, sssEffectiveR);
       if (t !== null) {
         sssCrossings.push({ fixIndex: i, t, crossingTime: interpolateCrossingTime(a, b, t) });
       }
@@ -369,21 +400,28 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
       let crossed = false;
       let crossT: number | null = null;
 
+      // Apply FAI §9.1.3 tolerance to the inward tag detection. The boundary
+      // is treated as r + tolerance for the in/out check; the optimised route
+      // and partial-distance geometry continue to use the strict radius.
+      const effectiveR = tp.radiusM + tagToleranceM(tp.radiusM);
+
       if (tp.type === 'GOAL_LINE' && cachedGoalBearing != null) {
         const bearingDeg = cachedGoalBearing;
-        const tChord = segmentIntersectsGoalLine(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);
-        const tArc = segmentEntersGoalSemiCircle(aLocal, bLocal, { x: 0, y: 0 }, tp.radiusM, bearingDeg);
+        // Per §9.1.3 tolerance applies separately to the chord and the
+        // semi-circle; we widen both by the same tolerance value.
+        const tChord = segmentIntersectsGoalLine(aLocal, bLocal, { x: 0, y: 0 }, effectiveR, bearingDeg);
+        const tArc = segmentEntersGoalSemiCircle(aLocal, bLocal, { x: 0, y: 0 }, effectiveR, bearingDeg);
         if (tChord !== null || tArc !== null) {
           crossT = Math.min(tChord !== null ? tChord : Infinity, tArc !== null ? tArc : Infinity);
           crossed = true;
         }
-      } else if (distA < tp.radiusM) {
-        // Already inside this cylinder — count as immediately achieved
+      } else if (distA < effectiveR) {
+        // Already inside this cylinder (within tolerance) — immediately tagged
         crossT = 0;
         crossed = true;
       } else {
         // Look for inward crossing (outside → inside, or graze-through)
-        const t = segmentIntersectsCircle(aLocal, bLocal, tp.radiusM);
+        const t = segmentIntersectsCircle(aLocal, bLocal, effectiveR);
         if (t !== null) {
           crossT = t;
           crossed = true;
@@ -679,8 +717,12 @@ export function classifyGroundState(
       if (!tp) return { ...crossing, groundConfirmed: false };
 
       // Fixes that are geographically inside the cylinder after the crossing.
+      // Use the same effective radius as the tag-detection step so a pilot
+      // who tagged "within tolerance" has their fixes counted for the
+      // ground-state check too.
+      const groundCheckR = tp.radiusM + tagToleranceM(tp.radiusM);
       const insideFixes = fixes.filter(
-        (f) => f.timestamp >= crossing.crossingTime && fixDistanceToTpM(f, tp) <= tp.radiusM,
+        (f) => f.timestamp >= crossing.crossingTime && fixDistanceToTpM(f, tp) <= groundCheckR,
       );
 
       // Slowest observed ground speed — informational, stored on the crossing.
