@@ -855,6 +855,11 @@ function TasksTab() {
 
   if (seasonsLoading) return <div className="shimmer" style={{ width: '100%', height: 400 }} />;
 
+  // Hoisted once per render so the per-task `closeMs < nowMs` check is
+  // consistent across all rows — without this, two tasks that share a
+  // closeDate could flip OPEN→CLOSED between map iterations.
+  const nowMs = Date.now();
+
   return (
     <>
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
@@ -996,11 +1001,10 @@ function TasksTab() {
                 <EmptyState message="No tasks yet. Create your first task to get started." />
               ) : (
                 tasks.map((task, i) => {
-                  // Compute once per task so a single render can't trip the
-                  // close-date boundary mid-iteration (and so `Date.parse`
-                  // doesn't run five times for the same task).
+                  // closeMs is per-task; nowMs is hoisted (above) so the
+                  // close-date boundary can't flip mid-iteration when two
+                  // tasks share a closeDate.
                   const closeMs = Date.parse(task.closeDate);
-                  const nowMs = Date.now();
                   const isClosed = closeMs < nowMs;
                   return (
                     <div

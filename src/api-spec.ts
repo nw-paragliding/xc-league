@@ -422,7 +422,10 @@
 
 /**
  * POST /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions
- * Auth: authenticated, registered for season
+ * Auth: authenticated. The handler auto-joins the user to the league as a
+ *   pilot if they aren't already a member. Season registration is *not*
+ *   required (any authenticated user can submit to a published, in-window
+ *   task in this league).
  *
  * Upload an IGC file for scoring.
  * Content-Type: multipart/form-data
@@ -470,12 +473,14 @@
  * Errors:
  *   400 NO_FILE                — multipart had no file part
  *   400 TOO_MANY_FILES         — multipart had >1 file part
+ *   400 INVALID_IGC            — file failed the IGC magic-byte check
  *   409 TASK_NOT_OPEN          — task status is not 'published'
  *   409 TASK_CLOSED            — task close_date has passed
- *   409 TASK_NOT_CONFIGURED    — task has no turnpoints
  *   409 DUPLICATE_SUBMISSION   — same IGC sha256 already uploaded
  *   413 FILE_TOO_LARGE         — > 5MB
  *   415 INVALID_FILE_TYPE      — not .igc
+ *   422 PIPELINE_ERROR         — parse / date / detection failure
+ *   422 TASK_NOT_CONFIGURED    — task has no turnpoints
  *
  * AttemptResult:
  *   {
@@ -536,27 +541,50 @@
 
 /**
  * GET /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/track
- * Auth: authenticated (own submission) or league admin
+ * Auth: authenticated, league member (any pilot in the league can replay
+ *   another pilot's track — same gate as the /submissions listing).
  *
- * Returns the parsed track for replay — fixes with timestamps, lat/lng,
- * altitude, ground state (H&F only), and detected flight/hiking segments.
+ * Returns the parsed track for the leaderboard map view: every IGC fix
+ * (down-sampled by the client), the scored attempt's turnpoint crossings,
+ * the bounding box, and a metadata block.
  *
  * Response 200:
  *   {
+ *     submissionId: string,
+ *     taskId: string,
+ *     pilotId: string,
+ *     pilotName: string,
+ *     flightDate: string,                 // 'YYYY-MM-DD'
  *     fixes: Array<{
- *       timestamp: string,
+ *       t: number,                        // Unix ms
  *       lat: number,
  *       lng: number,
- *       gpsAlt: number,
- *       pressureAlt: number,
- *       groundState: 'GROUND' | 'AIRBORNE' | 'UNKNOWN' | null,  // null for XC
+ *       alt: number,                      // GPS altitude, metres
  *     }>,
- *     segments: Array<{
- *       type: 'FLIGHT' | 'HIKING',
- *       startTimestamp: string,
- *       endTimestamp: string,
+ *     crossings: Array<{
+ *       turnpointId: string,
+ *       turnpointName: string,
+ *       sequenceIndex: number,
+ *       crossingTimeMs: number,           // Unix ms (interpolated)
+ *       type: 'SSS' | 'CYLINDER' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE',
+ *       radiusM: number,
+ *       latitude: number,
+ *       longitude: number,
+ *       groundConfirmed: boolean,
+ *       groundCheckRequired: boolean,
  *     }>,
+ *     bounds: { north: number, south: number, east: number, west: number },
+ *     meta: {
+ *       fixCount: number,
+ *       durationS: number | null,
+ *       reachedGoal: boolean,
+ *       totalPoints: number,
+ *     },
  *   }
+ *
+ * Errors:
+ *   404 SUBMISSION_NOT_FOUND   — no matching submission for this URL
+ *   422 INVALID_IGC            — stored IGC could not be parsed
  *
  * Note: Track is re-parsed from the raw IGC on demand. Not stored in DB.
  */
@@ -715,7 +743,6 @@
  *   TASK_HAS_SUBMISSIONS
  *   TASK_NOT_OPEN              — task status is not 'published'
  *   TASK_CLOSED                — task close_date has passed
- *   TASK_NOT_CONFIGURED        — task has no turnpoints
  *   DUPLICATE_SUBMISSION       — same IGC sha256 already uploaded for this task
  *
  * HTTP 413 Payload Too Large:
@@ -726,6 +753,7 @@
  *
  * HTTP 422 Unprocessable Entity:
  *   PIPELINE_ERROR            — pipeline rejected the file (parse / date / detection)
+ *   TASK_NOT_CONFIGURED       — task has no turnpoints
  *   INVALID_IGC               — IGC could not be opened for track-data display
  *
  * HTTP 500 Internal Server Error:
