@@ -474,7 +474,9 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
           .get(submissionId, taskId, seasonId, (request as any).league.id) as any;
 
         if (!submission) {
-          return reply.status(404).send({ error: 'Submission not found' });
+          return reply.status(404).send({
+            error: { code: 'SUBMISSION_NOT_FOUND', message: 'Submission not found' },
+          });
         }
 
         const igcText =
@@ -482,7 +484,9 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
 
         const parsed = parseAndValidate(igcText);
         if (!parsed.ok) {
-          return reply.status(422).send({ error: 'Could not parse IGC data' });
+          return reply.status(422).send({
+            error: { code: 'INVALID_IGC', message: 'Could not parse IGC data' },
+          });
         }
 
         const { fixes, flightDate } = parsed.value;

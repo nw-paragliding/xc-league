@@ -562,61 +562,6 @@
  */
 
 // =============================================================================
-// GROUND OVERRIDES (Hike & Fly only)
-// =============================================================================
-
-/**
- * POST /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/overrides
- * Auth: authenticated (own submission only)
- *
- * Submit a self-declaration for a flagged GROUND_ONLY turnpoint crossing.
- *
- * Body:
- *   {
- *     crossingId: string,   // the turnpoint_crossings.id that was flagged
- *     reason: string,       // pilot's explanation (required, min 10 chars)
- *   }
- *
- * Response 201:
- *   {
- *     override: {
- *       id: string,
- *       crossingId: string,
- *       declaredAt: string,
- *       reason: string,
- *       detectedMaxSpeedKmh: number | null,
- *     },
- *     updatedAttempt: AttemptResult,   // hasFlaggedCrossings updated
- *   }
- *
- * Errors:
- *   400 CROSSING_NOT_FLAGGED     — crossing was already ground-confirmed, no override needed
- *   400 OVERRIDE_ALREADY_EXISTS  — already declared for this crossing
- *   409 TASK_CLOSED              — cannot override after task close_date
- *   403 NOT_OWN_SUBMISSION
- */
-
-/**
- * GET /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/overrides
- * Auth: authenticated (own submission) or league admin
- *
- * Returns all overrides for a submission — the audit trail.
- *
- * Response 200:
- *   {
- *     overrides: Array<{
- *       id: string,
- *       crossingId: string,
- *       turnpointId: string,
- *       declaredAt: string,
- *       reason: string,
- *       detectedMaxSpeedKmh: number | null,
- *       crossingTime: string,
- *     }>
- *   }
- */
-
-// =============================================================================
 // NOTIFICATIONS
 // =============================================================================
 
@@ -741,11 +686,10 @@
  *   INVALID_TURNPOINT_SEQUENCE
  *   OPEN_DATE_AFTER_CLOSE_DATE
  *   HAS_SUBMISSIONS
- *   CROSSING_NOT_FLAGGED
- *   OVERRIDE_ALREADY_EXISTS
  *   CANNOT_DEMOTE_LAST_ADMIN
  *   NO_FILE                   — multipart upload missing the file part
  *   TOO_MANY_FILES            — multipart upload had >1 file part
+ *   INVALID_IGC               — upload failed magic-byte check (file not an IGC)
  *
  * HTTP 401 Unauthorized:
  *   MISSING_TOKEN
@@ -826,8 +770,6 @@
  * self/admin  GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions          Own submissions
  * self/admin  GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:id      Submission detail
  * self/admin  GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:id/track Track replay
- * self        POST     /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:id/overrides  Ground override
- * self/admin  GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:id/overrides  Override audit
  *
  * required    GET      /api/v1/notifications                                             Own notifications
  * required    POST     /api/v1/notifications/read                                        Mark read
