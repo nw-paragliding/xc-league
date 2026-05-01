@@ -995,7 +995,14 @@ function TasksTab() {
               {tasks.length === 0 ? (
                 <EmptyState message="No tasks yet. Create your first task to get started." />
               ) : (
-                tasks.map((task, i) => (
+                tasks.map((task, i) => {
+                  // Compute once per task so a single render can't trip the
+                  // close-date boundary mid-iteration (and so `Date.parse`
+                  // doesn't run five times for the same task).
+                  const closeMs = Date.parse(task.closeDate);
+                  const nowMs = Date.now();
+                  const isClosed = closeMs < nowMs;
+                  return (
                   <div
                     key={task.id}
                     draggable
@@ -1013,7 +1020,7 @@ function TasksTab() {
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      background: new Date(task.closeDate) < new Date() ? 'var(--bg2)' : 'transparent',
+                      background: isClosed ? 'var(--bg2)' : 'transparent',
                       cursor: 'grab',
                       userSelect: 'none',
                     }}
@@ -1067,7 +1074,7 @@ function TasksTab() {
                       )}
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                      {new Date(task.closeDate) >= new Date() && task.status !== 'published' && (
+                      {!isClosed && task.status !== 'published' && (
                         <button
                           onClick={() => publishMutation.mutate(task.id)}
                           disabled={publishMutation.isPending}
@@ -1085,7 +1092,7 @@ function TasksTab() {
                           Publish
                         </button>
                       )}
-                      {new Date(task.closeDate) >= new Date() &&
+                      {!isClosed &&
                         task.status === 'published' &&
                         (task.pilotCount ?? 0) === 0 && (
                           <button
@@ -1099,7 +1106,7 @@ function TasksTab() {
                             Unpublish
                           </button>
                         )}
-                      {new Date(task.closeDate) >= new Date() && task.status !== 'published' && (
+                      {!isClosed && task.status !== 'published' && (
                         <>
                           <button
                             onClick={() => setEditingTask(task)}
@@ -1138,7 +1145,8 @@ function TasksTab() {
                       )}
                     </div>
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
           )}

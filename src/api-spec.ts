@@ -468,9 +468,12 @@
  *   }
  *
  * Errors:
- *   400 NOT_REGISTERED         — pilot not registered for this season
+ *   400 NO_FILE                — multipart had no file part
+ *   400 TOO_MANY_FILES         — multipart had >1 file part
  *   409 TASK_NOT_OPEN          — task status is not 'published'
  *   409 TASK_CLOSED            — task close_date has passed
+ *   409 TASK_NOT_CONFIGURED    — task has no turnpoints
+ *   409 DUPLICATE_SUBMISSION   — same IGC sha256 already uploaded
  *   413 FILE_TOO_LARGE         — > 5MB
  *   415 INVALID_FILE_TYPE      — not .igc
  *
@@ -737,11 +740,12 @@
  *   VALIDATION_ERROR          — Zod schema failure; detail contains field errors
  *   INVALID_TURNPOINT_SEQUENCE
  *   OPEN_DATE_AFTER_CLOSE_DATE
- *   NOT_REGISTERED
  *   HAS_SUBMISSIONS
  *   CROSSING_NOT_FLAGGED
  *   OVERRIDE_ALREADY_EXISTS
  *   CANNOT_DEMOTE_LAST_ADMIN
+ *   NO_FILE                   — multipart upload missing the file part
+ *   TOO_MANY_FILES            — multipart upload had >1 file part
  *
  * HTTP 401 Unauthorized:
  *   MISSING_TOKEN
@@ -767,6 +771,8 @@
  *   TASK_HAS_SUBMISSIONS
  *   TASK_NOT_OPEN              — task status is not 'published'
  *   TASK_CLOSED                — task close_date has passed
+ *   TASK_NOT_CONFIGURED        — task has no turnpoints
+ *   DUPLICATE_SUBMISSION       — same IGC sha256 already uploaded for this task
  *
  * HTTP 413 Payload Too Large:
  *   FILE_TOO_LARGE
@@ -775,7 +781,8 @@
  *   INVALID_FILE_TYPE
  *
  * HTTP 422 Unprocessable Entity:
- *   IGC_INVALID               — pipeline rejected the file
+ *   PIPELINE_ERROR            — pipeline rejected the file (parse / date / detection)
+ *   INVALID_IGC               — IGC could not be opened for track-data display
  *
  * HTTP 500 Internal Server Error:
  *   INTERNAL_ERROR            — unexpected; detail omitted in production

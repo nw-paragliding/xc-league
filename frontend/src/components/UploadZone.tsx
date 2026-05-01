@@ -207,7 +207,7 @@ export default function UploadZone({ taskId, taskStatus, task, onSubmission }: U
           )}
           {taskStatus === 'CLOSED' && (
             <div style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
-              Scoring is final — submissions closed
+              Submission window closed
             </div>
           )}
           {taskStatus === 'DRAFT' && (
