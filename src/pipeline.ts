@@ -312,9 +312,9 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
   // ── Step 1: Find all SSS outward crossings ──────────────────────────────────
   // FAI Sporting Code S7F §9.1.3 tolerance: a fix at distance d from the
   // cylinder centre is "inside" iff d ≤ r + tolerance. The boundary effectively
-  // shifts outward by `tolerance(r)`. For SSS this means the exit gate widens
-  // — pilots get the benefit of the doubt that they are still inside near the
-  // boundary.
+  // shifts outward by `tagToleranceM(r)`. For SSS this means the exit gate
+  // widens — pilots get the benefit of the doubt that they are still inside
+  // near the boundary.
   const sssCrossings: Array<{ fixIndex: number; t: number; crossingTime: number }> = [];
   const sssEffectiveR = sss.radiusM + tagToleranceM(sss.radiusM);
 

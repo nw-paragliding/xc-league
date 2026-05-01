@@ -205,8 +205,9 @@ describe('goal D-shape: chord + semi-circle together', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('segmentNearGoalLine', () => {
-  // East-west chord at origin, half-length 100 m, bearing 90°. Tolerance is
-  // tagToleranceM(200) === 5m for the cylinder these endpoints came from.
+  // East-west chord at origin, half-length 100 m, bearing 90°. The chord is
+  // sized off a 100 m goal cylinder, so tolerance = tagToleranceM(100) = 5 m
+  // (the 5 m floor; 0.5 % of 100 m is 0.5 m, below the floor).
   const R = 100;
   const BRG = 90;
   const TOL = 5;
