@@ -41,14 +41,22 @@ interface TurnpointRow {
 }
 
 export async function reprocessStaleSubmissions(db: Database): Promise<{ reprocessed: number; failed: number }> {
-  // Distinct submissions whose flight_attempts are at an older scorer version.
-  // Soft-deleted submissions/attempts are excluded.
+  // Submissions whose flight_attempts are at an older scorer version.
+  // Soft-deleted submissions/attempts are excluded. Use EXISTS rather than
+  // a JOIN + SELECT DISTINCT so SQLite de-dupes on the submission id alone
+  // — a JOIN would force the planner to compare full igc_data BLOBs to
+  // collapse the per-attempt rows.
   const stale = db
     .prepare(
-      `SELECT DISTINCT fs.id, fs.task_id, fs.user_id, fs.league_id, fs.igc_data
+      `SELECT fs.id, fs.task_id, fs.user_id, fs.league_id, fs.igc_data
        FROM flight_submissions fs
-       JOIN flight_attempts fa ON fa.submission_id = fs.id
-       WHERE fa.scorer_version != ? AND fs.deleted_at IS NULL AND fa.deleted_at IS NULL`,
+       WHERE fs.deleted_at IS NULL
+         AND EXISTS (
+           SELECT 1 FROM flight_attempts fa
+           WHERE fa.submission_id = fs.id
+             AND fa.scorer_version != ?
+             AND fa.deleted_at IS NULL
+         )`,
     )
     .all(SCORER_VERSION) as SubmissionRow[];
 
