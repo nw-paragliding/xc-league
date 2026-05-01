@@ -59,10 +59,14 @@ describe('optimiseRoute — hit case (prev→next segment passes through cylinde
     const result = optimiseRoute(cylinders);
 
     // Compare against a "no middle" path (just SSS boundary → ESS boundary)
-    // by removing the middle and re-optimising. The hit-case route should
-    // match it to within the cylinder iteration tolerance (0.1 m).
+    // by removing the middle and re-optimising. With the hit-case fix the
+    // routes are geometrically identical; the only source of difference is
+    // iteration convergence (CONVERGENCE_M = 0.1 m per touch point), which
+    // is well under 1 m on the 13 km total. Use digits=3 → ≤ 0.5 m
+    // tolerance — tight enough that the bug's ~100 m detour would fail
+    // here, generous enough that floating-point noise can't.
     const direct = optimiseRoute([cylinders[0], cylinders[2]]);
-    expect(result.totalDistanceKm).toBeCloseTo(direct.totalDistanceKm, 2);
+    expect(result.totalDistanceKm).toBeCloseTo(direct.totalDistanceKm, 3);
   });
 
   it('chord exactly tangent to cylinder — touch lands on the boundary', () => {
