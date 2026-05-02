@@ -228,79 +228,6 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       return reply.send({ tasks });
     });
 
-    // ── Get task details with results ──────────────────────────────────────
-    leagueScope.get('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId', async (request, reply) => {
-      const { seasonId, taskId } = request.params as { seasonId: string; taskId: string };
-      const league = (request as any).league;
-
-      // Verify task belongs to this season/league
-      const task = db
-        .prepare(
-          `SELECT
-           t.id,
-           t.name,
-           t.description,
-           t.task_type as taskType,
-           t.open_date as openDate,
-           t.close_date as closeDate
-         FROM tasks t
-         JOIN seasons s ON s.id = t.season_id
-         WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`,
-        )
-        .get(taskId, seasonId, league.id);
-
-      if (!task) {
-        return reply.status(404).send({ error: 'Task not found' });
-      }
-
-      // Get turnpoints
-      // SQLite stores force_ground as 0/1 INTEGER; coerce to real boolean
-      // so the JSON payload matches the TS `Turnpoint` contract on the client.
-      const turnpoints = (
-        db
-          .prepare(
-            `SELECT
-           id,
-           sequence_index as sequenceIndex,
-           name,
-           lat,
-           lng,
-           radius_m as radiusM,
-           type,
-           force_ground as forceGround,
-           goal_line_bearing_deg as goalLineBearingDeg
-         FROM turnpoints
-         WHERE task_id = ?
-         ORDER BY sequence_index`,
-          )
-          .all(taskId) as Array<{ forceGround: number }>
-      ).map((tp) => ({ ...tp, forceGround: Boolean(tp.forceGround) }));
-
-      // Get results (best attempt per pilot)
-      const results = db
-        .prepare(
-          `SELECT 
-           tr.rank,
-           tr.user_id as userId,
-           u.display_name as pilotName,
-           tr.distance_points as distancePoints,
-           tr.time_points as timePoints,
-           tr.total_points as totalPoints,
-           tr.distance_flown_km as distanceFlownKm,
-           tr.task_time_s as taskTimeS,
-           tr.reached_goal as reachedGoal,
-           tr.has_flagged_crossings as hasFlaggedCrossings,
-           tr.submitted_at as submittedAt
-         FROM task_results tr
-         JOIN users u ON u.id = tr.user_id
-         WHERE tr.task_id = ?
-         ORDER BY tr.rank`,
-        )
-        .all(taskId);
-
-      return reply.send({ task, turnpoints, results });
-    });
-
     // ── Task leaderboard ───────────────────────────────────────────────────
     leagueScope.get('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/leaderboard', async (request, reply) => {
       const { seasonId, taskId } = request.params as { seasonId: string; taskId: string };
@@ -438,12 +365,10 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
     leagueScope.get(
       '/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/track',
       async (request, reply) => {
-        // The track payload contains every IGC fix. The submissionId is
-        // exposed via the public leaderboard, so without auth anyone could
-        // pull any pilot's track at any time. Gate on league membership to
-        // match the /submissions listing.
-        requireAuth(request, reply);
-        requireLeagueMember(request, reply);
+        // Public — tracks are part of the visible competition record alongside
+        // the public leaderboard. URL params are validated against the row's
+        // own task/season/league below so a track ID can't be paired with the
+        // wrong context.
 
         const { seasonId, taskId, submissionId } = request.params as {
           submissionId: string;
