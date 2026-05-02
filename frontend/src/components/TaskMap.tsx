@@ -374,24 +374,30 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     // ── 5. Coloured dashed rings + FAI §9.1.3 tolerance buffer ───────────────
     // Role colour shows on the fill (preserves SSS/ESS/Goal at-a-glance); the
     // stroke switches to earthy brown with a tighter dash for force-ground TPs.
-    // Outside each strict ring we draw a faint buffer at r + tagToleranceM(r)
-    // — that's the boundary the scoring pipeline actually uses for tag
-    // detection (max(5 m, 0.5 % of r)). Visible as a thin halo on small
-    // cylinders, more apparent on large ones.
+    // Outside each strict ring we shade the annular band between r and
+    // r + tagToleranceM(r) (max(5 m, 0.5 % of r)) — that's the band the
+    // scoring pipeline actually accepts for tag detection. Drawn first so
+    // the strict ring's stroke and translucent fill sit on top.
     for (const group of groups) {
       for (const { radiusM, color, forceGround } of mergeCircles(group.entries.filter((e) => !e.isGoalLine))) {
         const { r } = projR(group.lng, group.lat, radiusM);
         if (r < 1) continue;
 
-        // Tolerance buffer (drawn first so it sits behind the strict ring).
+        // Annular tolerance band (donut between r and r + tolerance) drawn as
+        // a single path with two subpaths and evenodd fill-rule. The buffer
+        // is small in absolute terms (5 m floor, then 0.5 % of r), so we
+        // shade the band rather than drawing a thin ring — much more
+        // visible on big cylinders and still tolerable on small ones.
         const bufferRadiusM = radiusM + tagToleranceM(radiusM);
+        const bandStroke = forceGround ? GROUND_COLOR : color;
         mk('path', {
-          d: cylinderPath(group.lng, group.lat, bufferRadiusM),
-          fill: 'none',
-          stroke: forceGround ? GROUND_COLOR : color,
+          d: `${cylinderPath(group.lng, group.lat, bufferRadiusM)} ${cylinderPath(group.lng, group.lat, radiusM)}`,
+          'fill-rule': 'evenodd',
+          fill: bandStroke,
+          'fill-opacity': 0.5,
+          stroke: bandStroke,
           'stroke-width': 1,
-          'stroke-opacity': 0.45,
-          'stroke-dasharray': '2 4',
+          'stroke-opacity': 0.6,
         });
 
         // Strict cylinder boundary (the scored-distance edge).
