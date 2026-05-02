@@ -256,6 +256,8 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       // Get turnpoints
       // SQLite stores force_ground as 0/1 INTEGER; coerce to real boolean
       // so the JSON payload matches the TS `Turnpoint` contract on the client.
+      // Columns are stored as `latitude` / `longitude`; alias to the
+      // frontend-facing `lat` / `lng` keys here.
       const turnpoints = (
         db
           .prepare(
@@ -263,8 +265,8 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
            id,
            sequence_index as sequenceIndex,
            name,
-           lat,
-           lng,
+           latitude as lat,
+           longitude as lng,
            radius_m as radiusM,
            type,
            force_ground as forceGround,
@@ -276,10 +278,13 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
           .all(taskId) as Array<{ forceGround: number }>
       ).map((tp) => ({ ...tp, forceGround: Boolean(tp.forceGround) }));
 
-      // Get results (best attempt per pilot)
+      // Get results (best attempt per pilot). `submitted_at` lives on
+      // flight_submissions, not task_results — join through the best
+      // attempt's submission_id to surface the upload time the frontend
+      // wants alongside the score row.
       const results = db
         .prepare(
-          `SELECT 
+          `SELECT
            tr.rank,
            tr.user_id as userId,
            u.display_name as pilotName,
@@ -290,9 +295,11 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
            tr.task_time_s as taskTimeS,
            tr.reached_goal as reachedGoal,
            tr.has_flagged_crossings as hasFlaggedCrossings,
-           tr.submitted_at as submittedAt
+           fs.submitted_at as submittedAt
          FROM task_results tr
          JOIN users u ON u.id = tr.user_id
+         LEFT JOIN flight_attempts fa ON fa.id = tr.best_attempt_id
+         LEFT JOIN flight_submissions fs ON fs.id = fa.submission_id
          WHERE tr.task_id = ?
          ORDER BY tr.rank`,
         )
