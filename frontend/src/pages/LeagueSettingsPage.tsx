@@ -855,6 +855,11 @@ function TasksTab() {
 
   if (seasonsLoading) return <div className="shimmer" style={{ width: '100%', height: 400 }} />;
 
+  // Hoisted once per render so the per-task `closeMs < nowMs` check is
+  // consistent across all rows — without this, two tasks that share a
+  // closeDate could flip OPEN→CLOSED between map iterations.
+  const nowMs = Date.now();
+
   return (
     <>
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
@@ -995,148 +1000,155 @@ function TasksTab() {
               {tasks.length === 0 ? (
                 <EmptyState message="No tasks yet. Create your first task to get started." />
               ) : (
-                tasks.map((task, i) => (
-                  <div
-                    key={task.id}
-                    draggable
-                    onDragStart={() => handleDragStart(i)}
-                    onDragOver={(e) => handleDragOver(e, i)}
-                    onDrop={handleDrop}
-                    onDragEnd={handleDragEnd}
-                    style={{
-                      padding: '1.5rem',
-                      borderTop:
-                        dropIndicator === i && dragIndex.current !== i
-                          ? '2px solid var(--primary)'
-                          : '2px solid transparent',
-                      borderBottom: i < tasks.length - 1 ? '1px solid var(--border)' : 'none',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      background: task.scoresFrozenAt ? 'var(--bg2)' : 'transparent',
-                      cursor: 'grab',
-                      userSelect: 'none',
-                    }}
-                  >
-                    {/* Drag handle */}
+                tasks.map((task, i) => {
+                  // closeMs is per-task; nowMs is hoisted (above) so the
+                  // close-date boundary can't flip mid-iteration when two
+                  // tasks share a closeDate.
+                  const closeMs = Date.parse(task.closeDate);
+                  const isClosed = closeMs < nowMs;
+                  return (
                     <div
+                      key={task.id}
+                      draggable
+                      onDragStart={() => handleDragStart(i)}
+                      onDragOver={(e) => handleDragOver(e, i)}
+                      onDrop={handleDrop}
+                      onDragEnd={handleDragEnd}
                       style={{
-                        flexShrink: 0,
-                        marginRight: 12,
-                        color: 'var(--text3)',
-                        fontSize: 16,
-                        lineHeight: 1,
-                        cursor: 'grab',
+                        padding: '1.5rem',
+                        borderTop:
+                          dropIndicator === i && dragIndex.current !== i
+                            ? '2px solid var(--primary)'
+                            : '2px solid transparent',
+                        borderBottom: i < tasks.length - 1 ? '1px solid var(--border)' : 'none',
                         display: 'flex',
-                        flexDirection: 'column',
-                        gap: 3,
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        background: isClosed ? 'var(--bg2)' : 'transparent',
+                        cursor: 'grab',
+                        userSelect: 'none',
                       }}
                     >
-                      <div style={{ width: 16, height: 2, background: 'currentColor', borderRadius: 1 }} />
-                      <div style={{ width: 16, height: 2, background: 'currentColor', borderRadius: 1 }} />
-                      <div style={{ width: 16, height: 2, background: 'currentColor', borderRadius: 1 }} />
-                    </div>
-                    <div style={{ flex: 1 }}>
+                      {/* Drag handle */}
                       <div
                         style={{
+                          flexShrink: 0,
+                          marginRight: 12,
+                          color: 'var(--text3)',
+                          fontSize: 16,
+                          lineHeight: 1,
+                          cursor: 'grab',
                           display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.5rem',
-                          marginBottom: '0.5rem',
-                          flexWrap: 'wrap',
+                          flexDirection: 'column',
+                          gap: 3,
                         }}
                       >
-                        <span style={{ fontWeight: 600, fontSize: '1.125rem' }}>{task.name}</span>
-                        <TaskStatusBadge task={task} />
+                        <div style={{ width: 16, height: 2, background: 'currentColor', borderRadius: 1 }} />
+                        <div style={{ width: 16, height: 2, background: 'currentColor', borderRadius: 1 }} />
+                        <div style={{ width: 16, height: 2, background: 'currentColor', borderRadius: 1 }} />
                       </div>
-                      {task.description && (
-                        <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginBottom: '0.5rem' }}>
-                          {task.description}
-                        </div>
-                      )}
-                      <div style={{ fontSize: '0.875rem', color: 'var(--text2)' }}>
-                        {task.taskType === 'RACE_TO_GOAL' ? 'Race to Goal' : 'Open Distance'}
-                      </div>
-                      <div style={{ fontSize: '0.875rem', color: 'var(--text2)' }}>
-                        {new Date(task.openDate).toLocaleString()} – {new Date(task.closeDate).toLocaleString()}
-                      </div>
-                      {task.pilotCount !== undefined && (
-                        <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginTop: '0.25rem' }}>
-                          {task.pilotCount || 0} submission{task.pilotCount !== 1 ? 's' : ''}
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                      {!task.scoresFrozenAt && task.status !== 'published' && (
-                        <button
-                          onClick={() => publishMutation.mutate(task.id)}
-                          disabled={publishMutation.isPending}
+                      <div style={{ flex: 1 }}>
+                        <div
                           style={{
-                            padding: '0.5rem 1rem',
-                            border: '1px solid #86efac',
-                            borderRadius: 4,
-                            background: '#dcfce7',
-                            color: '#166534',
-                            cursor: 'pointer',
-                            fontSize: '0.875rem',
-                            fontWeight: 500,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            marginBottom: '0.5rem',
+                            flexWrap: 'wrap',
                           }}
                         >
-                          Publish
-                        </button>
-                      )}
-                      {!task.scoresFrozenAt && task.status === 'published' && (task.pilotCount ?? 0) === 0 && (
-                        <button
-                          onClick={() => {
-                            if (confirm(`Unpublish "${task.name}"? It will revert to draft.`))
-                              unpublishMutation.mutate(task.id);
-                          }}
-                          disabled={unpublishMutation.isPending}
-                          style={secondaryBtn}
-                        >
-                          Unpublish
-                        </button>
-                      )}
-                      {!task.scoresFrozenAt && task.status !== 'published' && (
-                        <>
+                          <span style={{ fontWeight: 600, fontSize: '1.125rem' }}>{task.name}</span>
+                          <TaskStatusBadge task={task} />
+                        </div>
+                        {task.description && (
+                          <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginBottom: '0.5rem' }}>
+                            {task.description}
+                          </div>
+                        )}
+                        <div style={{ fontSize: '0.875rem', color: 'var(--text2)' }}>
+                          {task.taskType === 'RACE_TO_GOAL' ? 'Race to Goal' : 'Open Distance'}
+                        </div>
+                        <div style={{ fontSize: '0.875rem', color: 'var(--text2)' }}>
+                          {new Date(task.openDate).toLocaleString()} – {new Date(task.closeDate).toLocaleString()}
+                        </div>
+                        {task.pilotCount !== undefined && (
+                          <div style={{ fontSize: '0.875rem', color: 'var(--text2)', marginTop: '0.25rem' }}>
+                            {task.pilotCount || 0} submission{task.pilotCount !== 1 ? 's' : ''}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        {!isClosed && task.status !== 'published' && (
                           <button
-                            onClick={() => setEditingTask(task)}
-                            disabled={updateMutation.isPending}
-                            style={secondaryBtn}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (confirm(`Delete task "${task.name}"? This cannot be undone.`))
-                                deleteMutation.mutate(task.id);
-                            }}
-                            disabled={deleteMutation.isPending}
+                            onClick={() => publishMutation.mutate(task.id)}
+                            disabled={publishMutation.isPending}
                             style={{
                               padding: '0.5rem 1rem',
-                              border: '1px solid #fcc',
+                              border: '1px solid #86efac',
                               borderRadius: 4,
-                              background: 'var(--bg1)',
-                              color: '#c00',
+                              background: '#dcfce7',
+                              color: '#166534',
                               cursor: 'pointer',
                               fontSize: '0.875rem',
+                              fontWeight: 500,
                             }}
                           >
-                            Delete
+                            Publish
                           </button>
-                        </>
-                      )}
-                      {task.status === 'published' && (
-                        <button
-                          onClick={() => setExportingTask(task)}
-                          style={{ ...secondaryBtn, background: 'var(--bg2)' }}
-                        >
-                          Export / QR
-                        </button>
-                      )}
+                        )}
+                        {!isClosed && task.status === 'published' && (task.pilotCount ?? 0) === 0 && (
+                          <button
+                            onClick={() => {
+                              if (confirm(`Unpublish "${task.name}"? It will revert to draft.`))
+                                unpublishMutation.mutate(task.id);
+                            }}
+                            disabled={unpublishMutation.isPending}
+                            style={secondaryBtn}
+                          >
+                            Unpublish
+                          </button>
+                        )}
+                        {!isClosed && task.status !== 'published' && (
+                          <>
+                            <button
+                              onClick={() => setEditingTask(task)}
+                              disabled={updateMutation.isPending}
+                              style={secondaryBtn}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (confirm(`Delete task "${task.name}"? This cannot be undone.`))
+                                  deleteMutation.mutate(task.id);
+                              }}
+                              disabled={deleteMutation.isPending}
+                              style={{
+                                padding: '0.5rem 1rem',
+                                border: '1px solid #fcc',
+                                borderRadius: 4,
+                                background: 'var(--bg1)',
+                                color: '#c00',
+                                cursor: 'pointer',
+                                fontSize: '0.875rem',
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
+                        {task.status === 'published' && (
+                          <button
+                            onClick={() => setExportingTask(task)}
+                            style={{ ...secondaryBtn, background: 'var(--bg2)' }}
+                          >
+                            Export / QR
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           )}

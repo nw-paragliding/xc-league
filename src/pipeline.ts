@@ -112,7 +112,6 @@ export interface PipelineInput {
 export interface TaskDefinition {
   id: string;
   turnpoints: TurnpointDef[]; // ordered: [SSS, TP1, TP2, ..., ESS/goal]
-  closeDate: number; // Unix ms — used to check if scoring is frozen
 }
 
 export interface TurnpointDef {
@@ -243,24 +242,18 @@ export function parseAndValidate(igcText: string): Result<ParsedTrack, ParseErro
 // STAGE 2: DATE VALIDATION
 // =============================================================================
 
-export type DateValidationError =
-  | { code: 'FLIGHT_DATE_OUTSIDE_TASK_WINDOW'; flightDate: string; taskOpen: string; taskClose: string }
-  | { code: 'TASK_SCORES_FROZEN'; frozenAt: string };
+export type DateValidationError = {
+  code: 'FLIGHT_DATE_OUTSIDE_TASK_WINDOW';
+  flightDate: string;
+  taskOpen: string;
+  taskClose: string;
+};
 
 export function validateFlightDate(
   track: ParsedTrack,
-  task: TaskDefinition,
   taskOpenDate: string,
   taskCloseDate: string,
-  scoresFrozenAt: number | null,
 ): Result<ParsedTrack, DateValidationError> {
-  if (scoresFrozenAt !== null) {
-    return err({
-      code: 'TASK_SCORES_FROZEN',
-      frozenAt: new Date(scoresFrozenAt).toISOString(),
-    });
-  }
-
   // Compare YYYY-MM-DD strings lexicographically (safe for ISO date format)
   const openDay = taskOpenDate.slice(0, 10);
   const closeDay = taskCloseDate.slice(0, 10);
@@ -1022,7 +1015,6 @@ export async function runPipeline(
   input: PipelineInput,
   taskOpenDate: string,
   taskCloseDate: string,
-  scoresFrozenAt: number | null,
   taskBestDistanceKm: number,
 ): Promise<Result<PipelineResult, PipelineError>> {
   // Stage 1: Parse
@@ -1031,7 +1023,7 @@ export async function runPipeline(
   const track = parseResult.value;
 
   // Stage 2: Date validation
-  const dateResult = validateFlightDate(track, input.task, taskOpenDate, taskCloseDate, scoresFrozenAt);
+  const dateResult = validateFlightDate(track, taskOpenDate, taskCloseDate);
   if (!dateResult.ok) return err({ stage: 'DATE', error: dateResult.error });
 
   // Stage 3: Attempt detection
@@ -1101,8 +1093,6 @@ export function formatPipelineError(error: PipelineError): string {
       switch (error.error.code) {
         case 'FLIGHT_DATE_OUTSIDE_TASK_WINDOW':
           return `Your flight date (${error.error.flightDate}) is outside the task window (${error.error.taskOpen} – ${error.error.taskClose}).`;
-        case 'TASK_SCORES_FROZEN':
-          return `This task closed on ${error.error.frozenAt}. No further submissions are accepted.`;
       }
       break;
     case 'DETECTION':

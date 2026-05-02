@@ -303,7 +303,6 @@
  *       openDate: string,
  *       closeDate: string,
  *       optimisedDistanceKm: number | null,
- *       isFrozen: boolean,
  *       pilotCount: number,         // pilots with at least one submission
  *       goalCount: number,          // pilots who reached goal
  *     }>
@@ -423,7 +422,10 @@
 
 /**
  * POST /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions
- * Auth: authenticated, registered for season
+ * Auth: authenticated. The handler auto-joins the user to the league as a
+ *   pilot if they aren't already a member. Season registration is *not*
+ *   required (any authenticated user can submit to a published, in-window
+ *   task in this league).
  *
  * Upload an IGC file for scoring.
  * Content-Type: multipart/form-data
@@ -431,43 +433,54 @@
  * Body (form fields):
  *   igcFile: File    (required, .igc extension, max 5MB)
  *
- * Processing:
- *   1. Store raw IGC to object storage
- *   2. Insert flight_submission with status PENDING
- *   3. Run pipeline synchronously:
- *      - If pipeline returns a hard error (PARSE, DATE): set status INVALID,
- *        return 422 immediately with the error message
- *      - If pipeline returns NO_SSS_CROSSING: set status PROCESSED with zero score,
- *        return 200 with result (pilot gets feedback, can resubmit)
- *      - If pipeline succeeds: set status PROCESSED, write attempts, update task_results,
- *        enqueue RESCORE_TASK job, return 200 with result
+ * Processing (single SQLite transaction, fully synchronous):
+ *   1. Run pipeline:
+ *      - On hard error (PARSE / DATE / DETECTION): return 422 with
+ *        { error: { code: 'PIPELINE_ERROR', message } }
+ *      - On success: continue
+ *   2. Insert flight_submissions row (status PROCESSED, igc blob stored
+ *      in `igc_data`).
+ *   3. Insert one flight_attempts row per scored attempt + the matching
+ *      turnpoint_crossings rows.
+ *   4. Set flight_submissions.best_attempt_id.
+ *   5. Call rebuildTaskResults(taskId) — recomputes the whole task's
+ *      task_results from the new full set of attempts.
+ *   6. Return 201 with the response below.
  *
- * Response 200 (processed):
+ * Response 201:
  *   {
  *     submission: {
  *       id: string,
  *       status: 'PROCESSED',
  *       submittedAt: string,
- *     },
- *     bestAttempt: AttemptResult,
- *     allAttempts: Array<AttemptResult>,    // visible only to the submitting pilot
- *     replacedPreviousBest: boolean,        // true if this beats their prior best
+ *       igcFilename: string,
+ *       igcSizeBytes: number,
+ *       igcDate: string | null,
+ *       bestAttempt: AttemptResult,
+ *       allAttempts: AttemptResult[],
+ *       timePointsProvisional: boolean,   // true while task is open
+ *     }
  *   }
  *
- * Response 422 (invalid IGC):
+ * Response 422 (pipeline rejected):
  *   {
  *     error: {
- *       code: 'IGC_INVALID',
+ *       code: 'PIPELINE_ERROR',
  *       message: string,      // human-readable from formatPipelineError()
- *       stage: 'PARSE' | 'DATE' | 'DETECTION',
  *     }
  *   }
  *
  * Errors:
- *   400 NOT_REGISTERED         — pilot not registered for this season
- *   400 TASK_CLOSED            — task close_date has passed
+ *   400 NO_FILE                — multipart had no file part
+ *   400 TOO_MANY_FILES         — multipart had >1 file part
+ *   400 INVALID_IGC            — file failed the IGC magic-byte check
+ *   409 TASK_NOT_OPEN          — task status is not 'published'
+ *   409 TASK_CLOSED            — task close_date has passed
+ *   409 DUPLICATE_SUBMISSION   — same IGC sha256 already uploaded
  *   413 FILE_TOO_LARGE         — > 5MB
  *   415 INVALID_FILE_TYPE      — not .igc
+ *   422 PIPELINE_ERROR         — parse / date / detection failure
+ *   422 TASK_NOT_CONFIGURED    — task has no turnpoints
  *
  * AttemptResult:
  *   {
@@ -528,84 +541,52 @@
 
 /**
  * GET /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/track
- * Auth: authenticated (own submission) or league admin
+ * Auth: authenticated, league member (any pilot in the league can replay
+ *   another pilot's track — same gate as the /submissions listing).
  *
- * Returns the parsed track for replay — fixes with timestamps, lat/lng,
- * altitude, ground state (H&F only), and detected flight/hiking segments.
+ * Returns the parsed track for the leaderboard map view: every IGC fix
+ * (down-sampled by the client), the scored attempt's turnpoint crossings,
+ * the bounding box, and a metadata block.
  *
  * Response 200:
  *   {
+ *     submissionId: string,
+ *     taskId: string,
+ *     pilotId: string,
+ *     pilotName: string,
+ *     flightDate: string,                 // 'YYYY-MM-DD'
  *     fixes: Array<{
- *       timestamp: string,
+ *       t: number,                        // Unix ms
  *       lat: number,
  *       lng: number,
- *       gpsAlt: number,
- *       pressureAlt: number,
- *       groundState: 'GROUND' | 'AIRBORNE' | 'UNKNOWN' | null,  // null for XC
+ *       alt: number,                      // GPS altitude, metres
  *     }>,
- *     segments: Array<{
- *       type: 'FLIGHT' | 'HIKING',
- *       startTimestamp: string,
- *       endTimestamp: string,
+ *     crossings: Array<{
+ *       turnpointId: string,
+ *       turnpointName: string,
+ *       sequenceIndex: number,
+ *       crossingTimeMs: number,           // Unix ms (interpolated)
+ *       type: 'SSS' | 'CYLINDER' | 'ESS' | 'GOAL_CYLINDER' | 'GOAL_LINE',
+ *       radiusM: number,
+ *       latitude: number,
+ *       longitude: number,
+ *       groundConfirmed: boolean,
+ *       groundCheckRequired: boolean,
  *     }>,
- *   }
- *
- * Note: Track is re-parsed from the raw IGC on demand. Not stored in DB.
- */
-
-// =============================================================================
-// GROUND OVERRIDES (Hike & Fly only)
-// =============================================================================
-
-/**
- * POST /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/overrides
- * Auth: authenticated (own submission only)
- *
- * Submit a self-declaration for a flagged GROUND_ONLY turnpoint crossing.
- *
- * Body:
- *   {
- *     crossingId: string,   // the turnpoint_crossings.id that was flagged
- *     reason: string,       // pilot's explanation (required, min 10 chars)
- *   }
- *
- * Response 201:
- *   {
- *     override: {
- *       id: string,
- *       crossingId: string,
- *       declaredAt: string,
- *       reason: string,
- *       detectedMaxSpeedKmh: number | null,
+ *     bounds: { north: number, south: number, east: number, west: number },
+ *     meta: {
+ *       fixCount: number,
+ *       durationS: number | null,
+ *       reachedGoal: boolean,
+ *       totalPoints: number,
  *     },
- *     updatedAttempt: AttemptResult,   // hasFlaggedCrossings updated
  *   }
  *
  * Errors:
- *   400 CROSSING_NOT_FLAGGED     — crossing was already ground-confirmed, no override needed
- *   400 OVERRIDE_ALREADY_EXISTS  — already declared for this crossing
- *   400 TASK_CLOSED              — cannot override after task close_date
- *   403 NOT_OWN_SUBMISSION
- */
-
-/**
- * GET /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/overrides
- * Auth: authenticated (own submission) or league admin
+ *   404 SUBMISSION_NOT_FOUND   — no matching submission for this URL
+ *   422 INVALID_IGC            — stored IGC could not be parsed
  *
- * Returns all overrides for a submission — the audit trail.
- *
- * Response 200:
- *   {
- *     overrides: Array<{
- *       id: string,
- *       crossingId: string,
- *       turnpointId: string,
- *       declaredAt: string,
- *       reason: string,
- *       detectedMaxSpeedKmh: number | null,
- *       crossingTime: string,
- *     }>
- *   }
+ * Note: Track is re-parsed from the raw IGC on demand. Not stored in DB.
  */
 
 // =============================================================================
@@ -653,37 +634,6 @@
  * Body: { ids: string[] }    // array of notification IDs, or omit for "mark all read"
  *
  * Response 200: { markedCount: number }
- */
-
-// =============================================================================
-// ADMIN — TASK MANAGEMENT
-// =============================================================================
-
-/**
- * POST /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/freeze
- * Auth: league admin or super-admin
- *
- * Manually freeze task scores before the close_date.
- * Sets scores_frozen_at to now. Irreversible.
- *
- * Response 200: { task: TaskDetail }
- *
- * Errors:
- *   409 ALREADY_FROZEN
- */
-
-/**
- * POST /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/rescore
- * Auth: league admin or super-admin
- *
- * Manually trigger a rescore job for a task (e.g. after a correction).
- * Only permitted if task is not frozen.
- *
- * Response 202:
- *   { jobId: string, message: 'Rescore job queued' }
- *
- * Errors:
- *   409 TASK_FROZEN — cannot rescore after freeze
  */
 
 // =============================================================================
@@ -763,12 +713,11 @@
  *   VALIDATION_ERROR          — Zod schema failure; detail contains field errors
  *   INVALID_TURNPOINT_SEQUENCE
  *   OPEN_DATE_AFTER_CLOSE_DATE
- *   NOT_REGISTERED
- *   TASK_CLOSED
  *   HAS_SUBMISSIONS
- *   CROSSING_NOT_FLAGGED
- *   OVERRIDE_ALREADY_EXISTS
  *   CANNOT_DEMOTE_LAST_ADMIN
+ *   NO_FILE                   — multipart upload missing the file part
+ *   TOO_MANY_FILES            — multipart upload had >1 file part
+ *   INVALID_IGC               — upload failed magic-byte check (file not an IGC)
  *
  * HTTP 401 Unauthorized:
  *   MISSING_TOKEN
@@ -792,8 +741,9 @@
  *   ALREADY_MEMBER
  *   ALREADY_REGISTERED
  *   TASK_HAS_SUBMISSIONS
- *   ALREADY_FROZEN
- *   TASK_FROZEN
+ *   TASK_NOT_OPEN              — task status is not 'published'
+ *   TASK_CLOSED                — task close_date has passed
+ *   DUPLICATE_SUBMISSION       — same IGC sha256 already uploaded for this task
  *
  * HTTP 413 Payload Too Large:
  *   FILE_TOO_LARGE
@@ -802,7 +752,9 @@
  *   INVALID_FILE_TYPE
  *
  * HTTP 422 Unprocessable Entity:
- *   IGC_INVALID               — pipeline rejected the file
+ *   PIPELINE_ERROR            — pipeline rejected the file (parse / date / detection)
+ *   TASK_NOT_CONFIGURED       — task has no turnpoints
+ *   INVALID_IGC               — IGC could not be opened for track-data display
  *
  * HTTP 500 Internal Server Error:
  *   INTERNAL_ERROR            — unexpected; detail omitted in production
@@ -841,15 +793,11 @@
  * public      GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId       Task + results
  * admin       PATCH    /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId       Update task
  * member      GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/download  .xctsk file
- * admin       POST     /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/freeze    Freeze scores
- * admin       POST     /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/rescore   Trigger rescore
  *
  * member      POST     /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions          Upload IGC
  * self/admin  GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions          Own submissions
  * self/admin  GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:id      Submission detail
  * self/admin  GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:id/track Track replay
- * self        POST     /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:id/overrides  Ground override
- * self/admin  GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:id/overrides  Override audit
  *
  * required    GET      /api/v1/notifications                                             Own notifications
  * required    POST     /api/v1/notifications/read                                        Mark read

@@ -199,8 +199,6 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
            t.status,
            t.open_date as openDate,
            t.close_date as closeDate,
-           CASE WHEN t.scores_frozen_at IS NOT NULL THEN 1 ELSE 0 END as isFrozen,
-           t.scores_frozen_at as scoresFrozenAt,
            t.normalized_score as taskValue,
            (SELECT COUNT(DISTINCT user_id) FROM flight_submissions WHERE task_id = t.id AND deleted_at IS NULL) as pilotCount,
            (SELECT COUNT(DISTINCT fs.user_id)
@@ -238,14 +236,13 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       // Verify task belongs to this season/league
       const task = db
         .prepare(
-          `SELECT 
+          `SELECT
            t.id,
            t.name,
            t.description,
            t.task_type as taskType,
            t.open_date as openDate,
-           t.close_date as closeDate,
-           t.scores_frozen_at as scoresFrozenAt
+           t.close_date as closeDate
          FROM tasks t
          JOIN seasons s ON s.id = t.season_id
          WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`,
@@ -312,9 +309,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       const task = db
         .prepare(
           `SELECT t.id, t.name, t.task_type as taskType, t.status,
-                t.open_date as openDate, t.close_date as closeDate,
-                CASE WHEN t.scores_frozen_at IS NOT NULL THEN 1 ELSE 0 END as isFrozen,
-                t.scores_frozen_at as scoresFrozenAt
+                t.open_date as openDate, t.close_date as closeDate
          FROM tasks t
          JOIN seasons s ON s.id = t.season_id
          WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`,
@@ -391,8 +386,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
                 tr.distance_points, tr.time_points, tr.total_points,
                 tr.has_flagged_crossings,
                 fa.attempt_index, fa.last_turnpoint_index,
-                t.close_date AS task_close_date,
-                t.scores_frozen_at AS task_scores_frozen_at
+                t.close_date AS task_close_date
          FROM flight_submissions fs
          LEFT JOIN task_results tr ON tr.task_id = fs.task_id AND tr.user_id = fs.user_id
          LEFT JOIN flight_attempts fa ON fa.id = tr.best_attempt_id
@@ -421,11 +415,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
               }
             : null;
 
-        // Scores are provisional while the task is still accepting changes:
-        // close_date hasn't passed AND scores aren't manually frozen. An
-        // admin can freeze before close_date via /freeze, in which case
-        // task_results will no longer change even though now <= close_date.
-        const taskOpen = now <= new Date(row.task_close_date) && row.task_scores_frozen_at === null;
+        const taskOpen = now <= new Date(row.task_close_date);
         return {
           id: row.id,
           status: row.status,
@@ -435,6 +425,8 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
           igcDate: row.igc_date ?? null,
           bestAttempt,
           allAttempts: bestAttempt ? [bestAttempt] : [],
+          // Scores can change while the task is open (any new upload may shift
+          // the best distance or goal-times set and rescore everyone).
           timePointsProvisional: taskOpen,
         };
       });
@@ -446,7 +438,18 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
     leagueScope.get(
       '/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/track',
       async (request, reply) => {
-        const { submissionId } = request.params as { submissionId: string; seasonId: string; taskId: string };
+        // The track payload contains every IGC fix. The submissionId is
+        // exposed via the public leaderboard, so without auth anyone could
+        // pull any pilot's track at any time. Gate on league membership to
+        // match the /submissions listing.
+        requireAuth(request, reply);
+        requireLeagueMember(request, reply);
+
+        const { seasonId, taskId, submissionId } = request.params as {
+          submissionId: string;
+          seasonId: string;
+          taskId: string;
+        };
 
         const submission = db
           .prepare(
@@ -462,12 +465,18 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
          JOIN tasks t ON t.id = s.task_id
          JOIN seasons se ON se.id = t.season_id
          JOIN users u ON u.id = s.user_id
-         WHERE s.id = ? AND se.league_id = ? AND s.deleted_at IS NULL`,
+         WHERE s.id = ?
+           AND s.task_id = ?
+           AND t.season_id = ?
+           AND se.league_id = ?
+           AND s.deleted_at IS NULL`,
           )
-          .get(submissionId, (request as any).league.id) as any;
+          .get(submissionId, taskId, seasonId, (request as any).league.id) as any;
 
         if (!submission) {
-          return reply.status(404).send({ error: 'Submission not found' });
+          return reply.status(404).send({
+            error: { code: 'SUBMISSION_NOT_FOUND', message: 'Submission not found' },
+          });
         }
 
         const igcText =
@@ -475,15 +484,17 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
 
         const parsed = parseAndValidate(igcText);
         if (!parsed.ok) {
-          return reply.status(422).send({ error: 'Could not parse IGC data' });
+          return reply.status(422).send({
+            error: { code: 'INVALID_IGC', message: 'Could not parse IGC data' },
+          });
         }
 
         const { fixes, flightDate } = parsed.value;
         const lats = fixes.map((f: any) => f.lat);
         const lngs = fixes.map((f: any) => f.lng);
 
-        // Best attempt for score/goal metadata. Read from task_results (the
-        // authoritative post-rebuild row) so the metadata matches the
+        // Best attempt for score/goal metadata. Read from task_results
+        // (the authoritative post-rebuild row) so the metadata matches the
         // leaderboard rather than the submission-time snapshot on
         // flight_attempts. Also pull tr.best_attempt_id so the crossings
         // query below can scope to the same attempt that produced the score.
@@ -1094,26 +1105,15 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         return reply.status(400).send({ error: 'Cannot close a draft season (open it first)' });
       }
 
-      // Use transaction to close season and freeze all unfrozen tasks
-      db.transaction(() => {
-        // Update season status to closed
-        db.prepare(
-          `UPDATE seasons
-           SET status = 'closed', updated_at = datetime('now')
-           WHERE id = ?`,
-        ).run(seasonId);
-
-        // Freeze all unfrozen tasks in this season
-        db.prepare(
-          `UPDATE tasks
-           SET scores_frozen_at = datetime('now'), updated_at = datetime('now')
-           WHERE season_id = ? AND scores_frozen_at IS NULL AND deleted_at IS NULL`,
-        ).run(seasonId);
-      })();
+      db.prepare(
+        `UPDATE seasons
+         SET status = 'closed', updated_at = datetime('now')
+         WHERE id = ?`,
+      ).run(seasonId);
 
       const updatedSeason = db
         .prepare(
-          `SELECT 
+          `SELECT
           id, name, competition_type as competitionType,
           start_date as startDate, end_date as endDate,
           status, updated_at as updatedAt
@@ -1121,7 +1121,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         )
         .get(seasonId);
 
-      request.log.info({ leagueId: league.id, seasonId }, 'Season closed and all tasks frozen');
+      request.log.info({ leagueId: league.id, seasonId }, 'Season closed');
       return reply.send({ season: updatedSeason });
     });
 
@@ -1681,22 +1681,21 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       // Verify task belongs to this season/league
       const existingTask = db
         .prepare(
-          `SELECT t.id, t.open_date, t.close_date, t.scores_frozen_at
+          `SELECT t.id, t.open_date, t.close_date
          FROM tasks t
          JOIN seasons s ON s.id = t.season_id
          WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`,
         )
-        .get(taskId, seasonId, league.id) as
-        | { id: string; open_date: string; close_date: string; scores_frozen_at: string | null }
-        | undefined;
+        .get(taskId, seasonId, league.id) as { id: string; open_date: string; close_date: string } | undefined;
 
       if (!existingTask) {
         return reply.status(404).send({ error: 'Task not found' });
       }
 
-      // Prevent editing frozen tasks
-      if (existingTask.scores_frozen_at) {
-        return reply.status(400).send({ error: 'Cannot edit a frozen task' });
+      // Closed tasks (close_date in the past) are immutable. Admins who need
+      // to fix a closed task should soft-delete it and create a new one.
+      if (new Date() > new Date(existingTask.close_date)) {
+        return reply.status(400).send({ error: 'Cannot edit a closed task' });
       }
 
       // Validate dates if provided
@@ -1903,38 +1902,6 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
 
       request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task unpublished');
       return reply.send({ message: 'Task unpublished (returned to draft)' });
-    });
-
-    // ── Freeze task scores ─────────────────────────────────────────────────
-    leagueScope.post('/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/freeze', async (request, reply) => {
-      requireLeagueAdmin(request, reply);
-
-      const { seasonId, taskId } = request.params as { seasonId: string; taskId: string };
-      const league = (request as any).league;
-
-      const task = db
-        .prepare(
-          `SELECT t.id, t.scores_frozen_at
-         FROM tasks t
-         JOIN seasons s ON s.id = t.season_id
-         WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`,
-        )
-        .get(taskId, seasonId, league.id) as { id: string; scores_frozen_at: string | null } | undefined;
-
-      if (!task) {
-        return reply.status(404).send({ error: 'Task not found' });
-      }
-
-      if (task.scores_frozen_at) {
-        return reply.status(400).send({ error: 'Task scores are already frozen' });
-      }
-
-      db.prepare(`UPDATE tasks SET scores_frozen_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(
-        taskId,
-      );
-
-      request.log.info({ leagueId: league.id, seasonId, taskId }, 'Task scores frozen');
-      return reply.send({ message: 'Task scores frozen' });
     });
 
     // ── Reorder tasks ──────────────────────────────────────────────────────

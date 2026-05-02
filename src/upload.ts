@@ -38,7 +38,6 @@ interface TaskRow {
   status: string;
   open_date: string;
   close_date: string;
-  scores_frozen_at: string | null;
   task_type: string | null;
   competition_type: string;
 }
@@ -126,12 +125,6 @@ export async function handleIgcUpload(
   if (now > new Date(task.close_date)) {
     return reply.status(409).send({
       error: { code: 'TASK_CLOSED', message: 'The submission window for this task has closed.' },
-    });
-  }
-
-  if (task.scores_frozen_at) {
-    return reply.status(409).send({
-      error: { code: 'TASK_SCORES_FROZEN', message: 'This task is closed. No further submissions are accepted.' },
     });
   }
 
@@ -242,20 +235,16 @@ export async function handleIgcUpload(
     task: {
       id: taskId,
       turnpoints: turnpointDefs,
-      closeDate: new Date(task.close_date).getTime(),
     },
     existingGoalTimes: existingGoalTimesS,
     competitionType: task.competition_type === 'HIKE_AND_FLY' ? 'HIKE_AND_FLY' : 'XC',
   };
 
   // ── Run pipeline ───────────────────────────────────────────────────────────
-  const scoresFrozenAt = task.scores_frozen_at ? new Date(task.scores_frozen_at).getTime() : null;
-
   const pipelineResult = await runPipeline(
     pipelineInput,
     task.open_date.slice(0, 10), // YYYY-MM-DD
     task.close_date.slice(0, 10), // YYYY-MM-DD
-    scoresFrozenAt,
     taskBestDistanceKm,
   );
 
@@ -309,15 +298,18 @@ export async function handleIgcUpload(
       const essCrossingTime = attempt.essCrossing ? new Date(attempt.essCrossing.crossingTime).toISOString() : null;
       const goalCrossingTime = attempt.goalCrossing ? new Date(attempt.goalCrossing.crossingTime).toISOString() : null;
 
+      // Score columns (distance/time/total_points) were removed in 0013;
+      // task_results is the single source of truth for scoring. Pipeline
+      // results are kept in-memory for the immediate response only.
       db.prepare(`
         INSERT INTO flight_attempts (
           id, submission_id, task_id, user_id,
           sss_crossing_time, ess_crossing_time, goal_crossing_time, task_time_s,
           reached_goal, last_turnpoint_index,
-          distance_flown_km, distance_points, time_points, total_points,
+          distance_flown_km,
           has_flagged_crossings, attempt_index, scorer_version,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         attemptId,
         submissionId,
@@ -330,9 +322,6 @@ export async function handleIgcUpload(
         attempt.reachedGoal ? 1 : 0,
         attempt.lastTurnpointIndex,
         attempt.distanceFlownKm,
-        attempt.distancePoints,
-        attempt.timePoints,
-        attempt.totalPoints,
         attempt.hasFlaggedCrossings ? 1 : 0,
         attempt.attemptIndex,
         SCORER_VERSION,
@@ -424,59 +413,4 @@ export async function handleIgcUpload(
       timePointsProvisional: true,
     },
   });
-}
-
-// =============================================================================
-// DOWNLOAD HANDLER
-// =============================================================================
-
-/**
- * GET /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/igc
- *
- * Returns the original IGC file. Pilots can always download their own;
- * other pilots' are hidden until scores are frozen.
- */
-export async function handleIgcDownload(
-  request: FastifyRequestBase<{ Params: UploadRouteParams & { submissionId: string } }>,
-  reply: FastifyReply,
-  db: Database,
-): Promise<void> {
-  requireAuth(request as any, reply);
-
-  const { submissionId } = request.params;
-
-  const row = db
-    .prepare(`
-    SELECT s.user_id, s.igc_data, s.igc_filename, t.scores_frozen_at
-    FROM flight_submissions s
-    JOIN tasks t ON t.id = s.task_id
-    WHERE s.id = ?
-      AND s.deleted_at IS NULL
-  `)
-    .get(submissionId) as
-    | { user_id: string; igc_data: Buffer; igc_filename: string; scores_frozen_at: string | null }
-    | undefined;
-
-  if (!row) {
-    return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Submission not found' } });
-  }
-
-  const isOwner = row.user_id === (request as any).user!.userId;
-  const isFrozen = row.scores_frozen_at !== null;
-
-  if (!isOwner && !isFrozen) {
-    return reply.status(403).send({
-      error: {
-        code: 'SCORES_NOT_FROZEN',
-        message: "Other pilots' IGC files are hidden until task scores are finalised",
-      },
-    });
-  }
-
-  reply
-    .header('Content-Type', 'application/octet-stream')
-    .header('Content-Disposition', `attachment; filename="${row.igc_filename.replace(/[^\w.-]/g, '_')}"`)
-    .header('Content-Length', row.igc_data.length)
-    .header('Cache-Control', isFrozen ? 'public, max-age=86400' : 'private, no-cache')
-    .send(row.igc_data);
 }

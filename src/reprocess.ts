@@ -155,18 +155,15 @@ async function reprocessOne(db: Database, sub: SubmissionRow): Promise<void> {
 
   const input: PipelineInput = {
     igcText: sub.igc_data.toString('utf8'),
-    task: { id: sub.task_id, turnpoints: turnpointDefs, closeDate: new Date(task.close_date).getTime() },
+    task: { id: sub.task_id, turnpoints: turnpointDefs },
     existingGoalTimes,
     competitionType: task.competition_type === 'HIKE_AND_FLY' ? 'HIKE_AND_FLY' : 'XC',
   };
 
-  // scoresFrozenAt = null: re-processing should not be blocked by freeze state
-  // (the original upload already passed the gate; we're only re-scoring).
   const result = await runPipeline(
     input,
     task.open_date.slice(0, 10),
     task.close_date.slice(0, 10),
-    null,
     taskBestDistanceKm,
   );
   if (!result.ok) {
