@@ -89,13 +89,9 @@ export interface LeaderboardResponse {
 // =============================================================================
 
 export const tasksApi = {
-  /** List all tasks for a season */
+  /** List all tasks for a season — returns each task with turnpoints nested. */
   list: (leagueSlug: string, seasonId: string) =>
     api.get<{ tasks: Task[] }>(`/leagues/${leagueSlug}/seasons/${seasonId}/tasks`),
-
-  /** Get a single task */
-  get: (leagueSlug: string, seasonId: string, taskId: string) =>
-    api.get<{ task: Task }>(`/leagues/${leagueSlug}/seasons/${seasonId}/tasks/${taskId}`),
 
   /** Get task leaderboard */
   leaderboard: (leagueSlug: string, seasonId: string, taskId: string) =>

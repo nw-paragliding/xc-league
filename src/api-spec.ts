@@ -349,40 +349,6 @@
  */
 
 /**
- * GET /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId
- * Auth: not required
- *
- * Response 200:
- *   {
- *     task: TaskDetail,
- *     turnpoints: Array<{
- *       id: string,
- *       sequenceIndex: number,
- *       name: string,
- *       lat: number,
- *       lng: number,
- *       radiusM: number,
- *       type: string,
- *       goalLineBearingDeg: number | null,
- *     }>,
- *     results: Array<TaskResultSummary>,   // public results — best attempt per pilot
- *   }
- *
- * TaskResultSummary:
- *   {
- *     rank: number,
- *     userId: string,
- *     displayName: string,
- *     distanceFlownKm: number,
- *     reachedGoal: boolean,
- *     taskTimeS: number | null,
- *     totalPoints: number,
- *     hasFlaggedCrossings: boolean,
- *   }
- *   Note: distancePoints and timePoints breakdown NOT included here (private to pilot).
- */
-
-/**
  * PATCH /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId
  * Auth: league admin or super-admin
  *
@@ -541,8 +507,8 @@
 
 /**
  * GET /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/track
- * Auth: authenticated, league member (any pilot in the league can replay
- *   another pilot's track — same gate as the /submissions listing).
+ * Auth: not required — tracks are part of the public competition record
+ *   alongside the public leaderboard.
  *
  * Returns the parsed track for the leaderboard map view: every IGC fix
  * (down-sampled by the client), the scored attempt's turnpoint crossings,
@@ -790,14 +756,13 @@
  *
  * public      GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks               List tasks
  * admin       POST     /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks               Create task
- * public      GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId       Task + results
  * admin       PATCH    /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId       Update task
  * member      GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/download  .xctsk file
  *
  * member      POST     /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions          Upload IGC
  * self/admin  GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions          Own submissions
  * self/admin  GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:id      Submission detail
- * self/admin  GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:id/track Track replay
+ * public      GET      /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:id/track Track replay
  *
  * required    GET      /api/v1/notifications                                             Own notifications
  * required    POST     /api/v1/notifications/read                                        Mark read
