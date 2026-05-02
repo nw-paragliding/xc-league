@@ -96,12 +96,27 @@ function closestOnSegment(p1: Vec2, p2: Vec2, q: Vec2): Vec2 {
 /**
  * Optimal interior point for cylinder i given fixed neighbours prev and next.
  *
- * Uses the angle-bisector of directions from centre to each neighbour.
- * This is exact for the "miss" case (line prev→next doesn't intersect the
- * cylinder) and converges to the exact solution under iteration for the
- * "hit" case (line intersects the cylinder).
+ * There are two regimes:
+ *   - "hit": the straight prev→next segment passes through the cylinder.
+ *     Any point on that segment that lies inside the cylinder satisfies
+ *     the touch requirement, and the optimal path is just the straight
+ *     line — `prev → next` with no detour. The closest point on the
+ *     segment to the centre is the canonical (tightest) pick and lets
+ *     the iterative coordinate-descent settle on the chord.
+ *   - "miss": the segment doesn't intersect the cylinder. The optimum is
+ *     the boundary tangent point on the angle-bisector of directions from
+ *     centre to each neighbour, which the existing fixed-point iteration
+ *     converges to.
+ *
+ * Without the hit-case branch, the angle-bisector returns a boundary
+ * tangent even when the cylinder is large enough that the straight chord
+ * already touches it — over-counting distance and steering the rendered
+ * optimised route around the cylinder it doesn't need to detour around.
  */
 function optimalInteriorPoint(c: Vec2, r: number, prev: Vec2, next: Vec2): Vec2 {
+  const closest = closestOnSegment(prev, next, c);
+  if (dist2d(closest, c) <= r) return closest;
+
   const combined = add(normalise(sub(prev, c)), normalise(sub(next, c)));
   if (norm(combined) < 1e-10) {
     return add(c, scale(normalise(sub(prev, c)), r)); // diametrically opposite — use prev direction
