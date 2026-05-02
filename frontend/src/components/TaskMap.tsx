@@ -1,7 +1,7 @@
 import maplibregl from 'maplibre-gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { type Cylinder, computeDistanceKm, optimiseRoute } from '../../../src/shared/task-engine';
+import { type Cylinder, computeDistanceKm, optimiseRoute, tagToleranceM } from '../../../src/shared/task-engine';
 import type { Turnpoint } from '../api/tasks';
 import type { ReplayFix } from '../api/track';
 
@@ -371,13 +371,30 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       }
     }
 
-    // ── 5. Coloured dashed rings ──────────────────────────────────────────────
+    // ── 5. Coloured dashed rings + FAI §9.1.3 tolerance buffer ───────────────
     // Role colour shows on the fill (preserves SSS/ESS/Goal at-a-glance); the
     // stroke switches to earthy brown with a tighter dash for force-ground TPs.
+    // Outside each strict ring we draw a faint buffer at r + tagToleranceM(r)
+    // — that's the boundary the scoring pipeline actually uses for tag
+    // detection (max(5 m, 0.5 % of r)). Visible as a thin halo on small
+    // cylinders, more apparent on large ones.
     for (const group of groups) {
       for (const { radiusM, color, forceGround } of mergeCircles(group.entries.filter((e) => !e.isGoalLine))) {
         const { r } = projR(group.lng, group.lat, radiusM);
         if (r < 1) continue;
+
+        // Tolerance buffer (drawn first so it sits behind the strict ring).
+        const bufferRadiusM = radiusM + tagToleranceM(radiusM);
+        mk('path', {
+          d: cylinderPath(group.lng, group.lat, bufferRadiusM),
+          fill: 'none',
+          stroke: forceGround ? GROUND_COLOR : color,
+          'stroke-width': 1,
+          'stroke-opacity': 0.45,
+          'stroke-dasharray': '2 4',
+        });
+
+        // Strict cylinder boundary (the scored-distance edge).
         mk('path', {
           d: cylinderPath(group.lng, group.lat, radiusM),
           fill: color + '28',

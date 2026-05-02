@@ -14,6 +14,7 @@ import {
   MAX_POINTS,
   type OptimisedRoute,
   optimiseRoute,
+  tagToleranceM,
 } from './shared/task-engine';
 
 // =============================================================================
@@ -26,20 +27,9 @@ import {
 
 export const SCORER_VERSION = '1.1';
 
-// =============================================================================
-// FAI §9.1.3 cylinder tolerance
-//
-// "Tolerance is applied separately to the straight portion and to the
-// semi-circle." Standard practice across FAI scoring tools is 0.5% of the
-// radius with a minimum of 5 m. The boundary effectively shifts outward by
-// `tagToleranceM(r)` — a fix at distance ≤ r + tolerance is considered
-// inside. The optimised-route geometry continues to use the strict radius;
-// tolerance only governs whether a track tags the cylinder.
-// =============================================================================
-
-export function tagToleranceM(radiusM: number): number {
-  return Math.max(5, radiusM * 0.005);
-}
+// Re-export so existing `import { tagToleranceM } from './pipeline'` paths
+// keep working. The canonical helper lives in `./shared/task-engine`.
+export { tagToleranceM };
 
 // =============================================================================
 // SHARED TYPES
