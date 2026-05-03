@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import Fastify from 'fastify';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { authPlugin, loadAuthConfig } from '../../src/auth';
@@ -14,6 +15,16 @@ import {
   setupTestDatabase,
 } from '../helpers';
 import { getTestDb, resetTestDb } from '../setup';
+
+/** Inline turnpoint fixture — no helper for this in tests/helpers.ts yet. */
+function addTurnpoint(db: any, taskId: string) {
+  const id = randomUUID();
+  db.prepare(`
+    INSERT INTO turnpoints (id, task_id, sequence_index, name, latitude, longitude, radius_m, type, created_at, updated_at)
+    VALUES (?, ?, 0, 'TP', 47.5, -122.0, 400, 'SSS', datetime('now'), datetime('now'))
+  `).run(id, taskId);
+  return id;
+}
 
 describe('Season Management API', () => {
   let app: any;
@@ -174,7 +185,8 @@ describe('Season Management API', () => {
       const taskA = createTestTask(db, season.id, testLeague.id);
       const taskB = createTestTask(db, season.id, testLeague.id);
 
-      // taskA: full chain — submission → attempt → task_results.
+      // taskA: full chain — turnpoint + submission → attempt → task_results.
+      const turnpointA = addTurnpoint(db, taskA.id);
       const subA = createTestSubmission(db, taskA.id, regularUser.id, testLeague.id);
       const attemptA = createTestAttempt(db, subA, taskA.id, regularUser.id, testLeague.id, { distanceFlownKm: 12 });
       createTestTaskResult(db, taskA.id, regularUser.id, testLeague.id, attemptA);
@@ -215,6 +227,10 @@ describe('Season Management API', () => {
       const trCountB = db.prepare('SELECT COUNT(*) AS c FROM task_results WHERE task_id = ?').get(taskB.id) as any;
       expect(trCountA.c).toBe(0);
       expect(trCountB.c).toBe(0);
+
+      // Turnpoints soft-deleted.
+      const tpRow = db.prepare('SELECT deleted_at FROM turnpoints WHERE id = ?').get(turnpointA);
+      expect(tpRow.deleted_at).not.toBeNull();
     });
 
     // Defensive: tasks.league_id is denormalised and not constrained to match

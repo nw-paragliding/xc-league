@@ -235,9 +235,10 @@ CREATE UNIQUE INDEX idx_submissions_dedup ON flight_submissions (task_id, user_i
 -- task_results is a computed cache; doing neither leaves it pointing at
 -- non-existent or stale attempts and the leaderboard silently lies.
 -- There is no DB-level trigger enforcing this — it's a convention.
--- Current callers: src/upload.ts uses (a) post-insert; the task-DELETE
--- handler (src/routes/leagues.ts) uses (b) since the task itself is
--- going away.
+-- New write paths must pick (a) or (b) depending on whether downstream
+-- consumers should still see scoring for this task. Search the repo for
+-- `rebuildTaskResults(` and `DELETE FROM task_results` to find the
+-- existing call sites.
 CREATE TABLE flight_attempts (
     id                          TEXT        PRIMARY KEY,  -- UUID
     submission_id               TEXT        NOT NULL REFERENCES flight_submissions (id),
