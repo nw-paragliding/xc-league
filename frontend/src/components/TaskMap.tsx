@@ -326,7 +326,8 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       const tolM = tagToleranceM(halfM);
       const bufHalfM = halfM + tolM;
       const buf_dlatDeg = ((Math.cos(brgRad) * bufHalfM) / 6371000) * (180 / Math.PI);
-      const buf_dlngDeg = ((Math.sin(brgRad) * bufHalfM) / (6371000 * Math.cos((lat * Math.PI) / 180))) * (180 / Math.PI);
+      const buf_dlngDeg =
+        ((Math.sin(brgRad) * bufHalfM) / (6371000 * Math.cos((lat * Math.PI) / 180))) * (180 / Math.PI);
       const bufEp1 = map.project([lng + buf_dlngDeg, lat + buf_dlatDeg]);
       const bufEp2 = map.project([lng - buf_dlngDeg, lat - buf_dlatDeg]);
       const bufArcR = Math.hypot(bufEp1.x - goalPx.x, bufEp1.y - goalPx.y).toFixed(1);
