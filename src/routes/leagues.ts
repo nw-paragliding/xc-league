@@ -9,6 +9,7 @@ import { randomUUID } from 'crypto';
 import type { FastifyInstance } from 'fastify';
 import QRCode from 'qrcode';
 import { makeResolveLeagueHook, requireAuth, requireLeagueAdmin, requireLeagueMember } from '../auth';
+import { rebuildTaskResults } from '../job-queue';
 import { parseAndValidate } from '../pipeline';
 import { type Cylinder, optimiseRoute } from '../shared/task-engine';
 import {
@@ -360,6 +361,76 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
 
       return reply.send({ submissions });
     });
+
+    // ── Soft-delete a single submission (admin moderation) ─────────────────
+    // Per-submission cousin of the task soft-delete cascade above. Removes one
+    // pilot's upload without nuking the whole task; the pilot's task_results
+    // row is recomputed from their remaining attempts (or dropped if this was
+    // their only submission).
+    leagueScope.delete(
+      '/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId',
+      async (request, reply) => {
+        requireLeagueAdmin(request, reply);
+
+        const { seasonId, taskId, submissionId } = request.params as {
+          seasonId: string;
+          taskId: string;
+          submissionId: string;
+        };
+        const league = (request as any).league;
+
+        const submission = db
+          .prepare(
+            `SELECT fs.id, fs.user_id
+               FROM flight_submissions fs
+               JOIN tasks t ON t.id = fs.task_id
+               JOIN seasons s ON s.id = t.season_id
+              WHERE fs.id = ? AND fs.task_id = ? AND t.season_id = ? AND s.league_id = ?
+                AND fs.deleted_at IS NULL AND t.deleted_at IS NULL`,
+          )
+          .get(submissionId, taskId, seasonId, league.id) as { id: string; user_id: string } | undefined;
+
+        if (!submission) {
+          return reply.status(404).send({ error: 'Submission not found' });
+        }
+
+        // rebuildTaskResults wipes task_results for the task and recomputes
+        // from the live (non-deleted) flight_attempts, so soft-deleting the
+        // attempts in the same txn is enough — the pilot's row is re-derived
+        // from their remaining best attempt or dropped if this was their only
+        // submission.
+        //
+        // The `AND deleted_at IS NULL` on the submission UPDATE closes a
+        // TOCTOU window: between the pre-read above and this UPDATE another
+        // concurrent admin could have already soft-deleted the row. If the
+        // UPDATE finds no live row (changes === 0) we bail with 404 so the
+        // second concurrent caller doesn't see a misleading 200.
+        let deleted = true;
+        db.transaction(() => {
+          const result = db
+            .prepare(`UPDATE flight_submissions SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL`)
+            .run(submissionId);
+          if (result.changes === 0) {
+            deleted = false;
+            return;
+          }
+          db.prepare(
+            `UPDATE flight_attempts SET deleted_at = datetime('now') WHERE submission_id = ? AND deleted_at IS NULL`,
+          ).run(submissionId);
+          rebuildTaskResults(db, taskId);
+        })();
+
+        if (!deleted) {
+          return reply.status(404).send({ error: 'Submission not found' });
+        }
+
+        request.log.info(
+          { leagueId: league.id, seasonId, taskId, submissionId, pilotId: submission.user_id },
+          'Submission soft-deleted by admin',
+        );
+        return reply.send({ message: 'Submission deleted' });
+      },
+    );
 
     // ── Get submission track data ──────────────────────────────────────────
     leagueScope.get(
