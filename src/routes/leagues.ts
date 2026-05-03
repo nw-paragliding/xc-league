@@ -327,7 +327,11 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
          FROM flight_submissions fs
          LEFT JOIN task_results tr     ON tr.task_id = fs.task_id AND tr.user_id = fs.user_id
          LEFT JOIN flight_attempts fa  ON fa.id  = tr.best_attempt_id
-         LEFT JOIN flight_attempts fas ON fas.id = fs.best_attempt_id AND fas.deleted_at IS NULL
+         LEFT JOIN flight_attempts fas ON fas.id = fs.best_attempt_id
+                                       AND fas.submission_id = fs.id
+                                       AND fas.task_id       = fs.task_id
+                                       AND fas.user_id       = fs.user_id
+                                       AND fas.deleted_at IS NULL
          JOIN tasks t   ON t.id = fs.task_id
          JOIN seasons s ON s.id = t.season_id
          WHERE fs.task_id = ? AND s.id = ? AND s.league_id = ?
