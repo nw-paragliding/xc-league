@@ -1,7 +1,7 @@
 import maplibregl from 'maplibre-gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { type Cylinder, computeDistanceKm, optimiseRoute } from '../../../src/shared/task-engine';
+import { type Cylinder, computeDistanceKm, optimiseRoute, tagToleranceM } from '../../../src/shared/task-engine';
 import type { Turnpoint } from '../api/tasks';
 import type { ReplayFix } from '../api/track';
 
@@ -317,6 +317,34 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
         'Z',
       ].join(' ');
 
+      // Buffered D — Minkowski-sum approximation. Both chord half-length
+      // and arc radius extended by tagToleranceM(halfM); we don't draw the
+      // thin inbound band that the full Minkowski sum would add (sub-pixel
+      // at typical zoom for the 5 m floor on small goal lines, and the
+      // outbound expansion + chord-end caps already convey "tolerance scope
+      // here"). Drawn first so the strict dashed boundary stays the focal cue.
+      const tolM = tagToleranceM(halfM);
+      const bufHalfM = halfM + tolM;
+      const buf_dlatDeg = ((Math.cos(brgRad) * bufHalfM) / 6371000) * (180 / Math.PI);
+      const buf_dlngDeg =
+        ((Math.sin(brgRad) * bufHalfM) / (6371000 * Math.cos((lat * Math.PI) / 180))) * (180 / Math.PI);
+      const bufEp1 = map.project([lng + buf_dlngDeg, lat + buf_dlatDeg]);
+      const bufEp2 = map.project([lng - buf_dlngDeg, lat - buf_dlatDeg]);
+      const bufArcR = Math.hypot(bufEp1.x - goalPx.x, bufEp1.y - goalPx.y).toFixed(1);
+      const bufD = [
+        `M${bufEp1.x.toFixed(1)},${bufEp1.y.toFixed(1)}`,
+        `L${bufEp2.x.toFixed(1)},${bufEp2.y.toFixed(1)}`,
+        `A${bufArcR},${bufArcR},0,0,${sweep},${bufEp1.x.toFixed(1)},${bufEp1.y.toFixed(1)}`,
+        'Z',
+      ].join(' ');
+      mk('path', {
+        d: `${bufD} ${d}`,
+        'fill-rule': 'evenodd',
+        fill: '#5db87a',
+        'fill-opacity': 0.5,
+        stroke: 'none',
+      });
+
       mk('path', {
         d,
         fill: 'rgba(0,0,0,0.2)',
@@ -371,13 +399,36 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       }
     }
 
-    // ── 5. Coloured dashed rings ──────────────────────────────────────────────
+    // ── 5. Coloured dashed rings + FAI §9.1.3 tolerance buffer ───────────────
     // Role colour shows on the fill (preserves SSS/ESS/Goal at-a-glance); the
     // stroke switches to earthy brown with a tighter dash for force-ground TPs.
+    // Outside each strict ring we shade the annular band between r and
+    // r + tagToleranceM(r) (max(5 m, 0.5 % of r)) — that's the band the
+    // scoring pipeline actually accepts for tag detection. Drawn first so
+    // the strict ring's stroke and translucent fill sit on top.
     for (const group of groups) {
       for (const { radiusM, color, forceGround } of mergeCircles(group.entries.filter((e) => !e.isGoalLine))) {
         const { r } = projR(group.lng, group.lat, radiusM);
         if (r < 1) continue;
+
+        // Annular tolerance band (donut between r and r + tolerance) drawn as
+        // a single path with two subpaths and evenodd fill-rule. The buffer
+        // is small in absolute terms (5 m floor, then 0.5 % of r), so we
+        // shade the band rather than drawing a thin ring — much more
+        // visible on big cylinders and still tolerable on small ones. No
+        // `stroke` here on purpose: a stroke would paint both subpaths and
+        // the inner stroke at r would land on top of the dashed strict ring
+        // below, filling in its dash gaps.
+        const bufferRadiusM = radiusM + tagToleranceM(radiusM);
+        mk('path', {
+          d: `${cylinderPath(group.lng, group.lat, bufferRadiusM)} ${cylinderPath(group.lng, group.lat, radiusM)}`,
+          'fill-rule': 'evenodd',
+          fill: forceGround ? GROUND_COLOR : color,
+          'fill-opacity': 0.5,
+          stroke: 'none',
+        });
+
+        // Strict cylinder boundary (the scored-distance edge).
         mk('path', {
           d: cylinderPath(group.lng, group.lat, radiusM),
           fill: color + '28',
