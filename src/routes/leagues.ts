@@ -399,13 +399,30 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         // attempts in the same txn is enough — the pilot's row is re-derived
         // from their remaining best attempt or dropped if this was their only
         // submission.
+        //
+        // The `AND deleted_at IS NULL` on the submission UPDATE closes a
+        // TOCTOU window: between the pre-read above and this UPDATE another
+        // concurrent admin could have already soft-deleted the row. If the
+        // UPDATE finds no live row (changes === 0) we bail with 404 so the
+        // second concurrent caller doesn't see a misleading 200.
+        let deleted = true;
         db.transaction(() => {
-          db.prepare(`UPDATE flight_submissions SET deleted_at = datetime('now') WHERE id = ?`).run(submissionId);
+          const result = db
+            .prepare(`UPDATE flight_submissions SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL`)
+            .run(submissionId);
+          if (result.changes === 0) {
+            deleted = false;
+            return;
+          }
           db.prepare(
             `UPDATE flight_attempts SET deleted_at = datetime('now') WHERE submission_id = ? AND deleted_at IS NULL`,
           ).run(submissionId);
           rebuildTaskResults(db, taskId);
         })();
+
+        if (!deleted) {
+          return reply.status(404).send({ error: 'Submission not found' });
+        }
 
         request.log.info(
           { leagueId: league.id, seasonId, taskId, submissionId, pilotId: submission.user_id },

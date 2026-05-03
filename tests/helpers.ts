@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { randomUUID } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { dropRedundantLeagueIdColumns } from '../src/migration-helpers';
@@ -183,9 +183,10 @@ export function createTestSubmission(
   overrides: Partial<{ id: string; igcSha256: string }> = {},
 ) {
   const id = overrides.id || randomUUID();
-  // Randomise sha by default so the same pilot can have multiple submissions
-  // on a task without tripping the (task_id, user_id, igc_sha256) unique idx.
-  const sha = overrides.igcSha256 || randomUUID();
+  // Random 64-char hex by default — matches the production sha256 format
+  // and lets the same pilot have multiple submissions on a task without
+  // tripping the (task_id, user_id, igc_sha256) unique index.
+  const sha = overrides.igcSha256 || randomBytes(32).toString('hex');
   db.prepare(
     `INSERT INTO flight_submissions (
        id, task_id, user_id, league_id,
