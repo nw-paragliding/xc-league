@@ -92,10 +92,7 @@ export default function MySubmissions({ taskId, totalTurnpoints }: Props) {
             {data.map((sub) => {
               const f = sub.thisSubmission;
               return (
-                <tr
-                  key={sub.id}
-                  style={{ background: sub.isCurrentBest ? 'rgba(59,130,246,0.07)' : undefined }}
-                >
+                <tr key={sub.id} style={{ background: sub.isCurrentBest ? 'rgba(59,130,246,0.07)' : undefined }}>
                   <td style={{ ...TD, fontFamily: 'var(--font-mono)', color: 'var(--text2)' }}>
                     {fmtDateTime(sub.submittedAt)}
                   </td>
