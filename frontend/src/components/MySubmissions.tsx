@@ -120,7 +120,12 @@ export default function MySubmissions({ taskId, totalTurnpoints }: Props) {
                       <>
                         {reachedLabel(f, totalTurnpoints)}
                         {f.hasFlaggedCrossings && (
-                          <span style={{ marginLeft: 6, color: 'var(--warning)' }} title="Unconfirmed crossing">
+                          <span
+                            role="img"
+                            aria-label="Unconfirmed turnpoint crossing"
+                            title="Unconfirmed crossing"
+                            style={{ marginLeft: 6, color: 'var(--warning)' }}
+                          >
                             ⚑
                           </span>
                         )}

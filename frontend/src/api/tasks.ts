@@ -65,10 +65,19 @@ export interface Submission {
   igcDate: string | null;
   bestAttempt: AttemptResult;
   allAttempts: AttemptResult[];
-  /** Facts about *this* submission's own best attempt (not the leaderboard's). */
-  thisSubmission: SubmissionAttemptFacts | null;
-  /** True iff this submission's best attempt is the one currently on the leaderboard. */
-  isCurrentBest: boolean;
+  /**
+   * Facts about *this* submission's own best attempt (not the leaderboard's).
+   * Optional because the POST upload response doesn't populate it (only the
+   * GET list does), and even on GET it's null when fs.best_attempt_id hasn't
+   * been set yet (mid-processing).
+   */
+  thisSubmission?: SubmissionAttemptFacts | null;
+  /**
+   * True iff this submission's best attempt is the one currently on the
+   * leaderboard. Optional for the same reason as thisSubmission — only the
+   * GET list response populates it.
+   */
+  isCurrentBest?: boolean;
   timePointsProvisional: boolean;
 }
 
