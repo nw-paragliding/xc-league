@@ -180,17 +180,20 @@ export function createTestSubmission(
   taskId: string,
   userId: string,
   leagueId: string,
-  overrides: Partial<{ id: string }> = {},
+  overrides: Partial<{ id: string; igcSha256: string }> = {},
 ) {
   const id = overrides.id || randomUUID();
+  // Randomise sha by default so the same pilot can have multiple submissions
+  // on a task without tripping the (task_id, user_id, igc_sha256) unique idx.
+  const sha = overrides.igcSha256 || randomUUID();
   db.prepare(
     `INSERT INTO flight_submissions (
        id, task_id, user_id, league_id,
        igc_data, igc_filename, igc_size_bytes, igc_sha256,
        status, submitted_at, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, '', 'test.igc', 0, 'abc', 'PROCESSED',
+     ) VALUES (?, ?, ?, ?, '', 'test.igc', 0, ?, 'PROCESSED',
                datetime('now'), datetime('now'), datetime('now'))`,
-  ).run(id, taskId, userId, leagueId);
+  ).run(id, taskId, userId, leagueId, sha);
   return id;
 }
 
