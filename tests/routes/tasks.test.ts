@@ -20,6 +20,7 @@ import {
   createTestSeason,
   createTestSubmission,
   createTestTask,
+  createTestTaskResult,
   createTestUser,
   setupTestDatabase,
 } from '../helpers';
@@ -1322,7 +1323,7 @@ describe('GOAL_LINE import — goal_line_bearing_deg persistence', () => {
 // Admin submission moderation — DELETE /tasks/:taskId/submissions/:submissionId
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Submission moderation — DELETE /submissions/:submissionId', () => {
+describe('Submission moderation — DELETE /tasks/:taskId/submissions/:submissionId', () => {
   let app: ReturnType<typeof Fastify>;
   let db: ReturnType<typeof getTestDb>;
   let adminUser: ReturnType<typeof createTestUser>;
@@ -1360,12 +1361,11 @@ describe('Submission moderation — DELETE /submissions/:submissionId', () => {
       distanceFlownKm: 12.3,
     });
     // Seed the cache so we can verify rebuildTaskResults actually fired.
-    db.prepare(
-      `INSERT INTO task_results (id, task_id, user_id, best_attempt_id, distance_flown_km,
-         reached_goal, distance_points, time_points, total_points, has_flagged_crossings, rank,
-         last_computed_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 12.3, 0, 100, 0, 100, 0, 1, datetime('now'), datetime('now'), datetime('now'))`,
-    ).run(randomUUID(), testTask.id, pilotUser.id, attemptId);
+    createTestTaskResult(db, testTask.id, pilotUser.id, testLeague.id, attemptId, {
+      distanceFlownKm: 12.3,
+      distancePoints: 100,
+      totalPoints: 100,
+    });
 
     const res = await app.inject({
       method: 'DELETE',
