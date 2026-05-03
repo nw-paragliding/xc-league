@@ -5,16 +5,20 @@
 // Auth is bypassed in test mode via x-test-user-id header.
 // =============================================================================
 
+import { randomUUID } from 'crypto';
 import Fastify from 'fastify';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { authPlugin, loadAuthConfig } from '../../src/auth';
+import { rebuildTaskResults } from '../../src/job-queue';
 import { registerLeagueRoutes } from '../../src/routes/leagues';
 import { buildXctrackDeepLink, type ExportTask, encodeXctskZ } from '../../src/task-exporters';
 import { parseCup, parseXctsk } from '../../src/task-parsers';
 import {
   addLeagueMember,
+  createTestAttempt,
   createTestLeague,
   createTestSeason,
+  createTestSubmission,
   createTestTask,
   createTestUser,
   setupTestDatabase,
@@ -1311,5 +1315,156 @@ describe('GOAL_LINE import — goal_line_bearing_deg persistence', () => {
     expect(goalTp).toBeTruthy();
     expect(goalTp.goalLineBearingDeg).not.toBeNull();
     expect(typeof goalTp.goalLineBearingDeg).toBe('number');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin submission moderation — DELETE /tasks/:taskId/submissions/:submissionId
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Submission moderation — DELETE /submissions/:submissionId', () => {
+  let app: ReturnType<typeof Fastify>;
+  let db: ReturnType<typeof getTestDb>;
+  let adminUser: ReturnType<typeof createTestUser>;
+  let pilotUser: ReturnType<typeof createTestUser>;
+  let otherPilot: ReturnType<typeof createTestUser>;
+  let testLeague: ReturnType<typeof createTestLeague>;
+  let testSeason: ReturnType<typeof createTestSeason>;
+  let testTask: ReturnType<typeof createTestTask>;
+
+  beforeEach(async () => {
+    resetTestDb();
+    db = getTestDb();
+    setupTestDatabase(db);
+
+    adminUser = createTestUser(db, { email: 'admin@test.com' });
+    pilotUser = createTestUser(db, { email: 'pilot@test.com' });
+    otherPilot = createTestUser(db, { email: 'other@test.com' });
+    testLeague = createTestLeague(db, { slug: 'test-league' });
+    testSeason = createTestSeason(db, testLeague.id);
+    testTask = createTestTask(db, testSeason.id, testLeague.id);
+
+    addLeagueMember(db, testLeague.id, adminUser.id, 'admin');
+    addLeagueMember(db, testLeague.id, pilotUser.id, 'pilot');
+    addLeagueMember(db, testLeague.id, otherPilot.id, 'pilot');
+
+    app = await buildTestApp(db);
+  });
+
+  const deleteUrl = (submissionId: string) =>
+    `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${testTask.id}/submissions/${submissionId}`;
+
+  it('soft-deletes the submission + linked attempts and rebuilds task_results', async () => {
+    const submissionId = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    const attemptId = createTestAttempt(db, submissionId, testTask.id, pilotUser.id, testLeague.id, {
+      distanceFlownKm: 12.3,
+    });
+    // Seed the cache so we can verify rebuildTaskResults actually fired.
+    db.prepare(
+      `INSERT INTO task_results (id, task_id, user_id, best_attempt_id, distance_flown_km,
+         reached_goal, distance_points, time_points, total_points, has_flagged_crossings, rank,
+         last_computed_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 12.3, 0, 100, 0, 100, 0, 1, datetime('now'), datetime('now'), datetime('now'))`,
+    ).run(randomUUID(), testTask.id, pilotUser.id, attemptId);
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(submissionId),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).message).toMatch(/deleted/i);
+
+    const sub = db.prepare(`SELECT deleted_at FROM flight_submissions WHERE id = ?`).get(submissionId) as any;
+    expect(sub.deleted_at).not.toBeNull();
+
+    const att = db.prepare(`SELECT deleted_at FROM flight_attempts WHERE id = ?`).get(attemptId) as any;
+    expect(att.deleted_at).not.toBeNull();
+
+    // Pilot was the only entrant — rebuildTaskResults drops the row.
+    const trCount = db
+      .prepare(`SELECT COUNT(*) AS c FROM task_results WHERE task_id = ? AND user_id = ?`)
+      .get(testTask.id, pilotUser.id) as any;
+    expect(trCount.c).toBe(0);
+  });
+
+  it('promotes the next-best attempt when the deleted submission held the lead', async () => {
+    // Same pilot, two submissions: 20 km (best) and 5 km. Delete the 20 km one
+    // and the pilot's task_results row should now reflect the 5 km attempt.
+    const subBest = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    createTestAttempt(db, subBest, testTask.id, pilotUser.id, testLeague.id, { distanceFlownKm: 20 });
+
+    const subWorse = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    const worseAttempt = createTestAttempt(db, subWorse, testTask.id, pilotUser.id, testLeague.id, {
+      distanceFlownKm: 5,
+    });
+
+    // Prime task_results with the current best so we can confirm the rebuild
+    // moved the pointer.
+    rebuildTaskResults(db, testTask.id);
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(subBest),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const tr = db
+      .prepare(`SELECT best_attempt_id, distance_flown_km FROM task_results WHERE task_id = ? AND user_id = ?`)
+      .get(testTask.id, pilotUser.id) as any;
+    expect(tr.best_attempt_id).toBe(worseAttempt);
+    expect(tr.distance_flown_km).toBe(5);
+  });
+
+  it('leaves other pilots untouched', async () => {
+    const subPilot = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    createTestAttempt(db, subPilot, testTask.id, pilotUser.id, testLeague.id, { distanceFlownKm: 10 });
+    const subOther = createTestSubmission(db, testTask.id, otherPilot.id, testLeague.id);
+    createTestAttempt(db, subOther, testTask.id, otherPilot.id, testLeague.id, { distanceFlownKm: 8 });
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(subPilot),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+
+    expect(res.statusCode).toBe(200);
+
+    const otherSub = db.prepare(`SELECT deleted_at FROM flight_submissions WHERE id = ?`).get(subOther) as any;
+    expect(otherSub.deleted_at).toBeNull();
+  });
+
+  it('returns 403 when a pilot tries to delete', async () => {
+    const submissionId = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(submissionId),
+      headers: { 'x-test-user-id': pilotUser.id },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('returns 404 when the submission does not belong to the URL task', async () => {
+    const otherTask = createTestTask(db, testSeason.id, testLeague.id, { id: randomUUID() });
+    const submissionId = createTestSubmission(db, otherTask.id, pilotUser.id, testLeague.id);
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(submissionId),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 404 when the submission is already soft-deleted (idempotency guard)', async () => {
+    const submissionId = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    db.prepare(`UPDATE flight_submissions SET deleted_at = datetime('now') WHERE id = ?`).run(submissionId);
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(submissionId),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+    expect(res.statusCode).toBe(404);
   });
 });
