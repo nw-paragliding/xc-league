@@ -4,10 +4,12 @@ import { authPlugin, loadAuthConfig } from '../../src/auth';
 import { registerLeagueRoutes } from '../../src/routes/leagues';
 import {
   addLeagueMember,
+  createTestAttempt,
   createTestLeague,
   createTestSeason,
   createTestSubmission,
   createTestTask,
+  createTestTaskResult,
   createTestUser,
   setupTestDatabase,
 } from '../helpers';
@@ -165,13 +167,22 @@ describe('Season Management API', () => {
       expect(deleted.deleted_at).not.toBeNull();
     });
 
-    // #35: cascade soft-delete to child tasks (and their children).
-    it('cascades soft-delete to child tasks and their submissions', async () => {
+    // #35: cascade soft-delete to child tasks (and their children — every
+    // table the task-level cascade touches).
+    it('cascades soft-delete to child tasks and the full per-task chain', async () => {
       const season = createTestSeason(db, testLeague.id);
       const taskA = createTestTask(db, season.id, testLeague.id);
       const taskB = createTestTask(db, season.id, testLeague.id);
+
+      // taskA: full chain — submission → attempt → task_results.
       const subA = createTestSubmission(db, taskA.id, regularUser.id, testLeague.id);
+      const attemptA = createTestAttempt(db, subA, taskA.id, regularUser.id, testLeague.id, { distanceFlownKm: 12 });
+      createTestTaskResult(db, taskA.id, regularUser.id, testLeague.id, attemptA);
+
+      // taskB: full chain too, so we cover both.
       const subB = createTestSubmission(db, taskB.id, regularUser.id, testLeague.id);
+      const attemptB = createTestAttempt(db, subB, taskB.id, regularUser.id, testLeague.id, { distanceFlownKm: 8 });
+      createTestTaskResult(db, taskB.id, regularUser.id, testLeague.id, attemptB);
 
       const response = await app.inject({
         method: 'DELETE',
@@ -181,15 +192,55 @@ describe('Season Management API', () => {
 
       expect(response.statusCode).toBe(200);
 
+      // Tasks soft-deleted.
       const taskARow = db.prepare('SELECT deleted_at FROM tasks WHERE id = ?').get(taskA.id);
       const taskBRow = db.prepare('SELECT deleted_at FROM tasks WHERE id = ?').get(taskB.id);
       expect(taskARow.deleted_at).not.toBeNull();
       expect(taskBRow.deleted_at).not.toBeNull();
 
+      // Submissions soft-deleted.
       const subARow = db.prepare('SELECT deleted_at FROM flight_submissions WHERE id = ?').get(subA);
       const subBRow = db.prepare('SELECT deleted_at FROM flight_submissions WHERE id = ?').get(subB);
       expect(subARow.deleted_at).not.toBeNull();
       expect(subBRow.deleted_at).not.toBeNull();
+
+      // Attempts soft-deleted.
+      const attemptARow = db.prepare('SELECT deleted_at FROM flight_attempts WHERE id = ?').get(attemptA);
+      const attemptBRow = db.prepare('SELECT deleted_at FROM flight_attempts WHERE id = ?').get(attemptB);
+      expect(attemptARow.deleted_at).not.toBeNull();
+      expect(attemptBRow.deleted_at).not.toBeNull();
+
+      // task_results hard-deleted (no deleted_at column).
+      const trCountA = db.prepare('SELECT COUNT(*) AS c FROM task_results WHERE task_id = ?').get(taskA.id) as any;
+      const trCountB = db.prepare('SELECT COUNT(*) AS c FROM task_results WHERE task_id = ?').get(taskB.id) as any;
+      expect(trCountA.c).toBe(0);
+      expect(trCountB.c).toBe(0);
+    });
+
+    // Defensive: tasks.league_id is denormalised and not constrained to match
+    // seasons.league_id. The cascade must scope by league_id so a corrupted
+    // row in another league can't be reached.
+    it('does not cascade across leagues even with a corrupted task.league_id', async () => {
+      const otherLeague = createTestLeague(db, { name: 'Other League', slug: 'other-league' });
+      addLeagueMember(db, otherLeague.id, adminUser.id, 'admin');
+      const season = createTestSeason(db, testLeague.id);
+      const otherSeason = createTestSeason(db, otherLeague.id);
+      const otherTask = createTestTask(db, otherSeason.id, otherLeague.id);
+
+      // Simulate corruption: a row whose season_id points at testLeague's
+      // season but whose league_id stays on otherLeague.
+      db.prepare(`UPDATE tasks SET season_id = ? WHERE id = ?`).run(season.id, otherTask.id);
+
+      const response = await app.inject({
+        method: 'DELETE',
+        url: `/leagues/${testLeague.slug}/seasons/${season.id}`,
+        headers: { 'x-test-user-id': adminUser.id },
+      });
+
+      expect(response.statusCode).toBe(200);
+
+      const otherTaskRow = db.prepare('SELECT deleted_at FROM tasks WHERE id = ?').get(otherTask.id);
+      expect(otherTaskRow.deleted_at).toBeNull();
     });
 
     // Tasks already soft-deleted before the season delete should not be

@@ -229,12 +229,15 @@ CREATE UNIQUE INDEX idx_submissions_dedup ON flight_submissions (task_id, user_i
 -- Flight attempts: one per detected attempt within an IGC file.
 --
 -- INVARIANT (#36): every code path that mutates flight_attempts (insert,
--- update, soft-delete) MUST follow up with rebuildTaskResults(db, task_id)
--- in the same transaction. task_results is a computed cache derived from
--- the live (non-deleted) attempts; if you skip the rebuild, the
--- leaderboard silently goes stale. There is no DB-level trigger enforcing
--- this — it's a convention. Current callers: src/upload.ts (post-insert),
--- the task-DELETE cascade, and the submission-DELETE cascade.
+-- update, soft-delete) MUST, in the same transaction, either
+--   (a) call rebuildTaskResults(db, task_id) to refresh the cache, OR
+--   (b) hard-delete every task_results row for the affected task_id.
+-- task_results is a computed cache; doing neither leaves it pointing at
+-- non-existent or stale attempts and the leaderboard silently lies.
+-- There is no DB-level trigger enforcing this — it's a convention.
+-- Current callers: src/upload.ts uses (a) post-insert; the task-DELETE
+-- handler (src/routes/leagues.ts) uses (b) since the task itself is
+-- going away.
 CREATE TABLE flight_attempts (
     id                          TEXT        PRIMARY KEY,  -- UUID
     submission_id               TEXT        NOT NULL REFERENCES flight_submissions (id),
@@ -274,11 +277,13 @@ CREATE INDEX idx_attempts_task_goal  ON flight_attempts (task_id, reached_goal) 
 
 -- Turnpoint crossings: one row per TP successfully crossed in an attempt.
 --
--- No deleted_at column (#33): live read paths always join through
--- flight_attempts and filter on flight_attempts.deleted_at IS NULL, which
--- transitively excludes crossings of soft-deleted attempts. Audit / cleanup
--- queries that touch turnpoint_crossings directly must therefore join via
--- flight_attempts.deleted_at — querying the table in isolation will see
+-- No deleted_at column (#33): live read paths gate the lookup upstream —
+-- they only fetch crossings for attempt_ids sourced from task_results
+-- (e.g. the track endpoint reads tc.attempt_id from
+-- task_results.best_attempt_id) or by joining through flight_attempts
+-- with a deleted_at IS NULL filter. Either gate transitively excludes
+-- crossings of soft-deleted attempts. New audit / cleanup queries that
+-- query turnpoint_crossings directly without one of those gates will see
 -- phantom crossings of soft-deleted parents.
 CREATE TABLE turnpoint_crossings (
     id                      TEXT        PRIMARY KEY,  -- UUID
