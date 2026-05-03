@@ -14,6 +14,7 @@ import { tasksApi } from '../api/tasks';
 import type { ReplayFix } from '../api/track';
 import { trackApi } from '../api/track';
 import LeagueSwitcher from '../components/LeagueSwitcher';
+import MySubmissions from '../components/MySubmissions';
 import ScoringExplainer from '../components/ScoringExplainer';
 import StandingsMatrix from '../components/StandingsMatrix';
 import TaskLeaderboard from '../components/TaskLeaderboard';
@@ -178,6 +179,10 @@ function TaskLeftPanel({
 
       {/* Upload zone */}
       <UploadZone taskId={task.id} taskStatus={taskStatus} task={task} />
+
+      {/* Pilot's per-submission breakdown — only renders if the viewer is a
+          logged-in league member with at least one submission on this task. */}
+      {myId && <MySubmissions taskId={task.id} totalTurnpoints={task.turnpoints.length} />}
     </>
   );
 }

@@ -41,6 +41,21 @@ export interface AttemptResult {
   turnpointsCrossed: number;
 }
 
+/**
+ * Per-submission attempt facts. Same shape as AttemptResult minus the score
+ * fields — those would mix submission-time numbers with the live per-pilot
+ * scoring and could read as stale or impossible. The leaderboard's
+ * `bestAttempt` is the source of truth for points.
+ */
+export interface SubmissionAttemptFacts {
+  attemptIndex: number;
+  reachedGoal: boolean;
+  distanceFlownKm: number;
+  lastTurnpointIndex: number;
+  taskTimeS: number | null;
+  hasFlaggedCrossings: boolean;
+}
+
 export interface Submission {
   id: string;
   status: 'PROCESSED' | 'INVALID' | 'PENDING' | 'PROCESSING' | 'ERROR';
@@ -50,6 +65,10 @@ export interface Submission {
   igcDate: string | null;
   bestAttempt: AttemptResult;
   allAttempts: AttemptResult[];
+  /** Facts about *this* submission's own best attempt (not the leaderboard's). */
+  thisSubmission: SubmissionAttemptFacts | null;
+  /** True iff this submission's best attempt is the one currently on the leaderboard. */
+  isCurrentBest: boolean;
   timePointsProvisional: boolean;
 }
 

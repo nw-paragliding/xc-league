@@ -297,27 +297,38 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       const userId = (request as any).user!.userId;
       const league = (request as any).league;
 
-      // Each row shows the pilot's *current* task state (their best attempt
-      // across all submissions for this task, scored against the live
-      // best-distance + goal-times set). Both the score columns and the
-      // attempt metadata are sourced via tr.best_attempt_id so attempt_index
-      // and turnpointsCrossed always describe the same attempt that produced
-      // the score — no risk of mixing metadata from one submission with
-      // scores from another. Every submission row therefore carries the
-      // same bestAttempt; that's correct because scoring is per-pilot
-      // per-task, not per-submission.
+      // Two attempt views per row:
+      //   bestAttempt   — the pilot's current overall best for the task,
+      //                   sourced via tr.best_attempt_id. Same on every row
+      //                   because scoring is per-pilot, not per-submission;
+      //                   matches the leaderboard.
+      //   thisSubmission — facts about *this specific* submission's own best
+      //                   detected attempt (joined via fs.best_attempt_id).
+      //                   No score fields — those would re-derive stale numbers
+      //                   (live scoring depends on every other pilot's flights).
+      //   isCurrentBest  — true iff this submission produced the attempt the
+      //                   leaderboard is currently using.
       const rows = db
         .prepare(
           `SELECT fs.id, fs.status, fs.igc_filename, fs.igc_size_bytes, fs.submitted_at, fs.igc_date,
+                fs.best_attempt_id          AS submission_best_attempt_id,
                 tr.reached_goal, tr.distance_flown_km, tr.task_time_s,
                 tr.distance_points, tr.time_points, tr.total_points,
                 tr.has_flagged_crossings,
+                tr.best_attempt_id          AS pilot_best_attempt_id,
                 fa.attempt_index, fa.last_turnpoint_index,
+                fas.attempt_index           AS sub_attempt_index,
+                fas.reached_goal            AS sub_reached_goal,
+                fas.distance_flown_km       AS sub_distance_flown_km,
+                fas.task_time_s             AS sub_task_time_s,
+                fas.last_turnpoint_index    AS sub_last_turnpoint_index,
+                fas.has_flagged_crossings   AS sub_has_flagged_crossings,
                 t.close_date AS task_close_date
          FROM flight_submissions fs
-         LEFT JOIN task_results tr ON tr.task_id = fs.task_id AND tr.user_id = fs.user_id
-         LEFT JOIN flight_attempts fa ON fa.id = tr.best_attempt_id
-         JOIN tasks t ON t.id = fs.task_id
+         LEFT JOIN task_results tr     ON tr.task_id = fs.task_id AND tr.user_id = fs.user_id
+         LEFT JOIN flight_attempts fa  ON fa.id  = tr.best_attempt_id
+         LEFT JOIN flight_attempts fas ON fas.id = fs.best_attempt_id AND fas.deleted_at IS NULL
+         JOIN tasks t   ON t.id = fs.task_id
          JOIN seasons s ON s.id = t.season_id
          WHERE fs.task_id = ? AND s.id = ? AND s.league_id = ?
            AND fs.user_id = ? AND fs.deleted_at IS NULL
@@ -342,6 +353,23 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
               }
             : null;
 
+        const thisSubmission =
+          row.sub_attempt_index != null
+            ? {
+                attemptIndex: row.sub_attempt_index,
+                reachedGoal: Boolean(row.sub_reached_goal),
+                distanceFlownKm: row.sub_distance_flown_km ?? 0,
+                lastTurnpointIndex: row.sub_last_turnpoint_index ?? 0,
+                taskTimeS: row.sub_task_time_s ?? null,
+                hasFlaggedCrossings: Boolean(row.sub_has_flagged_crossings),
+              }
+            : null;
+
+        const isCurrentBest =
+          row.submission_best_attempt_id != null &&
+          row.pilot_best_attempt_id != null &&
+          row.submission_best_attempt_id === row.pilot_best_attempt_id;
+
         const taskOpen = now <= new Date(row.task_close_date);
         return {
           id: row.id,
@@ -352,6 +380,8 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
           igcDate: row.igc_date ?? null,
           bestAttempt,
           allAttempts: bestAttempt ? [bestAttempt] : [],
+          thisSubmission,
+          isCurrentBest,
           // Scores can change while the task is open (any new upload may shift
           // the best distance or goal-times set and rescore everyone).
           timePointsProvisional: taskOpen,
