@@ -957,9 +957,13 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
           `UPDATE seasons SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
         ).run(seasonId);
 
+        // Filter on league_id too — tasks.league_id is denormalised and not
+        // constrained to match seasons.league_id at the DB level, so a
+        // corrupted row could otherwise let a season-delete reach across
+        // the tenant boundary.
         const childTaskIds = db
-          .prepare(`SELECT id FROM tasks WHERE season_id = ? AND deleted_at IS NULL`)
-          .all(seasonId) as Array<{ id: string }>;
+          .prepare(`SELECT id FROM tasks WHERE season_id = ? AND league_id = ? AND deleted_at IS NULL`)
+          .all(seasonId, league.id) as Array<{ id: string }>;
 
         for (const { id: taskId } of childTaskIds) {
           db.prepare(
