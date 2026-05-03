@@ -1069,9 +1069,9 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       // duplicated here intentionally — pulling it into a helper would obscure
       // that the task delete route already does this for the single-task case.
       db.transaction(() => {
-        db.prepare(
-          `UPDATE seasons SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
-        ).run(seasonId);
+        db.prepare(`UPDATE seasons SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(
+          seasonId,
+        );
 
         // Filter on league_id too — tasks.league_id is denormalised and not
         // constrained to match seasons.league_id at the DB level, so a
@@ -1082,12 +1082,12 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
           .all(seasonId, league.id) as Array<{ id: string }>;
 
         for (const { id: taskId } of childTaskIds) {
-          db.prepare(
-            `UPDATE tasks SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
-          ).run(taskId);
-          db.prepare(
-            `UPDATE turnpoints SET deleted_at = datetime('now') WHERE task_id = ? AND deleted_at IS NULL`,
-          ).run(taskId);
+          db.prepare(`UPDATE tasks SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(
+            taskId,
+          );
+          db.prepare(`UPDATE turnpoints SET deleted_at = datetime('now') WHERE task_id = ? AND deleted_at IS NULL`).run(
+            taskId,
+          );
           db.prepare(
             `UPDATE flight_submissions SET deleted_at = datetime('now') WHERE task_id = ? AND deleted_at IS NULL`,
           ).run(taskId);
