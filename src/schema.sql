@@ -226,7 +226,15 @@ CREATE INDEX idx_submissions_status ON flight_submissions (status)           WHE
 -- Duplicate detection: same pilot cannot upload the same file content twice for the same task
 CREATE UNIQUE INDEX idx_submissions_dedup ON flight_submissions (task_id, user_id, igc_sha256) WHERE deleted_at IS NULL;
 
--- Flight attempts: one per detected attempt within an IGC file
+-- Flight attempts: one per detected attempt within an IGC file.
+--
+-- INVARIANT (#36): every code path that mutates flight_attempts (insert,
+-- update, soft-delete) MUST follow up with rebuildTaskResults(db, task_id)
+-- in the same transaction. task_results is a computed cache derived from
+-- the live (non-deleted) attempts; if you skip the rebuild, the
+-- leaderboard silently goes stale. There is no DB-level trigger enforcing
+-- this — it's a convention. Current callers: src/upload.ts (post-insert),
+-- the task-DELETE cascade, and the submission-DELETE cascade.
 CREATE TABLE flight_attempts (
     id                          TEXT        PRIMARY KEY,  -- UUID
     submission_id               TEXT        NOT NULL REFERENCES flight_submissions (id),
@@ -264,7 +272,14 @@ CREATE INDEX idx_attempts_submission ON flight_attempts (submission_id)         
 CREATE INDEX idx_attempts_task_user  ON flight_attempts (task_id, user_id)       WHERE deleted_at IS NULL;
 CREATE INDEX idx_attempts_task_goal  ON flight_attempts (task_id, reached_goal)  WHERE deleted_at IS NULL;
 
--- Turnpoint crossings: one row per TP successfully crossed in an attempt
+-- Turnpoint crossings: one row per TP successfully crossed in an attempt.
+--
+-- No deleted_at column (#33): live read paths always join through
+-- flight_attempts and filter on flight_attempts.deleted_at IS NULL, which
+-- transitively excludes crossings of soft-deleted attempts. Audit / cleanup
+-- queries that touch turnpoint_crossings directly must therefore join via
+-- flight_attempts.deleted_at — querying the table in isolation will see
+-- phantom crossings of soft-deleted parents.
 CREATE TABLE turnpoint_crossings (
     id                      TEXT        PRIMARY KEY,  -- UUID
     attempt_id              TEXT        NOT NULL REFERENCES flight_attempts (id),
