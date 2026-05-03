@@ -1693,6 +1693,26 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         }
       }
 
+      // open_date / close_date are locked once submissions exist. Moving the
+      // window can retroactively invalidate flights — validateFlightDate
+      // rejects an IGC whose flightDate falls outside [open_date, close_date],
+      // so a future re-process would silently mark them ineligible.
+      // Admins who need to retime a task with submissions should soft-delete
+      // the offending submissions first (DELETE …/submissions/:id, #34).
+      const datesChanged =
+        (body.openDate !== undefined && body.openDate !== existingTask.open_date) ||
+        (body.closeDate !== undefined && body.closeDate !== existingTask.close_date);
+      if (datesChanged) {
+        const { c: submissionCount } = db
+          .prepare(`SELECT COUNT(*) AS c FROM flight_submissions WHERE task_id = ? AND deleted_at IS NULL`)
+          .get(taskId) as { c: number };
+        if (submissionCount > 0) {
+          return reply.status(400).send({
+            error: 'Cannot change open_date or close_date while submissions exist for this task. Delete or remove submissions first.',
+          });
+        }
+      }
+
       // Build update query dynamically
       const updates: string[] = [];
       const params: any[] = [];

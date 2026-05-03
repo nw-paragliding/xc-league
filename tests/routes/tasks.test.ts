@@ -664,6 +664,119 @@ describe('Task lifecycle — POST publish + closed-task edit guard', () => {
     const row = db.prepare(`SELECT name FROM tasks WHERE id = ?`).get(task.id) as any;
     expect(row.name).toBe('Renamed before close');
   });
+
+  // open_date / close_date guard (#40): moving the window can retroactively
+  // invalidate flights, so it's locked when submissions exist.
+  describe('open_date / close_date guard (#40)', () => {
+    const dayMs = 24 * 60 * 60 * 1000;
+    const openIso = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(); // 6h ago
+    const closeIso = new Date(Date.now() + 7 * dayMs).toISOString();
+
+    it('allows changing open_date when no submissions exist', async () => {
+      const task = createTestTask(db, testSeason.id, testLeague.id, { openDate: openIso, closeDate: closeIso });
+      const newOpen = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${task.id}`,
+        headers: { 'x-test-user-id': adminUser.id, 'content-type': 'application/json' },
+        payload: JSON.stringify({ openDate: newOpen }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      const row = db.prepare(`SELECT open_date FROM tasks WHERE id = ?`).get(task.id) as any;
+      expect(row.open_date).toBe(newOpen);
+    });
+
+    it('rejects open_date change when submissions exist', async () => {
+      const task = createTestTask(db, testSeason.id, testLeague.id, { openDate: openIso, closeDate: closeIso });
+      createTestSubmission(db, task.id, pilotUser.id, testLeague.id);
+
+      const newOpen = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${task.id}`,
+        headers: { 'x-test-user-id': adminUser.id, 'content-type': 'application/json' },
+        payload: JSON.stringify({ openDate: newOpen }),
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).error).toMatch(/open_date.*close_date/i);
+      const row = db.prepare(`SELECT open_date FROM tasks WHERE id = ?`).get(task.id) as any;
+      expect(row.open_date).toBe(openIso);
+    });
+
+    it('rejects close_date change when submissions exist', async () => {
+      const task = createTestTask(db, testSeason.id, testLeague.id, { openDate: openIso, closeDate: closeIso });
+      createTestSubmission(db, task.id, pilotUser.id, testLeague.id);
+
+      const newClose = new Date(Date.now() + 14 * dayMs).toISOString();
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${task.id}`,
+        headers: { 'x-test-user-id': adminUser.id, 'content-type': 'application/json' },
+        payload: JSON.stringify({ closeDate: newClose }),
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('allows non-date edits (e.g. name) even when submissions exist', async () => {
+      const task = createTestTask(db, testSeason.id, testLeague.id, { openDate: openIso, closeDate: closeIso });
+      createTestSubmission(db, task.id, pilotUser.id, testLeague.id);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${task.id}`,
+        headers: { 'x-test-user-id': adminUser.id, 'content-type': 'application/json' },
+        payload: JSON.stringify({ name: 'New name with submissions' }),
+      });
+
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('allows submitting the same open_date value (no-op) even with submissions', async () => {
+      const task = createTestTask(db, testSeason.id, testLeague.id, { openDate: openIso, closeDate: closeIso });
+      createTestSubmission(db, task.id, pilotUser.id, testLeague.id);
+
+      // Send the existing value — guard should pass through since the value
+      // didn't actually change.
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${task.id}`,
+        headers: { 'x-test-user-id': adminUser.id, 'content-type': 'application/json' },
+        payload: JSON.stringify({ openDate: openIso }),
+      });
+
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('open_date becomes editable again after the submission is soft-deleted', async () => {
+      const task = createTestTask(db, testSeason.id, testLeague.id, { openDate: openIso, closeDate: closeIso });
+      const submissionId = createTestSubmission(db, task.id, pilotUser.id, testLeague.id);
+
+      // Use the #34 admin endpoint to remove the submission.
+      const delRes = await app.inject({
+        method: 'DELETE',
+        url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${task.id}/submissions/${submissionId}`,
+        headers: { 'x-test-user-id': adminUser.id },
+      });
+      expect(delRes.statusCode).toBe(200);
+
+      // Now the lock should release.
+      const newOpen = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${task.id}`,
+        headers: { 'x-test-user-id': adminUser.id, 'content-type': 'application/json' },
+        payload: JSON.stringify({ openDate: newOpen }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      const row = db.prepare(`SELECT open_date FROM tasks WHERE id = ?`).get(task.id) as any;
+      expect(row.open_date).toBe(newOpen);
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
