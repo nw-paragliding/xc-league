@@ -521,6 +521,28 @@
  */
 
 /**
+ * DELETE /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId
+ * Auth: league admin
+ *
+ * Soft-deletes a single pilot submission (admin moderation). Useful for
+ * removing a cheating or invalid upload without nuking the entire task.
+ *
+ * Cascade (in one txn):
+ *   1. flight_submissions.deleted_at = now
+ *   2. flight_attempts.deleted_at = now (all attempts in this submission)
+ *   3. rebuildTaskResults — pilot's task_results row is recomputed from
+ *      their remaining attempts, or dropped if this was their only one.
+ *
+ * Response 200:
+ *   { message: 'Submission deleted' }
+ *
+ * Response 403: caller is not a league admin
+ * Response 404: submission not found, already deleted, or doesn't belong
+ *   to the URL's task/season/league (also returned when a concurrent
+ *   delete wins the race for the same submission).
+ */
+
+/**
  * GET /api/v1/leagues/:leagueSlug/seasons/:seasonId/tasks/:taskId/submissions/:submissionId/track
  * Auth: not required — tracks are part of the public competition record
  *   alongside the public leaderboard.
