@@ -957,6 +957,16 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
           seasonId,
         );
 
+        // Soft-delete season-level children too (season_registrations).
+        // Same rationale as tasks: read paths already filter via the parent
+        // season's deleted_at, but cascading keeps the data hierarchy
+        // consistent and stops queries like "registered_pilot_count" from
+        // returning non-zero for a season that's been deleted.
+        db.prepare(
+          `UPDATE season_registrations SET deleted_at = datetime('now'), updated_at = datetime('now')
+           WHERE season_id = ? AND deleted_at IS NULL`,
+        ).run(seasonId);
+
         // Filter on league_id too — tasks.league_id is denormalised and not
         // constrained to match seasons.league_id at the DB level, so a
         // corrupted row could otherwise let a season-delete reach across

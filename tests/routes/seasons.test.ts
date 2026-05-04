@@ -179,11 +179,18 @@ describe('Season Management API', () => {
     });
 
     // #35: cascade soft-delete to child tasks (and their children — every
-    // table the task-level cascade touches).
+    // table the task-level cascade touches) plus season_registrations.
     it('cascades soft-delete to child tasks and the full per-task chain', async () => {
       const season = createTestSeason(db, testLeague.id);
       const taskA = createTestTask(db, season.id, testLeague.id);
       const taskB = createTestTask(db, season.id, testLeague.id);
+
+      // Season-level child: a registration row.
+      const registrationId = randomUUID();
+      db.prepare(
+        `INSERT INTO season_registrations (id, season_id, user_id, registered_at, created_at, updated_at)
+         VALUES (?, ?, ?, datetime('now'), datetime('now'), datetime('now'))`,
+      ).run(registrationId, season.id, regularUser.id);
 
       // taskA: full chain — turnpoint + submission → attempt → task_results.
       const turnpointA = addTurnpoint(db, taskA.id);
@@ -231,6 +238,10 @@ describe('Season Management API', () => {
       // Turnpoints soft-deleted.
       const tpRow = db.prepare('SELECT deleted_at FROM turnpoints WHERE id = ?').get(turnpointA);
       expect(tpRow.deleted_at).not.toBeNull();
+
+      // Season registration soft-deleted.
+      const regRow = db.prepare('SELECT deleted_at FROM season_registrations WHERE id = ?').get(registrationId);
+      expect(regRow.deleted_at).not.toBeNull();
     });
 
     // Defensive: tasks.league_id is denormalised and not constrained to match
