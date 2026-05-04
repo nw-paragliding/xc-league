@@ -228,17 +228,24 @@ CREATE UNIQUE INDEX idx_submissions_dedup ON flight_submissions (task_id, user_i
 
 -- Flight attempts: one per detected attempt within an IGC file.
 --
--- INVARIANT (#36): every code path that mutates flight_attempts (insert,
--- update, soft-delete) MUST, in the same transaction, either
---   (a) call rebuildTaskResults(db, task_id) to refresh the cache, OR
---   (b) hard-delete every task_results row for the affected task_id.
--- task_results is a computed cache; doing neither leaves it pointing at
--- non-existent or stale attempts and the leaderboard silently lies.
--- There is no DB-level trigger enforcing this — it's a convention.
--- New write paths must pick (a) or (b) depending on whether downstream
--- consumers should still see scoring for this task. Search the repo for
--- `rebuildTaskResults(` and `DELETE FROM task_results` to find the
--- existing call sites.
+-- INVARIANT (#36): task_results is a computed cache derived from the live
+-- (non-deleted) flight_attempts. Every code path that mutates
+-- flight_attempts MUST keep that consistency before the next read. Three
+-- patterns satisfy this — pick the one that fits:
+--   (a) Call rebuildTaskResults(db, task_id) in the same transaction —
+--       refreshes the whole task. Used by src/upload.ts after insert.
+--   (b) Hard-delete every task_results row for the affected task_id —
+--       the task is going away. Used by the task-DELETE handler.
+--   (c) Delete only the task_results rows that reference attempts you're
+--       about to remove, AND guarantee a full rebuild runs before the
+--       data is served. Used by src/reprocess.ts: per-submission cleanup
+--       skips the per-task O(N²) cost; server.ts runs the boot-time
+--       sweep over every task afterward.
+-- There is no DB-level trigger enforcing this — it's a convention. Doing
+-- none of (a)/(b)/(c) leaves task_results pointing at stale or
+-- non-existent attempts and the leaderboard silently lies. Search the
+-- repo for `rebuildTaskResults(` and `DELETE FROM task_results` to find
+-- the existing call sites.
 CREATE TABLE flight_attempts (
     id                          TEXT        PRIMARY KEY,  -- UUID
     submission_id               TEXT        NOT NULL REFERENCES flight_submissions (id),
