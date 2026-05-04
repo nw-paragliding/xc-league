@@ -127,7 +127,10 @@ describe('GET /tasks/:taskId/submissions — per-submission breakdown (#41)', ()
   });
 
   it('thisSubmission is null when fs.best_attempt_id has not been set yet', async () => {
-    // Brand-new submission, processing not yet wired up its best_attempt_id.
+    // Submission row exists without a best_attempt_id link — the test is
+    // exercising the join, not the status field, so it doesn't matter that
+    // the helper marks the row PROCESSED. Production hits this state mid-
+    // processing or when scoring fails before best_attempt_id is set.
     createTestSubmission(db, testTask.id, pilot.id, testLeague.id);
 
     const res = await app.inject({

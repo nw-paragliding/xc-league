@@ -489,7 +489,9 @@
  *       igcSizeBytes: number,
  *       igcDate: string | null,
  *       bestAttempt: AttemptResult | null,        // pilot's overall best (matches the leaderboard); same on every row
- *       allAttempts: Array<AttemptResult>,
+ *       allAttempts: Array<AttemptResult>,         // currently always [bestAttempt] or [] — single-element compatibility shim,
+ *                                                  //   not the full per-submission attempt list. Use thisSubmission for
+ *                                                  //   per-submission facts; the multi-attempt array is reserved for future use.
  *       thisSubmission: {                          // facts about this specific submission's own best attempt
  *         attemptIndex: number,
  *         reachedGoal: boolean,
