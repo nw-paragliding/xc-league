@@ -14,6 +14,7 @@ import { tasksApi } from '../api/tasks';
 import type { ReplayFix } from '../api/track';
 import { trackApi } from '../api/track';
 import LeagueSwitcher from '../components/LeagueSwitcher';
+import MySubmissions from '../components/MySubmissions';
 import ScoringExplainer from '../components/ScoringExplainer';
 import StandingsMatrix from '../components/StandingsMatrix';
 import TaskLeaderboard from '../components/TaskLeaderboard';
@@ -178,6 +179,14 @@ function TaskLeftPanel({
 
       {/* Upload zone */}
       <UploadZone taskId={task.id} taskStatus={taskStatus} task={task} />
+
+      {/* Pilot's per-submission breakdown — only mounts for logged-in viewers.
+          GET /submissions returns 403 for logged-in non-members of the league;
+          MySubmissions handles that by silently rendering null. We don't gate on
+          membership here because the User type doesn't carry memberships, and a
+          one-off 403'd request per task-panel view by a non-member is cheaper
+          than fetching the member list just to suppress it. */}
+      {myId && <MySubmissions taskId={task.id} totalTurnpoints={task.turnpoints.length} />}
     </>
   );
 }
