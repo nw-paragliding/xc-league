@@ -547,10 +547,12 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
   // touch point.
   const markerCtxRef = useRef<Array<{ anchor: [number, number]; center: [number, number] }>>([]);
 
-  // Distance in pixels to offset the label centre from the touch point along
-  // the outward radial. 18 px gives clearance over the 3-px strict ring stroke
-  // plus the dashed ground border, with a bit of breathing room.
-  const OUTWARD_PX = 18;
+  // Clearance in pixels between the cylinder ring (and the route line passing
+  // through the touch point) and the *nearest edge* of the label. The actual
+  // outward offset is computed per-marker as labelHalfExtent + CLEARANCE so a
+  // wide name like "Tiger Launch" gets pushed further out than a short "D1"
+  // when both are placed horizontally outward of their cylinders.
+  const LABEL_CLEARANCE_PX = 16;
 
   // Label placement: apply the radial outward offset, then greedy collision
   // resolution. For each marker (in route order), if its bounding box overlaps
@@ -563,13 +565,22 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     const ctxs = markerCtxRef.current;
     if (!map || markers.length < 1) return;
 
-    // Baseline = radial outward offset, in pixels. Recomputed every pass
-    // because the projection of anchor and centre changes with zoom.
+    // Baseline = radial outward offset, in pixels. Size-aware: the offset is
+    // labelHalfExtent + LABEL_CLEARANCE_PX where labelHalfExtent is the label's
+    // half-rectangle projected onto the outward direction. That way a wide
+    // label placed horizontally outward gets enough room that its inner edge
+    // sits the desired clearance away from the ring, not its centre.
+    // Recomputed every pass — projection changes with zoom.
     const baselines: Array<[number, number]> = [];
     for (let i = 0; i < markers.length; i++) {
       const ctx = ctxs[i];
+      const el = markers[i].getElement();
+      const halfW = el.offsetWidth / 2;
+      const halfH = el.offsetHeight / 2;
+      // Fallback: place above the anchor by half-height + clearance.
+      const fallback: [number, number] = [0, -(halfH + LABEL_CLEARANCE_PX)];
       if (!ctx) {
-        baselines.push([0, -OUTWARD_PX]);
+        baselines.push(fallback);
         continue;
       }
       const aPx = map.project(ctx.anchor);
@@ -577,7 +588,19 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       const dx = aPx.x - cPx.x;
       const dy = aPx.y - cPx.y;
       const len = Math.hypot(dx, dy);
-      baselines.push(len < 0.5 ? [0, -OUTWARD_PX] : [(dx / len) * OUTWARD_PX, (dy / len) * OUTWARD_PX]);
+      if (len < 0.5) {
+        baselines.push(fallback);
+        continue;
+      }
+      const ux = dx / len;
+      const uy = dy / len;
+      // Projection of the label's half-rect onto the outward direction:
+      // halfW * |ux| + halfH * |uy| gives the distance from the centre to the
+      // edge along (ux, uy). Adding LABEL_CLEARANCE_PX is the gap from that
+      // edge to the cylinder ring (and the route line through that point).
+      const labelHalfExtent = halfW * Math.abs(ux) + halfH * Math.abs(uy);
+      const total = labelHalfExtent + LABEL_CLEARANCE_PX;
+      baselines.push([ux * total, uy * total]);
     }
     for (let i = 0; i < markers.length; i++) markers[i].setOffset(baselines[i]);
 
@@ -698,7 +721,9 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
           : ([group.lng, group.lat] as [number, number]);
       const center: [number, number] = [group.lng, group.lat];
 
-      const marker = new maplibregl.Marker({ element: el, anchor: 'center', offset: [0, -OUTWARD_PX] })
+      // Placeholder offset — dedupeLabels recomputes a size-aware outward
+      // offset on the next frame.
+      const marker = new maplibregl.Marker({ element: el, anchor: 'center', offset: [0, -LABEL_CLEARANCE_PX] })
         .setLngLat(anchor)
         .addTo(map);
       markersRef.current.push(marker);
