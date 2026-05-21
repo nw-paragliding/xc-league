@@ -485,8 +485,23 @@
  *       id: string,
  *       status: string,
  *       submittedAt: string,
- *       bestAttempt: AttemptResult | null,
- *       allAttempts: Array<AttemptResult>,
+ *       igcFilename: string,
+ *       igcSizeBytes: number,
+ *       igcDate: string | null,
+ *       bestAttempt: AttemptResult | null,        // pilot's overall best (matches the leaderboard); same on every row
+ *       allAttempts: Array<AttemptResult>,         // currently always [bestAttempt] or [] — single-element compatibility shim,
+ *                                                  //   not the full per-submission attempt list. Use thisSubmission for
+ *                                                  //   per-submission facts; the multi-attempt array is reserved for future use.
+ *       thisSubmission: {                          // facts about this specific submission's own best attempt
+ *         attemptIndex: number,
+ *         reachedGoal: boolean,
+ *         distanceFlownKm: number,
+ *         lastTurnpointIndex: number,
+ *         taskTimeS: number | null,
+ *         hasFlaggedCrossings: boolean,
+ *       } | null,                                  // null when fs.best_attempt_id hasn't been set (mid-processing)
+ *       isCurrentBest: boolean,                    // true iff this submission produced the attempt the leaderboard is using
+ *       timePointsProvisional: boolean,            // scores can shift while the task is open
  *     }>
  *   }
  */
