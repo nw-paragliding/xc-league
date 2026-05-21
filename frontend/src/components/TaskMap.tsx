@@ -41,14 +41,15 @@ function hideIrrelevantLayers(map: maplibregl.Map) {
   }
 }
 
-// Palette: blue SSS, green ESS/Goal, pink for intermediate turnpoints, and
-// vivid orange for ground-only. The ground colour used to be a muted earthy
-// brown that read too close to the intermediate amber — pilots couldn't tell
-// at a glance which cylinders required a touchdown. The pink/orange split
-// pushes those two categories far apart in hue + saturation.
+// Palette: four distinct fill hues, one per role. Greens are deliberately
+// out — they wash into terrain on the outdoor basemap. Force-ground state
+// (orthogonal to role) is encoded by the border, not the fill, so a ground
+// SSS reads as "blue with a dashed border" instead of losing its role to a
+// flat overlay colour.
 function tpColor(type: string) {
-  if (type === 'SSS') return '#4a9eff';
-  if (type === 'ESS' || type === 'GOAL_CYLINDER' || type === 'GOAL_LINE') return '#5db87a';
+  if (type === 'SSS') return SSS_COLOR;
+  if (type === 'ESS') return ESS_COLOR;
+  if (type === 'GOAL_CYLINDER' || type === 'GOAL_LINE') return GOAL_COLOR;
   return REGULAR_TP_COLOR;
 }
 
@@ -74,11 +75,21 @@ function toCylinder(tp: Turnpoint): Cylinder {
   };
 }
 
+const SSS_COLOR = '#4a9eff'; // blue
+const ESS_COLOR = '#a855f7'; // purple — distinct from blue start and gold goal
+const GOAL_COLOR = '#eab308'; // amber — "finish line" celebratory cue
 const REGULAR_TP_COLOR = '#ec4899'; // pink — intermediate cylinders
-const GROUND_COLOR = '#f97316'; // vivid orange — force-ground TPs (any role)
 
 const LOCATION_TOL = 1e-4;
-const COLOR_PRI: Record<string, number> = { '#4a9eff': 3, '#5db87a': 2, [REGULAR_TP_COLOR]: 1 };
+// Used when two TPs sit at the same point at the same radius — render the
+// higher-priority role. SSS (start) wins over ESS/Goal (end-of-flight roles),
+// which win over a plain intermediate cylinder.
+const COLOR_PRI: Record<string, number> = {
+  [SSS_COLOR]: 4,
+  [GOAL_COLOR]: 3,
+  [ESS_COLOR]: 2,
+  [REGULAR_TP_COLOR]: 1,
+};
 
 interface TpEntry {
   role: string;
@@ -346,7 +357,7 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       mk('path', {
         d: `${bufD} ${d}`,
         'fill-rule': 'evenodd',
-        fill: '#5db87a',
+        fill: GOAL_COLOR,
         'fill-opacity': 0.5,
         stroke: 'none',
       });
@@ -358,14 +369,17 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
         'stroke-width': 8,
         'stroke-linejoin': 'round',
       });
-      mk('path', {
+      // Goal-line boundary follows the same solid/dashed rule as cylinders:
+      // dashed only when the goal is force-ground.
+      const goalLineAttrs: Record<string, string | number> = {
         d,
-        fill: 'rgba(93,184,122,0.15)',
-        stroke: '#5db87a',
+        fill: GOAL_COLOR + '28',
+        stroke: GOAL_COLOR,
         'stroke-width': 3,
-        'stroke-dasharray': '10 5',
         'stroke-linejoin': 'round',
-      });
+      };
+      if (lastTp.forceGround === true) goalLineAttrs['stroke-dasharray'] = '10 6';
+      mk('path', goalLineAttrs);
     }
 
     // ── 3. IGC track line ─────────────────────────────────────────────────────
@@ -405,13 +419,14 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       }
     }
 
-    // ── 5. Coloured dashed rings + FAI §9.1.3 tolerance buffer ───────────────
-    // Role colour shows on the fill (preserves SSS/ESS/Goal at-a-glance); the
-    // stroke switches to earthy brown with a tighter dash for force-ground TPs.
-    // Outside each strict ring we shade the annular band between r and
-    // r + tagToleranceM(r) (max(5 m, 0.5 % of r)) — that's the band the
-    // scoring pipeline actually accepts for tag detection. Drawn first so
-    // the strict ring's stroke and translucent fill sit on top.
+    // ── 5. Coloured rings + FAI §9.1.3 tolerance buffer ──────────────────────
+    // Fill colour encodes role (SSS / ESS / Goal / regular); border style
+    // encodes ground-vs-not (solid = normal, dashed = force-ground). Keeping
+    // the role colour on every channel means a ground SSS still reads as
+    // blue — you don't have to remember which earth-tone overlay belongs to
+    // which role. Outside each strict ring we shade the annular band between
+    // r and r + tagToleranceM(r) (max(5 m, 0.5 % of r)) — the band the
+    // scoring pipeline actually accepts for tag detection.
     for (const group of groups) {
       for (const { radiusM, color, forceGround } of mergeCircles(group.entries.filter((e) => !e.isGoalLine))) {
         const { r } = projR(group.lng, group.lat, radiusM);
@@ -423,25 +438,27 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
         // shade the band rather than drawing a thin ring — much more
         // visible on big cylinders and still tolerable on small ones. No
         // `stroke` here on purpose: a stroke would paint both subpaths and
-        // the inner stroke at r would land on top of the dashed strict ring
-        // below, filling in its dash gaps.
+        // the inner stroke at r would land on top of the strict ring's
+        // stroke below, muddying it.
         const bufferRadiusM = radiusM + tagToleranceM(radiusM);
         mk('path', {
           d: `${cylinderPath(group.lng, group.lat, bufferRadiusM)} ${cylinderPath(group.lng, group.lat, radiusM)}`,
           'fill-rule': 'evenodd',
-          fill: forceGround ? GROUND_COLOR : color,
+          fill: color,
           'fill-opacity': 0.5,
           stroke: 'none',
         });
 
         // Strict cylinder boundary (the scored-distance edge).
-        mk('path', {
+        // Dashed when force-ground, solid otherwise.
+        const ringAttrs: Record<string, string | number> = {
           d: cylinderPath(group.lng, group.lat, radiusM),
           fill: color + '28',
-          stroke: forceGround ? GROUND_COLOR : color,
+          stroke: color,
           'stroke-width': 3,
-          'stroke-dasharray': forceGround ? '3 5' : '10 5',
-        });
+        };
+        if (forceGround) ringAttrs['stroke-dasharray'] = '10 6';
+        mk('path', ringAttrs);
       }
     }
 
@@ -680,27 +697,53 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
         }}
       >
         {[
-          { color: '#4a9eff', label: 'SSS', tooltip: 'Start of Speed Section — the clock starts on exit.' },
           {
+            kind: 'dot' as const,
+            color: SSS_COLOR,
+            label: 'SSS',
+            tooltip: 'Start of Speed Section — the clock starts on exit.',
+          },
+          {
+            kind: 'dot' as const,
             color: REGULAR_TP_COLOR,
             label: 'Turnpoint',
             tooltip: 'Intermediate turnpoint — pilots must enter this cylinder.',
           },
           {
-            color: '#5db87a',
-            label: 'ESS / Goal',
-            tooltip: 'End of Speed Section / Goal — crossing ESS stops the clock.',
+            kind: 'dot' as const,
+            color: ESS_COLOR,
+            label: 'ESS',
+            tooltip: 'End of Speed Section — crossing this stops the clock.',
           },
           {
-            color: GROUND_COLOR,
+            kind: 'dot' as const,
+            color: GOAL_COLOR,
+            label: 'Goal',
+            tooltip: 'Goal — the finish line of the task.',
+          },
+          {
+            kind: 'dashed-ring' as const,
+            color: 'rgba(255,255,255,0.85)',
             label: 'Ground-only',
             tooltip:
-              'Hike-and-fly: pilot must arrive on foot (GPS speed must fall below the threshold during the crossing). Marked with [GND] in the task file.',
+              'Hike-and-fly: pilot must arrive on foot (GPS speed must fall below the threshold during the crossing). Marked with [GND] in the task file. Shown with a dashed border on top of the role colour.',
           },
-        ].map(({ color, label, tooltip }) => (
+        ].map(({ kind, color, label, tooltip }) => (
           <div key={label} style={{ position: 'relative' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+              {kind === 'dashed-ring' ? (
+                <div
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: '50%',
+                    border: `1.5px dashed ${color}`,
+                    flexShrink: 0,
+                  }}
+                />
+              ) : (
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+              )}
               <span style={{ fontSize: 10, fontFamily: '"DM Mono", monospace', color: 'rgba(255,255,255,0.75)' }}>
                 {label}
               </span>
