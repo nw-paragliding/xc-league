@@ -468,21 +468,6 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       }
     }
 
-    // ── 6. Center dots ────────────────────────────────────────────────────────
-    for (const group of groups) {
-      const c = map.project([group.lng, group.lat]);
-      const dotColor =
-        [...group.entries].sort((a, b) => (COLOR_PRI[b.color] ?? 0) - (COLOR_PRI[a.color] ?? 0))[0]?.color ??
-        REGULAR_TP_COLOR;
-      mk('circle', {
-        cx: c.x.toFixed(1),
-        cy: c.y.toFixed(1),
-        r: 5,
-        fill: dotColor,
-        stroke: 'rgba(0,0,0,0.7)',
-        'stroke-width': 2,
-      });
-    }
   }, []);
 
   useEffect(() => {
@@ -554,6 +539,38 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     if (map.isStyleLoaded()) apply();
     else map.once('style.load', apply);
   }, [airspace, mapReady]);
+
+  // Marker collision avoidance. After labels are placed at touch points,
+  // sweep through them in route order and push later markers down (via the
+  // marker offset, in pixel space) far enough that their bounding box clears
+  // every earlier marker. Greedy O(N²) is fine for N < 50 typical turnpoint
+  // counts. Resets each marker's offset to the baseline first so successive
+  // re-runs (e.g. on zoom) don't compound shifts from prior passes.
+  const BASELINE_OFFSET_Y = -10;
+  const dedupeLabels = useCallback(() => {
+    const markers = markersRef.current;
+    if (markers.length < 2) return;
+
+    for (const m of markers) m.setOffset([0, BASELINE_OFFSET_Y]);
+
+    const rects = markers.map((m) => m.getElement().getBoundingClientRect());
+    for (let i = 1; i < markers.length; i++) {
+      let pushDown = 0;
+      for (let j = 0; j < i; j++) {
+        const a = rects[i];
+        const b = rects[j];
+        const overlap = !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
+        if (overlap) {
+          const need = b.bottom - a.top + 4;
+          if (need > pushDown) pushDown = need;
+        }
+      }
+      if (pushDown > 0) {
+        markers[i].setOffset([0, BASELINE_OFFSET_Y + pushDown]);
+        rects[i] = markers[i].getElement().getBoundingClientRect();
+      }
+    }
+  }, []);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -644,8 +661,36 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
 
     drawSvg();
     const tid = setTimeout(drawSvg, 700);
-    return () => clearTimeout(tid);
-  }, [turnpoints, mapReady, drawSvg]);
+    // Wait one frame for markers to paint before we measure for collisions.
+    const rafId = requestAnimationFrame(dedupeLabels);
+    return () => {
+      clearTimeout(tid);
+      cancelAnimationFrame(rafId);
+    };
+  }, [turnpoints, mapReady, drawSvg, dedupeLabels]);
+
+  // Re-run collision avoidance on zoom + resize. Pan doesn't change pixel
+  // distances between geo-anchored markers, so it's not hooked. rAF-coalesced
+  // so a continuous zoom interaction does at most one dedupe per frame.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    let pending = false;
+    const onChange = () => {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        dedupeLabels();
+      });
+    };
+    map.on('zoom', onChange);
+    map.on('resize', onChange);
+    return () => {
+      map.off('zoom', onChange);
+      map.off('resize', onChange);
+    };
+  }, [mapReady, dedupeLabels]);
 
   // Redraw when track changes (no map move needed)
   useEffect(() => {
