@@ -80,6 +80,13 @@ const ESS_COLOR = '#a855f7'; // purple — distinct from blue start and gold goa
 const GOAL_COLOR = '#eab308'; // amber — "finish line" celebratory cue
 const REGULAR_TP_COLOR = '#ec4899'; // pink — intermediate cylinders
 
+// Clearance in pixels between the cylinder ring (and the route line passing
+// through the touch point) and the *nearest edge* of the label. The actual
+// outward offset is computed per-marker as labelHalfExtent + CLEARANCE so a
+// wide name like "Tiger Launch" gets pushed further out than a short "D1"
+// when both are placed horizontally outward of their cylinders.
+const LABEL_CLEARANCE_PX = 16;
+
 const LOCATION_TOL = 1e-4;
 // Used when two TPs sit at the same point at the same radius — render the
 // higher-priority role. SSS (start) wins over ESS/Goal (end-of-flight roles),
@@ -546,13 +553,6 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
   // strict ring stroke and the optimised route line passing through that
   // touch point.
   const markerCtxRef = useRef<Array<{ anchor: [number, number]; center: [number, number] }>>([]);
-
-  // Clearance in pixels between the cylinder ring (and the route line passing
-  // through the touch point) and the *nearest edge* of the label. The actual
-  // outward offset is computed per-marker as labelHalfExtent + CLEARANCE so a
-  // wide name like "Tiger Launch" gets pushed further out than a short "D1"
-  // when both are placed horizontally outward of their cylinders.
-  const LABEL_CLEARANCE_PX = 16;
 
   // Label placement: apply the radial outward offset, then greedy collision
   // resolution. For each marker (in route order), if its bounding box overlaps
