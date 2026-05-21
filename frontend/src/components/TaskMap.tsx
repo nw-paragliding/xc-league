@@ -41,10 +41,16 @@ function hideIrrelevantLayers(map: maplibregl.Map) {
   }
 }
 
+// Palette: four distinct fill hues, one per role. Greens are deliberately
+// out — they wash into terrain on the outdoor basemap. Force-ground state
+// (orthogonal to role) is encoded by the border, not the fill, so a ground
+// SSS reads as "blue with a dashed border" instead of losing its role to a
+// flat overlay colour.
 function tpColor(type: string) {
-  if (type === 'SSS') return '#4a9eff';
-  if (type === 'ESS' || type === 'GOAL_CYLINDER' || type === 'GOAL_LINE') return '#5db87a';
-  return '#e8a842';
+  if (type === 'SSS') return SSS_COLOR;
+  if (type === 'ESS') return ESS_COLOR;
+  if (type === 'GOAL_CYLINDER' || type === 'GOAL_LINE') return GOAL_COLOR;
+  return REGULAR_TP_COLOR;
 }
 
 function tpRole(tp: Turnpoint, cylIndex: number): string {
@@ -69,10 +75,28 @@ function toCylinder(tp: Turnpoint): Cylinder {
   };
 }
 
-const GROUND_COLOR = '#a97c50';
+const SSS_COLOR = '#4a9eff'; // blue
+const ESS_COLOR = '#a855f7'; // purple — distinct from blue start and gold goal
+const GOAL_COLOR = '#eab308'; // amber — "finish line" celebratory cue
+const REGULAR_TP_COLOR = '#ec4899'; // pink — intermediate cylinders
+
+// Clearance in pixels between the cylinder ring (and the route line passing
+// through the touch point) and the *nearest edge* of the label. The actual
+// outward offset is computed per-marker as labelHalfExtent + CLEARANCE so a
+// wide name like "Tiger Launch" gets pushed further out than a short "D1"
+// when both are placed horizontally outward of their cylinders.
+const LABEL_CLEARANCE_PX = 16;
 
 const LOCATION_TOL = 1e-4;
-const COLOR_PRI: Record<string, number> = { '#4a9eff': 3, '#5db87a': 2, '#e8a842': 1 };
+// Used when two TPs sit at the same point at the same radius — render the
+// higher-priority role. SSS (start) wins over ESS/Goal (end-of-flight roles),
+// which win over a plain intermediate cylinder.
+const COLOR_PRI: Record<string, number> = {
+  [SSS_COLOR]: 4,
+  [GOAL_COLOR]: 3,
+  [ESS_COLOR]: 2,
+  [REGULAR_TP_COLOR]: 1,
+};
 
 interface TpEntry {
   role: string;
@@ -80,6 +104,10 @@ interface TpEntry {
   radiusM: number;
   isGoalLine: boolean;
   forceGround: boolean;
+  /** Index back into the original turnpoints[] array. Used to look up the
+   *  optimised route's touch point so the marker label can sit on the route
+   *  line instead of in the dead centre of a giant cylinder. */
+  tpIndex: number;
 }
 interface TpGroup {
   lng: number;
@@ -91,22 +119,24 @@ interface TpGroup {
 function buildGroups(tps: Turnpoint[]): TpGroup[] {
   let cylIdx = 0;
   const groups: TpGroup[] = [];
-  for (const tp of tps) {
+  for (let i = 0; i < tps.length; i++) {
+    const tp = tps[i];
     const isPlain = tp.type !== 'SSS' && tp.type !== 'ESS' && tp.type !== 'GOAL_CYLINDER' && tp.type !== 'GOAL_LINE';
     const role = tpRole(tp, isPlain ? ++cylIdx : 0);
     const color = tpColor(tp.type);
     const isGoalLine = tp.type === 'GOAL_LINE';
     const forceGround = tp.forceGround === true;
+    const entry: TpEntry = { role, color, radiusM: tp.radiusM, isGoalLine, forceGround, tpIndex: i };
     const g = groups.find(
       (g) => Math.abs(g.lng - tp.longitude) < LOCATION_TOL && Math.abs(g.lat - tp.latitude) < LOCATION_TOL,
     );
-    if (g) g.entries.push({ role, color, radiusM: tp.radiusM, isGoalLine, forceGround });
+    if (g) g.entries.push(entry);
     else
       groups.push({
         lng: tp.longitude,
         lat: tp.latitude,
         name: tp.name,
-        entries: [{ role, color, radiusM: tp.radiusM, isGoalLine, forceGround }],
+        entries: [entry],
       });
   }
   return groups;
@@ -340,7 +370,7 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       mk('path', {
         d: `${bufD} ${d}`,
         'fill-rule': 'evenodd',
-        fill: '#5db87a',
+        fill: GOAL_COLOR,
         'fill-opacity': 0.5,
         stroke: 'none',
       });
@@ -352,14 +382,17 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
         'stroke-width': 8,
         'stroke-linejoin': 'round',
       });
-      mk('path', {
+      // Goal-line boundary follows the same solid/dashed rule as cylinders:
+      // dashed only when the goal is force-ground.
+      const goalLineAttrs: Record<string, string | number> = {
         d,
-        fill: 'rgba(93,184,122,0.15)',
-        stroke: '#5db87a',
+        fill: GOAL_COLOR + '28',
+        stroke: GOAL_COLOR,
         'stroke-width': 3,
-        'stroke-dasharray': '10 5',
         'stroke-linejoin': 'round',
-      });
+      };
+      if (lastTp.forceGround === true) goalLineAttrs['stroke-dasharray'] = '10 6';
+      mk('path', goalLineAttrs);
     }
 
     // ── 3. IGC track line ─────────────────────────────────────────────────────
@@ -399,13 +432,14 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       }
     }
 
-    // ── 5. Coloured dashed rings + FAI §9.1.3 tolerance buffer ───────────────
-    // Role colour shows on the fill (preserves SSS/ESS/Goal at-a-glance); the
-    // stroke switches to earthy brown with a tighter dash for force-ground TPs.
-    // Outside each strict ring we shade the annular band between r and
-    // r + tagToleranceM(r) (max(5 m, 0.5 % of r)) — that's the band the
-    // scoring pipeline actually accepts for tag detection. Drawn first so
-    // the strict ring's stroke and translucent fill sit on top.
+    // ── 5. Coloured rings + FAI §9.1.3 tolerance buffer ──────────────────────
+    // Fill colour encodes role (SSS / ESS / Goal / regular); border style
+    // encodes ground-vs-not (solid = normal, dashed = force-ground). Keeping
+    // the role colour on every channel means a ground SSS still reads as
+    // blue — you don't have to remember which earth-tone overlay belongs to
+    // which role. Outside each strict ring we shade the annular band between
+    // r and r + tagToleranceM(r) (max(5 m, 0.5 % of r)) — the band the
+    // scoring pipeline actually accepts for tag detection.
     for (const group of groups) {
       for (const { radiusM, color, forceGround } of mergeCircles(group.entries.filter((e) => !e.isGoalLine))) {
         const { r } = projR(group.lng, group.lat, radiusM);
@@ -417,41 +451,28 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
         // shade the band rather than drawing a thin ring — much more
         // visible on big cylinders and still tolerable on small ones. No
         // `stroke` here on purpose: a stroke would paint both subpaths and
-        // the inner stroke at r would land on top of the dashed strict ring
-        // below, filling in its dash gaps.
+        // the inner stroke at r would land on top of the strict ring's
+        // stroke below, muddying it.
         const bufferRadiusM = radiusM + tagToleranceM(radiusM);
         mk('path', {
           d: `${cylinderPath(group.lng, group.lat, bufferRadiusM)} ${cylinderPath(group.lng, group.lat, radiusM)}`,
           'fill-rule': 'evenodd',
-          fill: forceGround ? GROUND_COLOR : color,
+          fill: color,
           'fill-opacity': 0.5,
           stroke: 'none',
         });
 
         // Strict cylinder boundary (the scored-distance edge).
-        mk('path', {
+        // Dashed when force-ground, solid otherwise.
+        const ringAttrs: Record<string, string | number> = {
           d: cylinderPath(group.lng, group.lat, radiusM),
           fill: color + '28',
-          stroke: forceGround ? GROUND_COLOR : color,
+          stroke: color,
           'stroke-width': 3,
-          'stroke-dasharray': forceGround ? '3 5' : '10 5',
-        });
+        };
+        if (forceGround) ringAttrs['stroke-dasharray'] = '10 6';
+        mk('path', ringAttrs);
       }
-    }
-
-    // ── 6. Center dots ────────────────────────────────────────────────────────
-    for (const group of groups) {
-      const c = map.project([group.lng, group.lat]);
-      const dotColor =
-        [...group.entries].sort((a, b) => (COLOR_PRI[b.color] ?? 0) - (COLOR_PRI[a.color] ?? 0))[0]?.color ?? '#e8a842';
-      mk('circle', {
-        cx: c.x.toFixed(1),
-        cy: c.y.toFixed(1),
-        r: 5,
-        fill: dotColor,
-        stroke: 'rgba(0,0,0,0.7)',
-        'stroke-width': 2,
-      });
     }
   }, []);
 
@@ -525,52 +546,188 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     else map.once('style.load', apply);
   }, [airspace, mapReady]);
 
+  // Per-marker context for label placement. anchor is the touch-point lng/lat
+  // (where the marker is geo-anchored); center is the cylinder centre. The
+  // outward direction from centre → anchor in pixel space defines the preferred
+  // label offset (radially outside the cylinder), so the label clears both the
+  // strict ring stroke and the optimised route line passing through that
+  // touch point.
+  const markerCtxRef = useRef<Array<{ anchor: [number, number]; center: [number, number] }>>([]);
+
+  // Label placement: apply the radial outward offset, then greedy collision
+  // resolution. For each marker (in route order), if its bounding box overlaps
+  // an earlier marker's, shift it further along its outward direction until it
+  // clears. Re-runs on zoom/resize so it stays correct as pixel distances
+  // between geo-anchored markers change.
+  const dedupeLabels = useCallback(() => {
+    const map = mapRef.current;
+    const markers = markersRef.current;
+    const ctxs = markerCtxRef.current;
+    if (!map || markers.length < 1) return;
+
+    // Baseline = radial outward offset, in pixels. Size-aware: the offset is
+    // labelHalfExtent + LABEL_CLEARANCE_PX where labelHalfExtent is the label's
+    // half-rectangle projected onto the outward direction. That way a wide
+    // label placed horizontally outward gets enough room that its inner edge
+    // sits the desired clearance away from the ring, not its centre.
+    // Recomputed every pass — projection changes with zoom.
+    const baselines: Array<[number, number]> = [];
+    for (let i = 0; i < markers.length; i++) {
+      const ctx = ctxs[i];
+      const el = markers[i].getElement();
+      const halfW = el.offsetWidth / 2;
+      const halfH = el.offsetHeight / 2;
+      // Fallback: place above the anchor by half-height + clearance.
+      const fallback: [number, number] = [0, -(halfH + LABEL_CLEARANCE_PX)];
+      if (!ctx) {
+        baselines.push(fallback);
+        continue;
+      }
+      const aPx = map.project(ctx.anchor);
+      const cPx = map.project(ctx.center);
+      const dx = aPx.x - cPx.x;
+      const dy = aPx.y - cPx.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 0.5) {
+        baselines.push(fallback);
+        continue;
+      }
+      const ux = dx / len;
+      const uy = dy / len;
+      // Projection of the label's half-rect onto the outward direction:
+      // halfW * |ux| + halfH * |uy| gives the distance from the centre to the
+      // edge along (ux, uy). Adding LABEL_CLEARANCE_PX is the gap from that
+      // edge to the cylinder ring (and the route line through that point).
+      const labelHalfExtent = halfW * Math.abs(ux) + halfH * Math.abs(uy);
+      const total = labelHalfExtent + LABEL_CLEARANCE_PX;
+      baselines.push([ux * total, uy * total]);
+    }
+    for (let i = 0; i < markers.length; i++) markers[i].setOffset(baselines[i]);
+
+    if (markers.length < 2) return;
+
+    // Greedy collision resolution: keep the marker's outward X offset (so the
+    // label still leans toward whichever side of the cylinder the route exits)
+    // and shift it purely downward by the smallest amount that clears every
+    // earlier marker. Push-down is the simplest predictable axis and matches
+    // how the dedupe worked before the radial offset landed.
+    const rects = markers.map((m) => m.getElement().getBoundingClientRect());
+    for (let i = 1; i < markers.length; i++) {
+      let pushDown = 0;
+      for (let j = 0; j < i; j++) {
+        const a = rects[i];
+        const b = rects[j];
+        const overlap = !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
+        if (overlap) {
+          const need = b.bottom - a.top + 4;
+          if (need > pushDown) pushDown = need;
+        }
+      }
+      if (pushDown > 0) {
+        const [bx, by] = baselines[i];
+        markers[i].setOffset([bx, by + pushDown]);
+        rects[i] = markers[i].getElement().getBoundingClientRect();
+      }
+    }
+  }, []);
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
 
     markersRef.current.forEach((m) => m.remove());
     markersRef.current = [];
+    markerCtxRef.current = [];
 
     const groups = buildGroups(turnpoints);
     for (const group of groups) {
       const el = document.createElement('div');
-      el.style.cssText = 'pointer-events:none;text-align:center;';
+      // z-index 10 lifts the label above the SVG overlay (which is a sibling
+      // of the MapLibre container in the wrapper div with no explicit z).
+      // Without it, the cylinder fill + tolerance band paint over the role
+      // badge and place name, making them unreadable when the cylinder is
+      // small relative to the label.
+      el.style.cssText = 'pointer-events:none;text-align:center;z-index:10;';
 
       const badgeRow = document.createElement('div');
-      badgeRow.style.cssText = 'display:flex;gap:3px;justify-content:center;margin-bottom:2px;flex-wrap:wrap;';
+      badgeRow.style.cssText = 'display:flex;gap:3px;justify-content:center;margin-bottom:3px;flex-wrap:wrap;';
       const seenRoles = new Set<string>();
       for (const { role, color } of group.entries) {
         if (seenRoles.has(role)) continue;
         seenRoles.add(role);
         const badge = document.createElement('div');
         badge.textContent = role;
+        // Dark pill + role-coloured text + matching outline. The dark fill
+        // takes the role colour off the basemap entirely so it reads on
+        // satellite, terrain, and OSM alike. Drop shadow gives a hint of
+        // separation from the cylinder fill beneath.
         badge.style.cssText = `
           display:inline-block;
-          background:${color}22;color:${color};
-          border:1px solid ${color}99;
-          font-family:"DM Mono",monospace;font-size:10px;font-weight:800;letter-spacing:0.05em;
-          padding:1px 5px;border-radius:3px;
+          background:rgba(0,0,0,0.82);
+          color:${color};
+          border:1px solid ${color}cc;
+          font-family:"DM Mono",monospace;
+          font-size:11px;
+          font-weight:700;
+          letter-spacing:0.06em;
+          padding:2px 7px;
+          border-radius:3px;
+          box-shadow:0 1px 2px rgba(0,0,0,0.4);
         `;
         badgeRow.appendChild(badge);
       }
 
+      // Place name in white with a hard dark halo — the standard cartographic
+      // label treatment (Google/OSM/Apple all variations of this). Four offset
+      // shadows form a sharp 1.2 px stroke that survives any basemap; the
+      // soft 4 px glow adds a faint backdrop where the basemap is light. Way
+      // more legible at small sizes than coloured text + soft shadow was.
       const nameEl = document.createElement('div');
       nameEl.textContent = group.name;
-      const nameColor =
-        [...group.entries].sort((a, b) => (COLOR_PRI[b.color] ?? 0) - (COLOR_PRI[a.color] ?? 0))[0]?.color ?? '#e8a842';
       nameEl.style.cssText = `
-        color:${nameColor};font-family:"DM Mono",monospace;font-size:10px;font-weight:600;
-        text-shadow:0 0 4px rgba(0,0,0,1),0 0 8px rgba(0,0,0,0.8);white-space:nowrap;
+        color:#fff;
+        font-family:"DM Mono",monospace;
+        font-size:13px;
+        font-weight:700;
+        letter-spacing:0.02em;
+        white-space:nowrap;
+        text-shadow:
+          -1.2px -1.2px 0 rgba(0,0,0,0.95),
+          1.2px -1.2px 0 rgba(0,0,0,0.95),
+          -1.2px 1.2px 0 rgba(0,0,0,0.95),
+          1.2px 1.2px 0 rgba(0,0,0,0.95),
+          0 0 4px rgba(0,0,0,0.7);
       `;
 
       el.appendChild(badgeRow);
       el.appendChild(nameEl);
 
-      const marker = new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -10] })
-        .setLngLat([group.lng, group.lat])
+      // Anchor the label at the optimised route's touch point for this
+      // turnpoint, not the cylinder centre. Big cylinders (4 km radius) put
+      // the centre kilometres from where pilots actually fly through, so a
+      // centred label is often outside the visible viewport. The route's
+      // touch point sits right on the cylinder boundary where the optimised
+      // line enters/exits — exactly where the pilot's attention is.
+      //
+      // For groups with multiple co-located turnpoints (different radii at
+      // the same lat/lng), pick the touch point from the entry with the
+      // largest radius — its touch point sits furthest from the shared
+      // centre and is least likely to overlap with smaller cylinders below.
+      const touchPoints = cachedRoute?.touchPoints;
+      const widestEntry = [...group.entries].sort((a, b) => b.radiusM - a.radiusM)[0];
+      const anchor =
+        touchPoints && widestEntry && touchPoints[widestEntry.tpIndex]
+          ? ([touchPoints[widestEntry.tpIndex].lng, touchPoints[widestEntry.tpIndex].lat] as [number, number])
+          : ([group.lng, group.lat] as [number, number]);
+      const center: [number, number] = [group.lng, group.lat];
+
+      // Placeholder offset — dedupeLabels recomputes a size-aware outward
+      // offset on the next frame.
+      const marker = new maplibregl.Marker({ element: el, anchor: 'center', offset: [0, -LABEL_CLEARANCE_PX] })
+        .setLngLat(anchor)
         .addTo(map);
       markersRef.current.push(marker);
+      markerCtxRef.current.push({ anchor, center });
     }
 
     const fitPts = cachedRoute
@@ -590,8 +747,36 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
 
     drawSvg();
     const tid = setTimeout(drawSvg, 700);
-    return () => clearTimeout(tid);
-  }, [turnpoints, mapReady, drawSvg]);
+    // Wait one frame for markers to paint before we measure for collisions.
+    const rafId = requestAnimationFrame(dedupeLabels);
+    return () => {
+      clearTimeout(tid);
+      cancelAnimationFrame(rafId);
+    };
+  }, [turnpoints, mapReady, drawSvg, dedupeLabels]);
+
+  // Re-run collision avoidance on zoom + resize. Pan doesn't change pixel
+  // distances between geo-anchored markers, so it's not hooked. rAF-coalesced
+  // so a continuous zoom interaction does at most one dedupe per frame.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    let pending = false;
+    const onChange = () => {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        dedupeLabels();
+      });
+    };
+    map.on('zoom', onChange);
+    map.on('resize', onChange);
+    return () => {
+      map.off('zoom', onChange);
+      map.off('resize', onChange);
+    };
+  }, [mapReady, dedupeLabels]);
 
   // Redraw when track changes (no map move needed)
   useEffect(() => {
@@ -603,7 +788,14 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       <svg
         ref={svgRef}
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          pointerEvents: 'none',
+          zIndex: 1,
+        }}
       />
 
       {/* Basemap + airspace toggle */}
@@ -672,27 +864,53 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
         }}
       >
         {[
-          { color: '#4a9eff', label: 'SSS', tooltip: 'Start of Speed Section — the clock starts on exit.' },
           {
-            color: '#e8a842',
+            kind: 'dot' as const,
+            color: SSS_COLOR,
+            label: 'SSS',
+            tooltip: 'Start of Speed Section — the clock starts on exit.',
+          },
+          {
+            kind: 'dot' as const,
+            color: REGULAR_TP_COLOR,
             label: 'Turnpoint',
             tooltip: 'Intermediate turnpoint — pilots must enter this cylinder.',
           },
           {
-            color: '#5db87a',
-            label: 'ESS / Goal',
-            tooltip: 'End of Speed Section / Goal — crossing ESS stops the clock.',
+            kind: 'dot' as const,
+            color: ESS_COLOR,
+            label: 'ESS',
+            tooltip: 'End of Speed Section — crossing this stops the clock.',
           },
           {
-            color: GROUND_COLOR,
+            kind: 'dot' as const,
+            color: GOAL_COLOR,
+            label: 'Goal',
+            tooltip: 'Goal — the finish line of the task.',
+          },
+          {
+            kind: 'dashed-ring' as const,
+            color: 'rgba(255,255,255,0.85)',
             label: 'Ground-only',
             tooltip:
-              'Hike-and-fly: pilot must arrive on foot (GPS speed must fall below the threshold during the crossing). Marked with [GND] in the task file.',
+              'Hike-and-fly: pilot must touch down somewhere inside the cylinder — a sustained 20 s window of low ground speed counts, so flying in, landing on a hillside, and relaunching is valid. Marked with [GND] in the task file. Shown with a dashed border on top of the role colour.',
           },
-        ].map(({ color, label, tooltip }) => (
+        ].map(({ kind, color, label, tooltip }) => (
           <div key={label} style={{ position: 'relative' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+              {kind === 'dashed-ring' ? (
+                <div
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: '50%',
+                    border: `1.5px dashed ${color}`,
+                    flexShrink: 0,
+                  }}
+                />
+              ) : (
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+              )}
               <span style={{ fontSize: 10, fontFamily: '"DM Mono", monospace', color: 'rgba(255,255,255,0.75)' }}>
                 {label}
               </span>
