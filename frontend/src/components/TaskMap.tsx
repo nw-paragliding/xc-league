@@ -583,33 +583,26 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
 
     if (markers.length < 2) return;
 
-    // Greedy collision resolution. Push the colliding marker further along its
-    // outward direction; if its outward is mostly horizontal (radial ≈ ±x),
-    // there's no vertical room to push so fall back to a downward shift.
+    // Greedy collision resolution: keep the marker's outward X offset (so the
+    // label still leans toward whichever side of the cylinder the route exits)
+    // and shift it purely downward by the smallest amount that clears every
+    // earlier marker. Push-down is the simplest predictable axis and matches
+    // how the dedupe worked before the radial offset landed.
     const rects = markers.map((m) => m.getElement().getBoundingClientRect());
     for (let i = 1; i < markers.length; i++) {
-      let extra = 0;
+      let pushDown = 0;
       for (let j = 0; j < i; j++) {
         const a = rects[i];
         const b = rects[j];
         const overlap = !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
         if (overlap) {
           const need = b.bottom - a.top + 4;
-          if (need > extra) extra = need;
+          if (need > pushDown) pushDown = need;
         }
       }
-      if (extra > 0) {
+      if (pushDown > 0) {
         const [bx, by] = baselines[i];
-        const len = Math.hypot(bx, by);
-        // Prefer pushing along the outward direction; if outward is too
-        // horizontal (|by| ≪ |bx|), the vertical room is tiny — just push
-        // straight down by `extra`.
-        if (len > 0.5 && Math.abs(by) > 4) {
-          const scale = extra / Math.abs(by);
-          markers[i].setOffset([bx + bx * scale, by + by * scale]);
-        } else {
-          markers[i].setOffset([bx, by + extra]);
-        }
+        markers[i].setOffset([bx, by + pushDown]);
         rects[i] = markers[i].getElement().getBoundingClientRect();
       }
     }
