@@ -97,6 +97,10 @@ interface TpEntry {
   radiusM: number;
   isGoalLine: boolean;
   forceGround: boolean;
+  /** Index back into the original turnpoints[] array. Used to look up the
+   *  optimised route's touch point so the marker label can sit on the route
+   *  line instead of in the dead centre of a giant cylinder. */
+  tpIndex: number;
 }
 interface TpGroup {
   lng: number;
@@ -108,22 +112,24 @@ interface TpGroup {
 function buildGroups(tps: Turnpoint[]): TpGroup[] {
   let cylIdx = 0;
   const groups: TpGroup[] = [];
-  for (const tp of tps) {
+  for (let i = 0; i < tps.length; i++) {
+    const tp = tps[i];
     const isPlain = tp.type !== 'SSS' && tp.type !== 'ESS' && tp.type !== 'GOAL_CYLINDER' && tp.type !== 'GOAL_LINE';
     const role = tpRole(tp, isPlain ? ++cylIdx : 0);
     const color = tpColor(tp.type);
     const isGoalLine = tp.type === 'GOAL_LINE';
     const forceGround = tp.forceGround === true;
+    const entry: TpEntry = { role, color, radiusM: tp.radiusM, isGoalLine, forceGround, tpIndex: i };
     const g = groups.find(
       (g) => Math.abs(g.lng - tp.longitude) < LOCATION_TOL && Math.abs(g.lat - tp.latitude) < LOCATION_TOL,
     );
-    if (g) g.entries.push({ role, color, radiusM: tp.radiusM, isGoalLine, forceGround });
+    if (g) g.entries.push(entry);
     else
       groups.push({
         lng: tp.longitude,
         lat: tp.latitude,
         name: tp.name,
-        entries: [{ role, color, radiusM: tp.radiusM, isGoalLine, forceGround }],
+        entries: [entry],
       });
   }
   return groups;
@@ -597,8 +603,26 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       el.appendChild(badgeRow);
       el.appendChild(nameEl);
 
+      // Anchor the label at the optimised route's touch point for this
+      // turnpoint, not the cylinder centre. Big cylinders (4 km radius) put
+      // the centre kilometres from where pilots actually fly through, so a
+      // centred label is often outside the visible viewport. The route's
+      // touch point sits right on the cylinder boundary where the optimised
+      // line enters/exits — exactly where the pilot's attention is.
+      //
+      // For groups with multiple co-located turnpoints (different radii at
+      // the same lat/lng), pick the touch point from the entry with the
+      // largest radius — its touch point sits furthest from the shared
+      // centre and is least likely to overlap with smaller cylinders below.
+      const touchPoints = cachedRoute?.touchPoints;
+      const widestEntry = [...group.entries].sort((a, b) => b.radiusM - a.radiusM)[0];
+      const anchor =
+        touchPoints && widestEntry && touchPoints[widestEntry.tpIndex]
+          ? ([touchPoints[widestEntry.tpIndex].lng, touchPoints[widestEntry.tpIndex].lat] as [number, number])
+          : ([group.lng, group.lat] as [number, number]);
+
       const marker = new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -10] })
-        .setLngLat([group.lng, group.lat])
+        .setLngLat(anchor)
         .addTo(map);
       markersRef.current.push(marker);
     }
