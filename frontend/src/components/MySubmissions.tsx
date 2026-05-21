@@ -44,9 +44,17 @@ interface Props {
   taskId: string;
   /** Total turnpoints in the task (used to format "TP X of N"). */
   totalTurnpoints: number;
+  /**
+   * Currently-selected submission for track display (controlled by the parent
+   * which shares one "show track for X" slot with the leaderboard). Rows match
+   * this id get the selected styling.
+   */
+  selectedSubmissionId?: string | null;
+  /** Click handler — fired with a row's submissionId. Parent decides what to do (e.g. fetch and render its track). */
+  onSelectSubmission?: (submissionId: string) => void;
 }
 
-export default function MySubmissions({ taskId, totalTurnpoints }: Props) {
+export default function MySubmissions({ taskId, totalTurnpoints, selectedSubmissionId, onSelectSubmission }: Props) {
   const { leagueSlug, seasonId } = useLeague();
 
   const { data, isLoading, isError } = useQuery({
@@ -91,8 +99,27 @@ export default function MySubmissions({ taskId, totalTurnpoints }: Props) {
           <tbody>
             {data.map((sub) => {
               const f = sub.thisSubmission;
+              // A row is clickable when it has a parseable attempt (so the
+              // track endpoint can return something) AND the parent wired up
+              // a handler. Selected row gets the leaderboard's purple tint;
+              // current-best row (when not selected) keeps the blue tint.
+              const isSelected = !!selectedSubmissionId && sub.id === selectedSubmissionId;
+              const clickable = !!onSelectSubmission && !!f;
+              const bg = isSelected
+                ? 'rgba(167,139,250,0.12)'
+                : sub.isCurrentBest
+                  ? 'rgba(59,130,246,0.07)'
+                  : undefined;
               return (
-                <tr key={sub.id} style={{ background: sub.isCurrentBest ? 'rgba(59,130,246,0.07)' : undefined }}>
+                <tr
+                  key={sub.id}
+                  onClick={clickable ? () => onSelectSubmission!(sub.id) : undefined}
+                  style={{
+                    background: bg,
+                    cursor: clickable ? 'pointer' : undefined,
+                    outline: isSelected ? '1px solid rgba(167,139,250,0.4)' : undefined,
+                  }}
+                >
                   <td style={{ ...TD, fontFamily: 'var(--font-mono)', color: 'var(--text2)' }}>
                     {fmtDateTime(sub.submittedAt)}
                   </td>

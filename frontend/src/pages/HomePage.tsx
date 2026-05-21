@@ -109,16 +109,20 @@ function TaskLeftPanel({
   leaderboardLoading,
   myId,
   selectedPilotId,
+  selectedSubmissionId,
   trackLoading,
   onSelectPilot,
+  onSelectMySubmission,
 }: {
   task: Task;
   leaderboardEntries: LeaderboardEntry[];
   leaderboardLoading: boolean;
   myId: string | undefined;
   selectedPilotId: string | undefined;
+  selectedSubmissionId: string | null;
   trackLoading: boolean;
   onSelectPilot: (entry: LeaderboardEntry) => void;
+  onSelectMySubmission: (submissionId: string) => void;
 }) {
   const taskStatus = getTaskStatus(task);
   const ss = STATUS_STYLE[taskStatus];
@@ -186,7 +190,14 @@ function TaskLeftPanel({
           membership here because the User type doesn't carry memberships, and a
           one-off 403'd request per task-panel view by a non-member is cheaper
           than fetching the member list just to suppress it. */}
-      {myId && <MySubmissions taskId={task.id} totalTurnpoints={task.turnpoints.length} />}
+      {myId && (
+        <MySubmissions
+          taskId={task.id}
+          totalTurnpoints={task.turnpoints.length}
+          selectedSubmissionId={selectedSubmissionId}
+          onSelectSubmission={onSelectMySubmission}
+        />
+      )}
     </>
   );
 }
@@ -268,8 +279,41 @@ export default function HomePage() {
   const activeEntry = selectedEntry;
 
   const handleSelectPilot = (entry: LeaderboardEntry) => {
-    setSelectedEntry((prev) => (prev?.pilotId === entry.pilotId ? null : entry));
+    setSelectedEntry((prev) => (prev?.submissionId === entry.submissionId ? null : entry));
   };
+
+  // Click on a row in MySubmissions — fabricate a LeaderboardEntry-shaped row
+  // whose submissionId points at the chosen submission (which may not be the
+  // pilot's leaderboard best). The track-fetch query keys off submissionId, so
+  // this drives the same map slot the leaderboard does.
+  const handleSelectMySubmission = (submissionId: string) => {
+    if (!user) return;
+    setSelectedEntry((prev) => {
+      if (prev?.submissionId === submissionId) return null;
+      const myLeaderboardEntry = activeEntries.find((e) => e.pilotId === user.id);
+      if (myLeaderboardEntry) return { ...myLeaderboardEntry, submissionId };
+      return {
+        rank: 0,
+        pilotId: user.id,
+        pilotName: user.displayName,
+        submissionId,
+        distanceFlownKm: 0,
+        reachedGoal: false,
+        taskTimeS: null,
+        distancePoints: 0,
+        timePoints: 0,
+        totalPoints: 0,
+        hasFlaggedCrossings: false,
+      };
+    });
+  };
+
+  // The leaderboard's row should highlight only when the *selected*
+  // submission is the one the leaderboard is currently scoring — otherwise
+  // the user picked a non-best from MySubmissions and the leaderboard row
+  // doesn't correspond to the track being shown.
+  const selectedSubmissionId = activeEntry?.submissionId ?? null;
+  const leaderboardSelectedPilotId = activeEntries.find((e) => e.submissionId === selectedSubmissionId)?.pilotId;
 
   // Fetch track for selected pilot
   const { data: trackData, isFetching: trackLoading } = useQuery({
@@ -445,9 +489,11 @@ export default function HomePage() {
               leaderboardEntries={activeEntries}
               leaderboardLoading={activeQuery?.isLoading ?? false}
               myId={user?.id}
-              selectedPilotId={activeEntry?.pilotId}
+              selectedPilotId={leaderboardSelectedPilotId}
+              selectedSubmissionId={selectedSubmissionId}
               trackLoading={trackLoading}
               onSelectPilot={handleSelectPilot}
+              onSelectMySubmission={handleSelectMySubmission}
             />
           ) : null)}
 
