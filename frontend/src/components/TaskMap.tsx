@@ -467,7 +467,6 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
         mk('path', ringAttrs);
       }
     }
-
   }, []);
 
   useEffect(() => {
