@@ -41,10 +41,15 @@ function hideIrrelevantLayers(map: maplibregl.Map) {
   }
 }
 
+// Palette: blue SSS, green ESS/Goal, pink for intermediate turnpoints, and
+// vivid orange for ground-only. The ground colour used to be a muted earthy
+// brown that read too close to the intermediate amber — pilots couldn't tell
+// at a glance which cylinders required a touchdown. The pink/orange split
+// pushes those two categories far apart in hue + saturation.
 function tpColor(type: string) {
   if (type === 'SSS') return '#4a9eff';
   if (type === 'ESS' || type === 'GOAL_CYLINDER' || type === 'GOAL_LINE') return '#5db87a';
-  return '#e8a842';
+  return REGULAR_TP_COLOR;
 }
 
 function tpRole(tp: Turnpoint, cylIndex: number): string {
@@ -69,10 +74,11 @@ function toCylinder(tp: Turnpoint): Cylinder {
   };
 }
 
-const GROUND_COLOR = '#a97c50';
+const REGULAR_TP_COLOR = '#ec4899'; // pink — intermediate cylinders
+const GROUND_COLOR = '#f97316'; // vivid orange — force-ground TPs (any role)
 
 const LOCATION_TOL = 1e-4;
-const COLOR_PRI: Record<string, number> = { '#4a9eff': 3, '#5db87a': 2, '#e8a842': 1 };
+const COLOR_PRI: Record<string, number> = { '#4a9eff': 3, '#5db87a': 2, [REGULAR_TP_COLOR]: 1 };
 
 interface TpEntry {
   role: string;
@@ -443,7 +449,8 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     for (const group of groups) {
       const c = map.project([group.lng, group.lat]);
       const dotColor =
-        [...group.entries].sort((a, b) => (COLOR_PRI[b.color] ?? 0) - (COLOR_PRI[a.color] ?? 0))[0]?.color ?? '#e8a842';
+        [...group.entries].sort((a, b) => (COLOR_PRI[b.color] ?? 0) - (COLOR_PRI[a.color] ?? 0))[0]?.color ??
+        REGULAR_TP_COLOR;
       mk('circle', {
         cx: c.x.toFixed(1),
         cy: c.y.toFixed(1),
@@ -558,7 +565,8 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       const nameEl = document.createElement('div');
       nameEl.textContent = group.name;
       const nameColor =
-        [...group.entries].sort((a, b) => (COLOR_PRI[b.color] ?? 0) - (COLOR_PRI[a.color] ?? 0))[0]?.color ?? '#e8a842';
+        [...group.entries].sort((a, b) => (COLOR_PRI[b.color] ?? 0) - (COLOR_PRI[a.color] ?? 0))[0]?.color ??
+        REGULAR_TP_COLOR;
       nameEl.style.cssText = `
         color:${nameColor};font-family:"DM Mono",monospace;font-size:10px;font-weight:600;
         text-shadow:0 0 4px rgba(0,0,0,1),0 0 8px rgba(0,0,0,0.8);white-space:nowrap;
@@ -674,7 +682,7 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
         {[
           { color: '#4a9eff', label: 'SSS', tooltip: 'Start of Speed Section — the clock starts on exit.' },
           {
-            color: '#e8a842',
+            color: REGULAR_TP_COLOR,
             label: 'Turnpoint',
             tooltip: 'Intermediate turnpoint — pilots must enter this cylinder.',
           },
