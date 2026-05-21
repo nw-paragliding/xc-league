@@ -559,7 +559,12 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     const groups = buildGroups(turnpoints);
     for (const group of groups) {
       const el = document.createElement('div');
-      el.style.cssText = 'pointer-events:none;text-align:center;';
+      // z-index 10 lifts the label above the SVG overlay (which is a sibling
+      // of the MapLibre container in the wrapper div with no explicit z).
+      // Without it, the cylinder fill + tolerance band paint over the role
+      // badge and place name, making them unreadable when the cylinder is
+      // small relative to the label.
+      el.style.cssText = 'pointer-events:none;text-align:center;z-index:10;';
 
       const badgeRow = document.createElement('div');
       badgeRow.style.cssText = 'display:flex;gap:3px;justify-content:center;margin-bottom:2px;flex-wrap:wrap;';
@@ -628,7 +633,14 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       <svg
         ref={svgRef}
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          pointerEvents: 'none',
+          zIndex: 1,
+        }}
       />
 
       {/* Basemap + airspace toggle */}
@@ -726,7 +738,7 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
             color: 'rgba(255,255,255,0.85)',
             label: 'Ground-only',
             tooltip:
-              'Hike-and-fly: pilot must arrive on foot (GPS speed must fall below the threshold during the crossing). Marked with [GND] in the task file. Shown with a dashed border on top of the role colour.',
+              'Hike-and-fly: pilot must touch down somewhere inside the cylinder — a sustained 20 s window of low ground speed counts, so flying in, landing on a hillside, and relaunching is valid. Marked with [GND] in the task file. Shown with a dashed border on top of the role colour.',
           },
         ].map(({ kind, color, label, tooltip }) => (
           <div key={label} style={{ position: 'relative' }}>
