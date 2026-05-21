@@ -589,31 +589,53 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       el.style.cssText = 'pointer-events:none;text-align:center;z-index:10;';
 
       const badgeRow = document.createElement('div');
-      badgeRow.style.cssText = 'display:flex;gap:3px;justify-content:center;margin-bottom:2px;flex-wrap:wrap;';
+      badgeRow.style.cssText = 'display:flex;gap:3px;justify-content:center;margin-bottom:3px;flex-wrap:wrap;';
       const seenRoles = new Set<string>();
       for (const { role, color } of group.entries) {
         if (seenRoles.has(role)) continue;
         seenRoles.add(role);
         const badge = document.createElement('div');
         badge.textContent = role;
+        // Dark pill + role-coloured text + matching outline. The dark fill
+        // takes the role colour off the basemap entirely so it reads on
+        // satellite, terrain, and OSM alike. Drop shadow gives a hint of
+        // separation from the cylinder fill beneath.
         badge.style.cssText = `
           display:inline-block;
-          background:${color}22;color:${color};
-          border:1px solid ${color}99;
-          font-family:"DM Mono",monospace;font-size:10px;font-weight:800;letter-spacing:0.05em;
-          padding:1px 5px;border-radius:3px;
+          background:rgba(0,0,0,0.82);
+          color:${color};
+          border:1px solid ${color}cc;
+          font-family:"DM Mono",monospace;
+          font-size:11px;
+          font-weight:700;
+          letter-spacing:0.06em;
+          padding:2px 7px;
+          border-radius:3px;
+          box-shadow:0 1px 2px rgba(0,0,0,0.4);
         `;
         badgeRow.appendChild(badge);
       }
 
+      // Place name in white with a hard dark halo — the standard cartographic
+      // label treatment (Google/OSM/Apple all variations of this). Four offset
+      // shadows form a sharp 1.2 px stroke that survives any basemap; the
+      // soft 4 px glow adds a faint backdrop where the basemap is light. Way
+      // more legible at small sizes than coloured text + soft shadow was.
       const nameEl = document.createElement('div');
       nameEl.textContent = group.name;
-      const nameColor =
-        [...group.entries].sort((a, b) => (COLOR_PRI[b.color] ?? 0) - (COLOR_PRI[a.color] ?? 0))[0]?.color ??
-        REGULAR_TP_COLOR;
       nameEl.style.cssText = `
-        color:${nameColor};font-family:"DM Mono",monospace;font-size:10px;font-weight:600;
-        text-shadow:0 0 4px rgba(0,0,0,1),0 0 8px rgba(0,0,0,0.8);white-space:nowrap;
+        color:#fff;
+        font-family:"DM Mono",monospace;
+        font-size:13px;
+        font-weight:700;
+        letter-spacing:0.02em;
+        white-space:nowrap;
+        text-shadow:
+          -1.2px -1.2px 0 rgba(0,0,0,0.95),
+          1.2px -1.2px 0 rgba(0,0,0,0.95),
+          -1.2px 1.2px 0 rgba(0,0,0,0.95),
+          1.2px 1.2px 0 rgba(0,0,0,0.95),
+          0 0 4px rgba(0,0,0,0.7);
       `;
 
       el.appendChild(badgeRow);
