@@ -1498,25 +1498,29 @@ describe('Submission moderation — DELETE /tasks/:taskId/submissions/:submissio
   });
 
   it('returns 404 when the submission belongs to a different league than the URL', async () => {
-    // Admin of testLeague tries to delete a submission in otherLeague by
-    // pasting otherLeague's submissionId into testLeague's URL path. The
-    // pre-read JOIN chain (s.league_id = league.id) refuses it.
+    // Admin of testLeague is also admin of otherLeague (so requireLeagueAdmin
+    // would pass for either) — they craft a URL with testLeague's slug but
+    // otherLeague's season/task/submission ids. The path makes it past the
+    // task and season filters in the pre-read; only the `s.league_id =
+    // league.id` clause stops it (request.league resolves to testLeague via
+    // the slug, but the season chain leads to otherLeague). This is what
+    // exercises the league guard specifically.
     const otherLeague = createTestLeague(db, { slug: 'other-league' });
+    addLeagueMember(db, otherLeague.id, adminUser.id, 'admin');
     const otherSeason = createTestSeason(db, otherLeague.id);
     const otherTask = createTestTask(db, otherSeason.id, otherLeague.id);
     const otherSubmission = createTestSubmission(db, otherTask.id, pilotUser.id, otherLeague.id);
 
+    const url = `/leagues/${testLeague.slug}/seasons/${otherSeason.id}/tasks/${otherTask.id}/submissions/${otherSubmission}`;
     const res = await app.inject({
       method: 'DELETE',
-      url: deleteUrl(otherSubmission),
+      url,
       headers: { 'x-test-user-id': adminUser.id },
     });
     expect(res.statusCode).toBe(404);
 
     // Submission in the other league is untouched.
-    const stillLive = db
-      .prepare(`SELECT deleted_at FROM flight_submissions WHERE id = ?`)
-      .get(otherSubmission) as any;
+    const stillLive = db.prepare(`SELECT deleted_at FROM flight_submissions WHERE id = ?`).get(otherSubmission) as any;
     expect(stillLive.deleted_at).toBeNull();
   });
 
@@ -1538,9 +1542,10 @@ describe('Submission moderation — DELETE /tasks/:taskId/submissions/:submissio
     });
     expect(res.statusCode).toBe(200);
 
-    const rows = db
-      .prepare(`SELECT id, deleted_at FROM flight_attempts WHERE id IN (?, ?)`)
-      .all(a0, a1) as Array<{ id: string; deleted_at: string | null }>;
+    const rows = db.prepare(`SELECT id, deleted_at FROM flight_attempts WHERE id IN (?, ?)`).all(a0, a1) as Array<{
+      id: string;
+      deleted_at: string | null;
+    }>;
     expect(rows).toHaveLength(2);
     for (const row of rows) {
       expect(row.deleted_at).not.toBeNull();
@@ -1605,5 +1610,4 @@ describe('Submission moderation — DELETE /tasks/:taskId/submissions/:submissio
       submissionId,
     });
   });
-
 });
