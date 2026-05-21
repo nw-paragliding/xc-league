@@ -420,13 +420,15 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
                JOIN tasks t ON t.id = fs.task_id
                JOIN seasons s ON s.id = t.season_id
               WHERE fs.id = ? AND fs.task_id = ? AND t.season_id = ? AND s.league_id = ?
-                AND fs.deleted_at IS NULL AND t.deleted_at IS NULL`,
+                AND fs.deleted_at IS NULL AND t.deleted_at IS NULL AND s.deleted_at IS NULL`,
           )
           .get(submissionId, taskId, seasonId, league.id) as { id: string; user_id: string } | undefined;
 
         if (!submission) {
           return reply.status(404).send({ error: 'Submission not found' });
         }
+
+        const actorUserId = (request as any).user!.userId;
 
         // rebuildTaskResults wipes task_results for the task and recomputes
         // from the live (non-deleted) flight_attempts, so soft-deleting the
@@ -451,6 +453,15 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
           db.prepare(
             `UPDATE flight_attempts SET deleted_at = datetime('now') WHERE submission_id = ? AND deleted_at IS NULL`,
           ).run(submissionId);
+          db.prepare(
+            `INSERT INTO admin_audit_log (id, actor_user_id, target_user_id, action, details, created_at)
+             VALUES (?, ?, ?, 'DELETE_SUBMISSION', ?, datetime('now'))`,
+          ).run(
+            randomUUID(),
+            actorUserId,
+            submission.user_id,
+            JSON.stringify({ leagueId: league.id, seasonId, taskId, submissionId }),
+          );
           rebuildTaskResults(db, taskId);
         })();
 
