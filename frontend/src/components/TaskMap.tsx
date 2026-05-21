@@ -539,33 +539,77 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     else map.once('style.load', apply);
   }, [airspace, mapReady]);
 
-  // Marker collision avoidance. After labels are placed at touch points,
-  // sweep through them in route order and push later markers down (via the
-  // marker offset, in pixel space) far enough that their bounding box clears
-  // every earlier marker. Greedy O(N²) is fine for N < 50 typical turnpoint
-  // counts. Resets each marker's offset to the baseline first so successive
-  // re-runs (e.g. on zoom) don't compound shifts from prior passes.
-  const BASELINE_OFFSET_Y = -10;
+  // Per-marker context for label placement. anchor is the touch-point lng/lat
+  // (where the marker is geo-anchored); center is the cylinder centre. The
+  // outward direction from centre → anchor in pixel space defines the preferred
+  // label offset (radially outside the cylinder), so the label clears both the
+  // strict ring stroke and the optimised route line passing through that
+  // touch point.
+  const markerCtxRef = useRef<Array<{ anchor: [number, number]; center: [number, number] }>>([]);
+
+  // Distance in pixels to offset the label centre from the touch point along
+  // the outward radial. 18 px gives clearance over the 3-px strict ring stroke
+  // plus the dashed ground border, with a bit of breathing room.
+  const OUTWARD_PX = 18;
+
+  // Label placement: apply the radial outward offset, then greedy collision
+  // resolution. For each marker (in route order), if its bounding box overlaps
+  // an earlier marker's, shift it further along its outward direction until it
+  // clears. Re-runs on zoom/resize so it stays correct as pixel distances
+  // between geo-anchored markers change.
   const dedupeLabels = useCallback(() => {
+    const map = mapRef.current;
     const markers = markersRef.current;
+    const ctxs = markerCtxRef.current;
+    if (!map || markers.length < 1) return;
+
+    // Baseline = radial outward offset, in pixels. Recomputed every pass
+    // because the projection of anchor and centre changes with zoom.
+    const baselines: Array<[number, number]> = [];
+    for (let i = 0; i < markers.length; i++) {
+      const ctx = ctxs[i];
+      if (!ctx) {
+        baselines.push([0, -OUTWARD_PX]);
+        continue;
+      }
+      const aPx = map.project(ctx.anchor);
+      const cPx = map.project(ctx.center);
+      const dx = aPx.x - cPx.x;
+      const dy = aPx.y - cPx.y;
+      const len = Math.hypot(dx, dy);
+      baselines.push(len < 0.5 ? [0, -OUTWARD_PX] : [(dx / len) * OUTWARD_PX, (dy / len) * OUTWARD_PX]);
+    }
+    for (let i = 0; i < markers.length; i++) markers[i].setOffset(baselines[i]);
+
     if (markers.length < 2) return;
 
-    for (const m of markers) m.setOffset([0, BASELINE_OFFSET_Y]);
-
+    // Greedy collision resolution. Push the colliding marker further along its
+    // outward direction; if its outward is mostly horizontal (radial ≈ ±x),
+    // there's no vertical room to push so fall back to a downward shift.
     const rects = markers.map((m) => m.getElement().getBoundingClientRect());
     for (let i = 1; i < markers.length; i++) {
-      let pushDown = 0;
+      let extra = 0;
       for (let j = 0; j < i; j++) {
         const a = rects[i];
         const b = rects[j];
         const overlap = !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
         if (overlap) {
           const need = b.bottom - a.top + 4;
-          if (need > pushDown) pushDown = need;
+          if (need > extra) extra = need;
         }
       }
-      if (pushDown > 0) {
-        markers[i].setOffset([0, BASELINE_OFFSET_Y + pushDown]);
+      if (extra > 0) {
+        const [bx, by] = baselines[i];
+        const len = Math.hypot(bx, by);
+        // Prefer pushing along the outward direction; if outward is too
+        // horizontal (|by| ≪ |bx|), the vertical room is tiny — just push
+        // straight down by `extra`.
+        if (len > 0.5 && Math.abs(by) > 4) {
+          const scale = extra / Math.abs(by);
+          markers[i].setOffset([bx + bx * scale, by + by * scale]);
+        } else {
+          markers[i].setOffset([bx, by + extra]);
+        }
         rects[i] = markers[i].getElement().getBoundingClientRect();
       }
     }
@@ -577,6 +621,7 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
 
     markersRef.current.forEach((m) => m.remove());
     markersRef.current = [];
+    markerCtxRef.current = [];
 
     const groups = buildGroups(turnpoints);
     for (const group of groups) {
@@ -658,11 +703,13 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
         touchPoints && widestEntry && touchPoints[widestEntry.tpIndex]
           ? ([touchPoints[widestEntry.tpIndex].lng, touchPoints[widestEntry.tpIndex].lat] as [number, number])
           : ([group.lng, group.lat] as [number, number]);
+      const center: [number, number] = [group.lng, group.lat];
 
-      const marker = new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -10] })
+      const marker = new maplibregl.Marker({ element: el, anchor: 'center', offset: [0, -OUTWARD_PX] })
         .setLngLat(anchor)
         .addTo(map);
       markersRef.current.push(marker);
+      markerCtxRef.current.push({ anchor, center });
     }
 
     const fitPts = cachedRoute
