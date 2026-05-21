@@ -5,17 +5,22 @@
 // Auth is bypassed in test mode via x-test-user-id header.
 // =============================================================================
 
+import { randomUUID } from 'crypto';
 import Fastify from 'fastify';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { authPlugin, loadAuthConfig } from '../../src/auth';
+import { rebuildTaskResults } from '../../src/job-queue';
 import { registerLeagueRoutes } from '../../src/routes/leagues';
 import { buildXctrackDeepLink, type ExportTask, encodeXctskZ } from '../../src/task-exporters';
 import { parseCup, parseXctsk } from '../../src/task-parsers';
 import {
   addLeagueMember,
+  createTestAttempt,
   createTestLeague,
   createTestSeason,
+  createTestSubmission,
   createTestTask,
+  createTestTaskResult,
   createTestUser,
   setupTestDatabase,
 } from '../helpers';
@@ -1311,5 +1316,298 @@ describe('GOAL_LINE import — goal_line_bearing_deg persistence', () => {
     expect(goalTp).toBeTruthy();
     expect(goalTp.goalLineBearingDeg).not.toBeNull();
     expect(typeof goalTp.goalLineBearingDeg).toBe('number');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin submission moderation — DELETE /tasks/:taskId/submissions/:submissionId
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Submission moderation — DELETE /tasks/:taskId/submissions/:submissionId', () => {
+  let app: ReturnType<typeof Fastify>;
+  let db: ReturnType<typeof getTestDb>;
+  let adminUser: ReturnType<typeof createTestUser>;
+  let pilotUser: ReturnType<typeof createTestUser>;
+  let otherPilot: ReturnType<typeof createTestUser>;
+  let testLeague: ReturnType<typeof createTestLeague>;
+  let testSeason: ReturnType<typeof createTestSeason>;
+  let testTask: ReturnType<typeof createTestTask>;
+
+  beforeEach(async () => {
+    resetTestDb();
+    db = getTestDb();
+    setupTestDatabase(db);
+
+    adminUser = createTestUser(db, { email: 'admin@test.com' });
+    pilotUser = createTestUser(db, { email: 'pilot@test.com' });
+    otherPilot = createTestUser(db, { email: 'other@test.com' });
+    testLeague = createTestLeague(db, { slug: 'test-league' });
+    testSeason = createTestSeason(db, testLeague.id);
+    testTask = createTestTask(db, testSeason.id, testLeague.id);
+
+    addLeagueMember(db, testLeague.id, adminUser.id, 'admin');
+    addLeagueMember(db, testLeague.id, pilotUser.id, 'pilot');
+    addLeagueMember(db, testLeague.id, otherPilot.id, 'pilot');
+
+    app = await buildTestApp(db);
+  });
+
+  const deleteUrl = (submissionId: string) =>
+    `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${testTask.id}/submissions/${submissionId}`;
+
+  it('soft-deletes the submission + linked attempts and rebuilds task_results', async () => {
+    const submissionId = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    const attemptId = createTestAttempt(db, submissionId, testTask.id, pilotUser.id, testLeague.id, {
+      distanceFlownKm: 12.3,
+    });
+    // Seed the cache so we can verify rebuildTaskResults actually fired.
+    createTestTaskResult(db, testTask.id, pilotUser.id, testLeague.id, attemptId, {
+      distanceFlownKm: 12.3,
+      distancePoints: 100,
+      totalPoints: 100,
+    });
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(submissionId),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).message).toMatch(/deleted/i);
+
+    const sub = db.prepare(`SELECT deleted_at FROM flight_submissions WHERE id = ?`).get(submissionId) as any;
+    expect(sub.deleted_at).not.toBeNull();
+
+    const att = db.prepare(`SELECT deleted_at FROM flight_attempts WHERE id = ?`).get(attemptId) as any;
+    expect(att.deleted_at).not.toBeNull();
+
+    // Pilot was the only entrant — rebuildTaskResults drops the row.
+    const trCount = db
+      .prepare(`SELECT COUNT(*) AS c FROM task_results WHERE task_id = ? AND user_id = ?`)
+      .get(testTask.id, pilotUser.id) as any;
+    expect(trCount.c).toBe(0);
+  });
+
+  it('promotes the next-best attempt when the deleted submission held the lead', async () => {
+    // Same pilot, two submissions: 20 km (best) and 5 km. Delete the 20 km one
+    // and the pilot's task_results row should now reflect the 5 km attempt.
+    const subBest = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    createTestAttempt(db, subBest, testTask.id, pilotUser.id, testLeague.id, { distanceFlownKm: 20 });
+
+    const subWorse = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    const worseAttempt = createTestAttempt(db, subWorse, testTask.id, pilotUser.id, testLeague.id, {
+      distanceFlownKm: 5,
+    });
+
+    // Prime task_results with the current best so we can confirm the rebuild
+    // moved the pointer.
+    rebuildTaskResults(db, testTask.id);
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(subBest),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const tr = db
+      .prepare(`SELECT best_attempt_id, distance_flown_km FROM task_results WHERE task_id = ? AND user_id = ?`)
+      .get(testTask.id, pilotUser.id) as any;
+    expect(tr.best_attempt_id).toBe(worseAttempt);
+    expect(tr.distance_flown_km).toBe(5);
+  });
+
+  it('leaves other pilots untouched', async () => {
+    const subPilot = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    createTestAttempt(db, subPilot, testTask.id, pilotUser.id, testLeague.id, { distanceFlownKm: 10 });
+    const subOther = createTestSubmission(db, testTask.id, otherPilot.id, testLeague.id);
+    createTestAttempt(db, subOther, testTask.id, otherPilot.id, testLeague.id, { distanceFlownKm: 8 });
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(subPilot),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+
+    expect(res.statusCode).toBe(200);
+
+    const otherSub = db.prepare(`SELECT deleted_at FROM flight_submissions WHERE id = ?`).get(subOther) as any;
+    expect(otherSub.deleted_at).toBeNull();
+  });
+
+  it('returns 403 when a pilot tries to delete', async () => {
+    const submissionId = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(submissionId),
+      headers: { 'x-test-user-id': pilotUser.id },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('returns 404 when the submission does not belong to the URL task', async () => {
+    const otherTask = createTestTask(db, testSeason.id, testLeague.id, { id: randomUUID() });
+    const submissionId = createTestSubmission(db, otherTask.id, pilotUser.id, testLeague.id);
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(submissionId),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 404 when the submission is already soft-deleted (idempotency guard)', async () => {
+    const submissionId = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    db.prepare(`UPDATE flight_submissions SET deleted_at = datetime('now') WHERE id = ?`).run(submissionId);
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(submissionId),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+    expect(res.statusCode).toBe(404);
+
+    // 404 from the pre-read short-circuits before the txn opens, so no audit
+    // row should leak.
+    const auditCount = db
+      .prepare(`SELECT COUNT(*) AS c FROM admin_audit_log WHERE action = 'DELETE_SUBMISSION'`)
+      .get() as { c: number };
+    expect(auditCount.c).toBe(0);
+  });
+
+  it('returns 404 when the parent task is soft-deleted', async () => {
+    const submissionId = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    db.prepare(`UPDATE tasks SET deleted_at = datetime('now') WHERE id = ?`).run(testTask.id);
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(submissionId),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 404 when the parent season is soft-deleted', async () => {
+    const submissionId = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    db.prepare(`UPDATE seasons SET deleted_at = datetime('now') WHERE id = ?`).run(testSeason.id);
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(submissionId),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 404 when the submission belongs to a different league than the URL', async () => {
+    // Admin of testLeague is also admin of otherLeague (so requireLeagueAdmin
+    // would pass for either) — they craft a URL with testLeague's slug but
+    // otherLeague's season/task/submission ids. The path makes it past the
+    // task and season filters in the pre-read; only the `s.league_id =
+    // league.id` clause stops it (request.league resolves to testLeague via
+    // the slug, but the season chain leads to otherLeague). This is what
+    // exercises the league guard specifically.
+    const otherLeague = createTestLeague(db, { slug: 'other-league' });
+    addLeagueMember(db, otherLeague.id, adminUser.id, 'admin');
+    const otherSeason = createTestSeason(db, otherLeague.id);
+    const otherTask = createTestTask(db, otherSeason.id, otherLeague.id);
+    const otherSubmission = createTestSubmission(db, otherTask.id, pilotUser.id, otherLeague.id);
+
+    const url = `/leagues/${testLeague.slug}/seasons/${otherSeason.id}/tasks/${otherTask.id}/submissions/${otherSubmission}`;
+    const res = await app.inject({
+      method: 'DELETE',
+      url,
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+    expect(res.statusCode).toBe(404);
+
+    // Submission in the other league is untouched.
+    const stillLive = db.prepare(`SELECT deleted_at FROM flight_submissions WHERE id = ?`).get(otherSubmission) as any;
+    expect(stillLive.deleted_at).toBeNull();
+  });
+
+  it('soft-deletes every attempt when the submission has multiple attempts', async () => {
+    const submissionId = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    const a0 = createTestAttempt(db, submissionId, testTask.id, pilotUser.id, testLeague.id, {
+      distanceFlownKm: 8,
+      attemptIndex: 0,
+    });
+    const a1 = createTestAttempt(db, submissionId, testTask.id, pilotUser.id, testLeague.id, {
+      distanceFlownKm: 12,
+      attemptIndex: 1,
+    });
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(submissionId),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const rows = db.prepare(`SELECT id, deleted_at FROM flight_attempts WHERE id IN (?, ?)`).all(a0, a1) as Array<{
+      id: string;
+      deleted_at: string | null;
+    }>;
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.deleted_at).not.toBeNull();
+    }
+  });
+
+  it('recomputes ranks of surviving pilots after the leader is removed', async () => {
+    // Pilot is leader at 20 km; otherPilot trails at 10 km.
+    const leaderSub = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    createTestAttempt(db, leaderSub, testTask.id, pilotUser.id, testLeague.id, { distanceFlownKm: 20 });
+
+    const survivorSub = createTestSubmission(db, testTask.id, otherPilot.id, testLeague.id);
+    createTestAttempt(db, survivorSub, testTask.id, otherPilot.id, testLeague.id, { distanceFlownKm: 10 });
+
+    rebuildTaskResults(db, testTask.id);
+
+    const before = db
+      .prepare(`SELECT rank FROM task_results WHERE task_id = ? AND user_id = ?`)
+      .get(testTask.id, otherPilot.id) as { rank: number };
+    expect(before.rank).toBe(2);
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(leaderSub),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const after = db
+      .prepare(`SELECT rank, distance_flown_km FROM task_results WHERE task_id = ? AND user_id = ?`)
+      .get(testTask.id, otherPilot.id) as { rank: number; distance_flown_km: number };
+    expect(after.rank).toBe(1);
+    expect(after.distance_flown_km).toBe(10);
+  });
+
+  it('writes an admin_audit_log row recording the moderation', async () => {
+    const submissionId = createTestSubmission(db, testTask.id, pilotUser.id, testLeague.id);
+    createTestAttempt(db, submissionId, testTask.id, pilotUser.id, testLeague.id, { distanceFlownKm: 7 });
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: deleteUrl(submissionId),
+      headers: { 'x-test-user-id': adminUser.id },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const audit = db
+      .prepare(
+        `SELECT actor_user_id, target_user_id, action, details
+           FROM admin_audit_log
+          WHERE action = 'DELETE_SUBMISSION' AND target_user_id = ?`,
+      )
+      .get(pilotUser.id) as { actor_user_id: string; target_user_id: string; action: string; details: string };
+    expect(audit).toBeDefined();
+    expect(audit.actor_user_id).toBe(adminUser.id);
+    expect(audit.target_user_id).toBe(pilotUser.id);
+    expect(audit.action).toBe('DELETE_SUBMISSION');
+    expect(JSON.parse(audit.details)).toEqual({
+      leagueId: testLeague.id,
+      seasonId: testSeason.id,
+      taskId: testTask.id,
+      submissionId,
+    });
   });
 });
