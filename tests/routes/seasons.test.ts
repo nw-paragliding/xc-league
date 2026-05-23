@@ -253,6 +253,7 @@ describe('Season Management API', () => {
       const season = createTestSeason(db, testLeague.id);
       const otherSeason = createTestSeason(db, otherLeague.id);
       const otherTask = createTestTask(db, otherSeason.id, otherLeague.id);
+      const ownTask = createTestTask(db, season.id, testLeague.id);
 
       // Simulate corruption: a row whose season_id points at testLeague's
       // season but whose league_id stays on otherLeague.
@@ -268,6 +269,9 @@ describe('Season Management API', () => {
 
       const otherTaskRow = db.prepare('SELECT deleted_at FROM tasks WHERE id = ?').get(otherTask.id);
       expect(otherTaskRow.deleted_at).toBeNull();
+      // Positive half of the defense: the season's own task IS cascaded.
+      const ownTaskRow = db.prepare('SELECT deleted_at FROM tasks WHERE id = ?').get(ownTask.id);
+      expect(ownTaskRow.deleted_at).not.toBeNull();
     });
 
     // Tasks already soft-deleted before the season delete should not be
@@ -289,6 +293,30 @@ describe('Season Management API', () => {
       expect(response.statusCode).toBe(200);
 
       const row = db.prepare('SELECT deleted_at FROM tasks WHERE id = ?').get(task.id);
+      expect(row.deleted_at).toBe(originalTs);
+    });
+
+    // Same protection for season_registrations: rows pre-deleted before the
+    // season delete keep their original deleted_at (the AND deleted_at IS NULL
+    // filter on the cascade UPDATE is what enforces this).
+    it('does not re-stamp season_registrations that were already soft-deleted', async () => {
+      const season = createTestSeason(db, testLeague.id);
+      const regId = randomUUID();
+      const originalTs = '2024-01-01 00:00:00';
+      db.prepare(
+        `INSERT INTO season_registrations (id, season_id, user_id, registered_at, created_at, updated_at, deleted_at)
+         VALUES (?, ?, ?, datetime('now'), datetime('now'), ?, ?)`,
+      ).run(regId, season.id, regularUser.id, originalTs, originalTs);
+
+      const response = await app.inject({
+        method: 'DELETE',
+        url: `/leagues/${testLeague.slug}/seasons/${season.id}`,
+        headers: { 'x-test-user-id': adminUser.id },
+      });
+
+      expect(response.statusCode).toBe(200);
+
+      const row = db.prepare('SELECT deleted_at FROM season_registrations WHERE id = ?').get(regId);
       expect(row.deleted_at).toBe(originalTs);
     });
   });

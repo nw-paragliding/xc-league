@@ -1068,6 +1068,8 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       // attempts, task_results) lives in the task DELETE handler and is
       // duplicated here intentionally — pulling it into a helper would obscure
       // that the task delete route already does this for the single-task case.
+      // CASCADE: keep the per-task block below in sync with the task DELETE handler.
+      let childTaskCount = 0;
       db.transaction(() => {
         db.prepare(`UPDATE seasons SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(
           seasonId,
@@ -1090,7 +1092,11 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         const childTaskIds = db
           .prepare(`SELECT id FROM tasks WHERE season_id = ? AND league_id = ? AND deleted_at IS NULL`)
           .all(seasonId, league.id) as Array<{ id: string }>;
+        childTaskCount = childTaskIds.length;
 
+        // childTaskIds was filtered to deleted_at IS NULL, so an unconditional
+        // DELETE FROM task_results is safe — any already-soft-deleted task's
+        // results were already cleared at the time of its original deletion.
         for (const { id: taskId } of childTaskIds) {
           db.prepare(`UPDATE tasks SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(
             taskId,
@@ -1108,7 +1114,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         }
       })();
 
-      request.log.info({ leagueId: league.id, seasonId }, 'Season deleted');
+      request.log.info({ leagueId: league.id, seasonId, childTaskCount }, 'Season deleted');
       return reply.send({ message: 'Season deleted' });
     });
 
@@ -1905,6 +1911,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       // task_results has no deleted_at (computed data) so hard-delete those rows.
       // Admin moderation (deleting closed tasks) is allowed; the cascade keeps
       // standings in sync via the live aggregate.
+      // CASCADE: keep in sync with the per-task block in the season DELETE handler.
       db.transaction(() => {
         db.prepare(`UPDATE tasks SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(
           taskId,
