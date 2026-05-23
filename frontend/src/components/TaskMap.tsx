@@ -507,9 +507,11 @@ export default function TaskMap({ turnpoints, height = 300, track, tracks }: Tas
 
     // ── 6. Turnpoint hit markers ─────────────────────────────────────────────
     // For each overlay track that supplied `crossedSequenceIndexes`, draw a
-    // filled dot in the track's colour at the centre of every group whose
-    // turnpoints were crossed. Multi-track case: stack dots side by side so
-    // both pilots' touches are visible on the same cylinder.
+    // checkmark in the track's colour at the centre of every group whose
+    // turnpoints were crossed. Drawn as a dark shadow stroke + coloured stroke
+    // on top, same pattern as the track polylines, so the check stays legible
+    // against both outdoor and satellite basemaps. Multi-track case: lay the
+    // checkmarks out side by side so both pilots' touches are visible.
     for (const group of groups) {
       const groupSeqs = new Set(group.entries.map((e) => tps[e.tpIndex].sequenceIndex));
       const hits = tracksRef.current.filter(
@@ -517,16 +519,27 @@ export default function TaskMap({ turnpoints, height = 300, track, tracks }: Tas
       );
       if (hits.length === 0) continue;
       const { cx, cy } = projR(group.lng, group.lat, 0);
-      const spacing = 9;
+      const spacing = 14;
       const x0 = cx - ((hits.length - 1) * spacing) / 2;
       hits.forEach((overlay, i) => {
-        mk('circle', {
-          cx: x0 + i * spacing,
-          cy,
-          r: 4,
-          fill: overlay.color,
+        const x = x0 + i * spacing;
+        // ✓ shape — short downstroke meeting a longer upstroke at the bottom-left.
+        const d = `M${x - 5},${cy} L${x - 1.5},${cy + 4} L${x + 6},${cy - 5}`;
+        mk('path', {
+          d,
+          fill: 'none',
           stroke: '#000',
-          'stroke-width': 1.2,
+          'stroke-width': 4,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+        });
+        mk('path', {
+          d,
+          fill: 'none',
+          stroke: overlay.color,
+          'stroke-width': 2.2,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
         });
       });
     }
