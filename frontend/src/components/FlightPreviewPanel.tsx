@@ -25,17 +25,28 @@ function fmtKm(km: number | null | undefined) {
   return `${km.toFixed(1)} km`;
 }
 
-function delta(
-  curr: number | null | undefined,
-  prev: number | null | undefined,
-  opts: { higherIsBetter?: boolean } = {},
-) {
+// Generic delta for "higher is better" metrics (distance, points). Time uses
+// the dedicated formatTimeDelta below — inverted polarity + units-aware text.
+function delta(curr: number | null | undefined, prev: number | null | undefined) {
   if (curr == null || prev == null) return null;
   const d = curr - prev;
   if (Math.abs(d) < 0.05) return null;
-  const better = (opts.higherIsBetter ?? true) ? d > 0 : d < 0;
   const sign = d > 0 ? '+' : '';
-  return { text: `${sign}${d.toFixed(1)}`, color: better ? 'var(--gold)' : 'var(--danger)' };
+  return { text: `${sign}${d.toFixed(1)}`, color: d > 0 ? 'var(--gold)' : 'var(--danger)' };
+}
+
+function formatTimeDelta(currS: number, prevS: number) {
+  const d = currS - prevS;
+  if (Math.abs(d) < 1) return null;
+  const abs = Math.floor(Math.abs(d));
+  const h = Math.floor(abs / 3600);
+  const m = Math.floor((abs % 3600) / 60);
+  const s = abs % 60;
+  const formatted =
+    h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+  const sign = d > 0 ? '+' : '−';
+  // Faster (negative delta) is better — green; slower is red.
+  return { text: `${sign}${formatted}`, color: d < 0 ? 'var(--gold)' : 'var(--danger)' };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -266,6 +277,13 @@ function Column({
 
   const dDist = previousMetrics ? delta(metrics.distance, previousMetrics.distance) : null;
   const dTotal = previousMetrics ? delta(metrics.totalPoints, previousMetrics.totalPoints) : null;
+  // Task time is inverse: faster (lower) is better. Format the delta as a
+  // signed h:mm:ss / mm:ss so it sits next to the H:MM:SS readout sensibly
+  // (a "+45.0" raw-seconds delta next to "1:23:45" reads awkwardly).
+  const dTime =
+    previousMetrics && metrics.taskTimeS != null && previousMetrics.taskTimeS != null
+      ? formatTimeDelta(metrics.taskTimeS, previousMetrics.taskTimeS)
+      : null;
 
   return (
     <div style={{ padding: 10, border: `1px solid ${accent}55`, borderRadius: 6 }}>
@@ -287,7 +305,7 @@ function Column({
       <Row k="Time pts" v={fmtPts(metrics.timePoints)} />
       <Row k="Goal" v={metrics.reachedGoal ? '✓' : '✗'} />
       {metrics.turnpointsCrossed != null && <Row k="Turnpoints" v={String(metrics.turnpointsCrossed)} />}
-      <Row k="Task time" v={fmtTime(metrics.taskTimeS)} />
+      <Row k="Task time" v={fmtTime(metrics.taskTimeS)} delta={dTime} />
     </div>
   );
 }

@@ -1004,11 +1004,25 @@ export async function runPipeline(
   taskCloseDate: string,
   taskBestDistanceKm: number,
 ): Promise<Result<PipelineResult, PipelineError>> {
-  // Stage 1: Parse
   const parseResult = parseAndValidate(input.igcText);
   if (!parseResult.ok) return err({ stage: 'PARSE', error: parseResult.error });
-  const track = parseResult.value;
+  return runPipelineFromParsed(parseResult.value, input, taskOpenDate, taskCloseDate, taskBestDistanceKm);
+}
 
+/**
+ * Run stages 2-7 against an already-parsed track. Use this when the caller
+ * already has a `ParsedTrack` in hand and would otherwise pay the IGC parse
+ * cost a second time. The client-side preview is the only current caller —
+ * it needs the parsed `fixes` for the map overlay AND the scored result,
+ * and parsing a 1-Hz multi-hour track twice dominates preview latency.
+ */
+export async function runPipelineFromParsed(
+  track: ParsedTrack,
+  input: PipelineInput,
+  taskOpenDate: string,
+  taskCloseDate: string,
+  taskBestDistanceKm: number,
+): Promise<Result<PipelineResult, PipelineError>> {
   // Stage 2: Date validation
   const dateResult = validateFlightDate(track, taskOpenDate, taskCloseDate);
   if (!dateResult.ok) return err({ stage: 'DATE', error: dateResult.error });

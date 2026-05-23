@@ -23,7 +23,10 @@ import UploadZone from '../components/UploadZone';
 import { useAuth } from '../hooks/useAuth';
 import { useLeague } from '../hooks/useLeague';
 import { useSeasons } from '../hooks/useStandings';
-import { type PreviewError, type PreviewResult, previewSubmission } from '../lib/previewPipeline';
+// previewPipeline is imported dynamically inside the file-picked effect below
+// so the pipeline + igc-parser don't ship to first-paint. Types stay static
+// (erased at build time, no runtime cost).
+import type { PreviewError, PreviewResult } from '../lib/previewPipeline';
 import { markdownRemarkPlugins, markdownSanitizeSchema } from '../utils/markdown';
 import { getTaskStatus, STATUS_STYLE } from '../utils/taskStatus';
 
@@ -383,7 +386,8 @@ export default function HomePage() {
     setPreviewError(null);
     (async () => {
       try {
-        const text = await previewFile.text();
+        const [{ previewSubmission }, text] = await Promise.all([import('../lib/previewPipeline'), previewFile.text()]);
+        if (cancelled) return;
         const res = await previewSubmission(text, task, { competitionType: seasonNow.competitionType }, entries);
         if (cancelled) return;
         if (res.ok) setPreviewResult(res.value);
