@@ -1774,7 +1774,8 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
           .get(taskId) as { c: number };
         if (submissionCount > 0) {
           return reply.status(400).send({
-            error: 'Cannot change openDate or closeDate while submissions exist for this task. Delete or remove submissions first.',
+            error:
+              'Cannot change openDate or closeDate while submissions exist for this task. Delete or remove submissions first.',
           });
         }
       }
