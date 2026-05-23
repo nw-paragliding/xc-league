@@ -356,6 +356,14 @@ export default function HomePage() {
   // Refs read at effect-fire time so leaderboard refetches don't re-trigger
   // the preview parse/score. Once a file is picked we want a single run keyed
   // off the file, not off the live leaderboard (which refetches on a timer).
+  //
+  // Side-effect of this snapshot: taskBestDistanceKm and existingGoalTimes
+  // (derived from activeEntries inside previewSubmission) are frozen at
+  // file-pick time. If another pilot uploads a goal flight while this pilot
+  // is reviewing their preview, the preview's time-points could differ
+  // slightly from the server's authoritative score on submit. That's
+  // intentional — server is authoritative and a flickering preview number
+  // would be worse UX than a slightly-stale one.
   const activeTaskRef = useRef(activeTask);
   activeTaskRef.current = activeTask;
   const seasonRef = useRef(season);
@@ -385,6 +393,9 @@ export default function HomePage() {
         setPreviewError({ stage: 'PREVIEW', code: 'PREVIEW_FAILED', message: err?.message ?? 'Preview failed' });
       }
     })();
+    // Cleanup also runs when previewFile transitions to null (cancel/submit),
+    // which flips the prior closure's `cancelled` flag and aborts the
+    // in-flight parse for the file just dismissed. Intentional.
     return () => {
       cancelled = true;
     };
