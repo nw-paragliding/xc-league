@@ -752,16 +752,20 @@ describe('Task lifecycle — POST publish + closed-task edit guard', () => {
       expect(res.statusCode).toBe(200);
     });
 
-    it('treats equivalent ISO formats as a no-op (millis / offset variations)', async () => {
-      // Stored as ".000Z"; admin re-submits the same instant without millis. Or
-      // in a +HH:MM offset. Both should pass the guard even with submissions.
+    it('treats equivalent ISO formats as a no-op and normalises storage to canonical UTC', async () => {
+      // Stored as ".000Z"; admin re-submits the same instant in three other
+      // forms. Each must pass the guard *and* leave the stored value canonical,
+      // because downstream code reads open_date.slice(0, 10) for the date
+      // window — an offset that shifts the YYYY-MM-DD prefix would change
+      // validateFlightDate behavior even though the instant is unchanged.
       const stored = '2026-01-01T00:00:00.000Z';
       const noMillis = '2026-01-01T00:00:00Z';
-      const withOffset = '2026-01-01T05:00:00+05:00'; // same instant
+      const positiveOffset = '2026-01-01T05:00:00+05:00';
+      const dateBoundaryShift = '2025-12-31T22:00:00-02:00';
       const task = createTestTask(db, testSeason.id, testLeague.id, { openDate: stored, closeDate: closeIso });
       createTestSubmission(db, task.id, pilotUser.id, testLeague.id);
 
-      for (const equivalent of [noMillis, withOffset]) {
+      for (const equivalent of [noMillis, positiveOffset, dateBoundaryShift]) {
         const res = await app.inject({
           method: 'PUT',
           url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${task.id}`,
@@ -769,6 +773,9 @@ describe('Task lifecycle — POST publish + closed-task edit guard', () => {
           payload: JSON.stringify({ openDate: equivalent }),
         });
         expect(res.statusCode).toBe(200);
+        const row = db.prepare(`SELECT open_date FROM tasks WHERE id = ?`).get(task.id) as any;
+        expect(row.open_date).toBe(stored);
+        expect(row.open_date.slice(0, 10)).toBe('2026-01-01');
       }
     });
 

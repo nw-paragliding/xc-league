@@ -1796,13 +1796,17 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         updates.push('task_type = ?');
         params.push(body.taskType);
       }
+      // Normalize to canonical UTC ISO before writing. validateFlightDate (and
+      // upload/reprocess) read `open_date.slice(0, 10)` to derive the YYYY-MM-DD
+      // window, so storing the raw body string would let an admin shift the
+      // window by submitting an equivalent instant with a different offset.
       if (body.openDate !== undefined) {
         updates.push('open_date = ?');
-        params.push(body.openDate);
+        params.push(new Date(body.openDate).toISOString());
       }
       if (body.closeDate !== undefined) {
         updates.push('close_date = ?');
-        params.push(body.closeDate);
+        params.push(new Date(body.closeDate).toISOString());
       }
       if (body.taskValue !== undefined) {
         updates.push('normalized_score = ?');
