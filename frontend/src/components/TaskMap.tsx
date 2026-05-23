@@ -174,26 +174,53 @@ function getInitialStyle(): string | maplibregl.StyleSpecification {
 // TaskMap
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface TrackOverlay {
+  /** Stable id for diffing; not surfaced visually. */
+  id: string;
+  fixes: ReplayFix[];
+  /** Hex colour for the polyline + hit-markers. */
+  color: string;
+  /**
+   * `sequenceIndex` of every turnpoint this track touched. When present, a
+   * checkmark in the track's colour is drawn at each matching cylinder centre.
+   * Omit to skip hit markers for this track.
+   */
+  crossedSequenceIndexes?: number[];
+}
+
 interface TaskMapProps {
   turnpoints: Turnpoint[];
   height?: number | string;
+  /** Legacy single-track prop — renders in violet without hit markers. */
   track?: ReplayFix[] | null;
+  /** Multiple tracks (e.g. previous-best + preview). Overrides `track` if set. */
+  tracks?: TrackOverlay[] | null;
 }
 
-export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProps) {
+const LEGACY_TRACK_COLOR = '#a78bfa';
+
+export default function TaskMap({ turnpoints, height = 300, track, tracks }: TaskMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
   const [legendOpen, setLegendOpen] = useState<string | null>(null);
   const tpsRef = useRef<Turnpoint[]>(turnpoints);
-  const trackRef = useRef<ReplayFix[] | null | undefined>(track);
+
+  // Normalise: callers pass either `track` (old single-track) or `tracks` (new
+  // multi-track). The drawing code only sees `tracksRef.current`.
+  const normalisedTracks: TrackOverlay[] = tracks
+    ? tracks
+    : track && track.length >= 2
+      ? [{ id: 'legacy', fixes: track, color: LEGACY_TRACK_COLOR }]
+      : [];
+  const tracksRef = useRef<TrackOverlay[]>(normalisedTracks);
   const [basemap, setBasemap] = useState<'outdoor' | 'satellite'>('outdoor');
   const [airspace, setAirspace] = useState(false);
   const [mapReady, setMapReady] = useState(false);
 
   tpsRef.current = turnpoints;
-  trackRef.current = track;
+  tracksRef.current = normalisedTracks;
 
   // Cache optimiseRoute result — recomputed only when turnpoints change, not on pan/zoom
   const cachedRoute = useMemo(() => optimisedRouteResult(turnpoints), [turnpoints]);
@@ -395,10 +422,13 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       mk('path', goalLineAttrs);
     }
 
-    // ── 3. IGC track line ─────────────────────────────────────────────────────
-    const fixes = trackRef.current;
-    if (fixes && fixes.length >= 2) {
-      const pts = fixes.map((f) => map.project([f.lng, f.lat]));
+    // ── 3. IGC track lines ────────────────────────────────────────────────────
+    // Each overlay draws a dark shadow polyline (for contrast on light tiles)
+    // then the coloured line on top. Tracks render in input order — callers
+    // put the visually-prioritised one last (e.g. preview on top of best).
+    for (const overlay of tracksRef.current) {
+      if (overlay.fixes.length < 2) continue;
+      const pts = overlay.fixes.map((f) => map.project([f.lng, f.lat]));
       const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('');
       mk('path', {
         d,
@@ -411,7 +441,7 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
       mk('path', {
         d,
         fill: 'none',
-        stroke: '#a78bfa',
+        stroke: overlay.color,
         'stroke-width': 1.5,
         'stroke-linecap': 'round',
         'stroke-linejoin': 'round',
@@ -473,6 +503,45 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
         if (forceGround) ringAttrs['stroke-dasharray'] = '10 6';
         mk('path', ringAttrs);
       }
+    }
+
+    // ── 6. Turnpoint hit markers ─────────────────────────────────────────────
+    // For each overlay track that supplied `crossedSequenceIndexes`, draw a
+    // checkmark in the track's colour at the centre of every group whose
+    // turnpoints were crossed. Drawn as a dark shadow stroke + coloured stroke
+    // on top, same pattern as the track polylines, so the check stays legible
+    // against both outdoor and satellite basemaps. Multi-track case: lay the
+    // checkmarks out side by side so both pilots' touches are visible.
+    for (const group of groups) {
+      const groupSeqs = new Set(group.entries.map((e) => tps[e.tpIndex].sequenceIndex));
+      const hits = tracksRef.current.filter(
+        (t) => t.crossedSequenceIndexes && t.crossedSequenceIndexes.some((s) => groupSeqs.has(s)),
+      );
+      if (hits.length === 0) continue;
+      const { cx, cy } = projR(group.lng, group.lat, 0);
+      const spacing = 14;
+      const x0 = cx - ((hits.length - 1) * spacing) / 2;
+      hits.forEach((overlay, i) => {
+        const x = x0 + i * spacing;
+        // ✓ shape — short downstroke meeting a longer upstroke at the bottom-left.
+        const d = `M${x - 5},${cy} L${x - 1.5},${cy + 4} L${x + 6},${cy - 5}`;
+        mk('path', {
+          d,
+          fill: 'none',
+          stroke: '#000',
+          'stroke-width': 4,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+        });
+        mk('path', {
+          d,
+          fill: 'none',
+          stroke: overlay.color,
+          'stroke-width': 2.2,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+        });
+      });
     }
   }, []);
 
@@ -778,10 +847,16 @@ export default function TaskMap({ turnpoints, height = 300, track }: TaskMapProp
     };
   }, [mapReady, dedupeLabels]);
 
-  // Redraw when track changes (no map move needed)
+  // Redraw when tracks change (no map move needed).
+  //
+  // drawSvg is wrapped in useCallback([]) — it reads turnpoints / tracks /
+  // route through refs so the function identity stays stable across renders
+  // and pan/zoom listeners stay attached. This effect is what re-invokes it
+  // when the underlying data changes; if you add a new ref-backed input to
+  // drawSvg, add it to this dep array too.
   useEffect(() => {
     if (mapReady) drawSvg();
-  }, [track, mapReady, drawSvg]);
+  }, [track, tracks, mapReady, drawSvg]);
 
   return (
     <div style={{ width: '100%', height: height, position: 'relative' }}>

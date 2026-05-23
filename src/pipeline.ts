@@ -6,12 +6,12 @@
 // Errors are typed and propagate without throwing
 // =============================================================================
 
+import IGCParser from 'igc-parser';
 import {
   type Cylinder,
   computeDistancePoints,
   computePartialDistanceKm,
   computeTimePoints,
-  MAX_POINTS,
   type OptimisedRoute,
   optimiseRoute,
   tagToleranceM,
@@ -138,9 +138,6 @@ export interface ParsedTrack {
  * Stage 1: parseAndValidate
  */
 export function parseAndValidate(igcText: string): Result<ParsedTrack, ParseError> {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const IGCParser = require('igc-parser');
-
   let parsed: any;
   try {
     parsed = IGCParser.parse(igcText, { lenient: false });
