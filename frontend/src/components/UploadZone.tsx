@@ -158,10 +158,13 @@ export default function UploadZone({ taskId, taskStatus, task, onSubmission, onF
     }
     // Preview mode: hand the file to the parent and reset local state so
     // UploadZone goes back to its "drop a file" affordance when the parent
-    // re-mounts it after the preview closes.
+    // re-mounts it after the preview closes. reset() clears any stale upload
+    // hook state (status/error/progress) that might linger from a prior submit.
     if (onFilePicked) {
       onFilePicked(f);
       setFile(null);
+      setDrag(false);
+      reset();
       if (fileRef.current) fileRef.current.value = '';
       return;
     }

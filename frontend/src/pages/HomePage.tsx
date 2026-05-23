@@ -3,7 +3,7 @@
 // =============================================================================
 
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useSearchParams } from 'react-router-dom';
 import rehypeSanitize from 'rehype-sanitize';
@@ -353,29 +353,49 @@ export default function HomePage() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // Refs read at effect-fire time so leaderboard refetches don't re-trigger
+  // the preview parse/score. Once a file is picked we want a single run keyed
+  // off the file, not off the live leaderboard (which refetches on a timer).
+  const activeTaskRef = useRef(activeTask);
+  activeTaskRef.current = activeTask;
+  const seasonRef = useRef(season);
+  seasonRef.current = season;
+  const activeEntriesRef = useRef(activeEntries);
+  activeEntriesRef.current = activeEntries;
+
   // Run the local preview pipeline whenever a new file is picked.
   useEffect(() => {
-    if (!previewFile || !activeTask || !season) return;
+    if (!previewFile) return;
+    const task = activeTaskRef.current;
+    const seasonNow = seasonRef.current;
+    if (!task || !seasonNow) return;
+    const entries = activeEntriesRef.current;
     let cancelled = false;
     setPreviewResult(null);
     setPreviewError(null);
     (async () => {
-      const text = await previewFile.text();
-      const res = await previewSubmission(text, activeTask, { competitionType: season.competitionType }, activeEntries);
-      if (cancelled) return;
-      if (res.ok) setPreviewResult(res.value);
-      else setPreviewError(res.error);
+      try {
+        const text = await previewFile.text();
+        const res = await previewSubmission(text, task, { competitionType: seasonNow.competitionType }, entries);
+        if (cancelled) return;
+        if (res.ok) setPreviewResult(res.value);
+        else setPreviewError(res.error);
+      } catch (err: any) {
+        if (cancelled) return;
+        setPreviewError({ stage: 'PREVIEW', code: 'PREVIEW_FAILED', message: err?.message ?? 'Preview failed' });
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [previewFile, activeTask, season, activeEntries]);
+  }, [previewFile]);
 
   // Clear preview when navigating away from the task tab.
   useEffect(() => {
     setPreviewFile(null);
     setPreviewResult(null);
     setPreviewError(null);
+    setUploading(false);
   }, [activeTask?.id]);
 
   const handleSubmitPreview = async () => {

@@ -25,8 +25,10 @@ export interface PreviewError {
 }
 
 function turnpointToDef(tp: Turnpoint) {
-  // The pipeline keys crossings by turnpointId. Sequence index is unique per
-  // task and stable, so it doubles as the id for the preview.
+  // Preview-only synthetic ID — does NOT round-trip to the server's
+  // turnpoints.id. We only use it locally to satisfy the pipeline's
+  // TurnpointDef shape; everything the UI keys off comes back through
+  // sequenceIndex (which IS stable across client and server).
   return {
     id: `tp-${tp.sequenceIndex}`,
     sequenceIndex: tp.sequenceIndex,

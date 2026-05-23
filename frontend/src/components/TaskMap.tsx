@@ -847,7 +847,13 @@ export default function TaskMap({ turnpoints, height = 300, track, tracks }: Tas
     };
   }, [mapReady, dedupeLabels]);
 
-  // Redraw when tracks change (no map move needed)
+  // Redraw when tracks change (no map move needed).
+  //
+  // drawSvg is wrapped in useCallback([]) — it reads turnpoints / tracks /
+  // route through refs so the function identity stays stable across renders
+  // and pan/zoom listeners stay attached. This effect is what re-invokes it
+  // when the underlying data changes; if you add a new ref-backed input to
+  // drawSvg, add it to this dep array too.
   useEffect(() => {
     if (mapReady) drawSvg();
   }, [track, tracks, mapReady, drawSvg]);
