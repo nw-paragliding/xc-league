@@ -18,7 +18,13 @@ import { createHash, randomUUID } from 'crypto';
 import type { FastifyReply, FastifyRequest as FastifyRequestBase } from 'fastify';
 import { requireAuth } from './auth';
 import { rebuildTaskResults } from './job-queue';
-import { formatPipelineError, type PipelineInput, runPipeline, SCORER_VERSION, type TurnpointDef } from './pipeline';
+import {
+  formatPipelineError,
+  type PipelineInput,
+  runPipeline,
+  SCORER_VERSION,
+  type TurnpointDef,
+} from './shared/pipeline';
 
 // =============================================================================
 // TYPES

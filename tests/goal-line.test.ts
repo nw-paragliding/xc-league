@@ -5,7 +5,7 @@ import {
   segmentIntersectsGoalLine,
   segmentNearGoalLine,
   tagToleranceM,
-} from '../src/pipeline';
+} from '../src/shared/pipeline';
 import { type Cylinder, optimiseRoute } from '../src/shared/task-engine';
 
 // =============================================================================
