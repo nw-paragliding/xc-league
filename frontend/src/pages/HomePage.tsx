@@ -2,29 +2,33 @@
 // HomePage — unified league home: standings matrix + per-task split view
 // =============================================================================
 
-import { useQueries, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useSearchParams } from 'react-router-dom';
 import rehypeSanitize from 'rehype-sanitize';
 import type { League } from '../api/leagues';
 import { standingsApi } from '../api/standings';
 import type { LeaderboardEntry, Task } from '../api/tasks';
-import { tasksApi } from '../api/tasks';
-import type { ReplayFix } from '../api/track';
+import { submissionsApi, tasksApi } from '../api/tasks';
 import { trackApi } from '../api/track';
+import FlightPreviewPanel from '../components/FlightPreviewPanel';
 import LeagueSwitcher from '../components/LeagueSwitcher';
 import MySubmissions from '../components/MySubmissions';
 import ScoringExplainer from '../components/ScoringExplainer';
 import StandingsMatrix from '../components/StandingsMatrix';
 import TaskLeaderboard from '../components/TaskLeaderboard';
-import TaskMap, { computeDistanceKm, toCylinder } from '../components/TaskMap';
+import TaskMap, { computeDistanceKm, type TrackOverlay, toCylinder } from '../components/TaskMap';
 import UploadZone from '../components/UploadZone';
 import { useAuth } from '../hooks/useAuth';
 import { useLeague } from '../hooks/useLeague';
 import { useSeasons } from '../hooks/useStandings';
+import { type PreviewError, type PreviewResult, previewSubmission } from '../lib/previewPipeline';
 import { markdownRemarkPlugins, markdownSanitizeSchema } from '../utils/markdown';
 import { getTaskStatus, STATUS_STYLE } from '../utils/taskStatus';
+
+const PREVIEW_COLOR = '#10b981'; // emerald-500
+const BEST_COLOR = '#a78bfa'; // violet-400, matches existing single-track render
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TabBar
@@ -113,6 +117,7 @@ function TaskLeftPanel({
   trackLoading,
   onSelectPilot,
   onSelectMySubmission,
+  onFilePicked,
 }: {
   task: Task;
   leaderboardEntries: LeaderboardEntry[];
@@ -123,6 +128,7 @@ function TaskLeftPanel({
   trackLoading: boolean;
   onSelectPilot: (entry: LeaderboardEntry) => void;
   onSelectMySubmission: (submissionId: string) => void;
+  onFilePicked: (file: File) => void;
 }) {
   const taskStatus = getTaskStatus(task);
   const ss = STATUS_STYLE[taskStatus];
@@ -182,7 +188,7 @@ function TaskLeftPanel({
       </div>
 
       {/* Upload zone */}
-      <UploadZone taskId={task.id} taskStatus={taskStatus} task={task} />
+      <UploadZone taskId={task.id} taskStatus={taskStatus} task={task} onFilePicked={onFilePicked} />
 
       {/* Pilot's per-submission breakdown — only mounts for logged-in viewers.
           GET /submissions returns 403 for logged-in non-members of the league;
@@ -322,7 +328,110 @@ export default function HomePage() {
     enabled: !!activeTask && !!activeEntry?.submissionId,
     staleTime: 5 * 60 * 1000,
   });
-  const track: ReplayFix[] | null = trackData?.fixes ?? null;
+
+  // ── Preview state ──────────────────────────────────────────────────────────
+  // When the pilot picks an .igc, run the same scoring pipeline locally and
+  // swap the left sidebar for a preview/compare panel. The server still does
+  // the authoritative scoring on actual Submit.
+  const queryClient = useQueryClient();
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
+  const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
+  const [previewError, setPreviewError] = useState<PreviewError | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  // Pilot's previous-best entry on the active task (null = first submission).
+  const previousBestEntry = useMemo(() => {
+    if (!user) return null;
+    return activeEntries.find((e) => e.pilotId === user.id && e.submissionId) ?? null;
+  }, [user, activeEntries]);
+
+  // Fetch the previous-best track to overlay in violet during preview.
+  const { data: previousBestTrack } = useQuery({
+    queryKey: ['track', leagueSlug, seasonId, activeTask?.id, previousBestEntry?.submissionId, 'preview-best'],
+    queryFn: () => trackApi.get(leagueSlug, seasonId, activeTask!.id, previousBestEntry!.submissionId!),
+    enabled: !!previewFile && !!activeTask && !!previousBestEntry?.submissionId,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Run the local preview pipeline whenever a new file is picked.
+  useEffect(() => {
+    if (!previewFile || !activeTask || !season) return;
+    let cancelled = false;
+    setPreviewResult(null);
+    setPreviewError(null);
+    (async () => {
+      const text = await previewFile.text();
+      const res = await previewSubmission(text, activeTask, { competitionType: season.competitionType }, activeEntries);
+      if (cancelled) return;
+      if (res.ok) setPreviewResult(res.value);
+      else setPreviewError(res.error);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [previewFile, activeTask, season, activeEntries]);
+
+  // Clear preview when navigating away from the task tab.
+  useEffect(() => {
+    setPreviewFile(null);
+    setPreviewResult(null);
+    setPreviewError(null);
+  }, [activeTask?.id]);
+
+  const handleSubmitPreview = async () => {
+    if (!previewFile || !activeTask) return;
+    setUploading(true);
+    try {
+      await submissionsApi.upload(leagueSlug, seasonId, activeTask.id, previewFile);
+      queryClient.invalidateQueries({ queryKey: ['leaderboard', leagueSlug, seasonId, activeTask.id] });
+      queryClient.invalidateQueries({ queryKey: ['submissions', leagueSlug, seasonId, activeTask.id] });
+      setPreviewFile(null);
+      setPreviewResult(null);
+      setPreviewError(null);
+    } catch (err: any) {
+      setPreviewError({ stage: 'UPLOAD', code: 'UPLOAD_FAILED', message: err?.message ?? 'Upload failed' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // TaskMap input — single track when no preview; two-track overlay during preview.
+  const mapTracks: TrackOverlay[] | null = previewFile
+    ? [
+        ...(previousBestTrack
+          ? [
+              {
+                id: 'best',
+                fixes: previousBestTrack.fixes,
+                color: BEST_COLOR,
+                crossedSequenceIndexes: previousBestTrack.crossings.map((c) => c.sequenceIndex),
+              },
+            ]
+          : []),
+        ...(previewResult
+          ? [
+              {
+                id: 'preview',
+                fixes: previewResult.fixes,
+                color: PREVIEW_COLOR,
+                crossedSequenceIndexes:
+                  previewResult.attempts[previewResult.bestAttemptIndex]?.turnpointCrossings.map(
+                    (c) => c.sequenceIndex,
+                  ) ?? [],
+              },
+            ]
+          : []),
+      ]
+    : trackData
+      ? [
+          {
+            id: 'selected',
+            fixes: trackData.fixes,
+            color: BEST_COLOR,
+            crossedSequenceIndexes: trackData.crossings.map((c) => c.sequenceIndex),
+          },
+        ]
+      : null;
 
   // scoreMap: taskId → (pilotId → totalPoints) — for Overall tab
   const scoreMap = new Map<string, Map<string, number>>();
@@ -403,7 +512,7 @@ export default function HomePage() {
         </div>
       </div>
     ) : activeTask ? (
-      <TaskMap turnpoints={activeTask.turnpoints} height="100%" track={track} />
+      <TaskMap turnpoints={activeTask.turnpoints} height="100%" tracks={mapTracks} />
     ) : null;
 
   return (
@@ -483,6 +592,20 @@ export default function HomePage() {
               maxByTask={maxByTask}
               myId={user?.id}
             />
+          ) : activeTask && previewFile ? (
+            <FlightPreviewPanel
+              filename={previewFile.name}
+              result={previewResult}
+              error={previewError}
+              previousBest={previousBestEntry}
+              uploading={uploading}
+              onSubmit={handleSubmitPreview}
+              onCancel={() => {
+                setPreviewFile(null);
+                setPreviewResult(null);
+                setPreviewError(null);
+              }}
+            />
           ) : activeTask ? (
             <TaskLeftPanel
               task={activeTask}
@@ -494,12 +617,13 @@ export default function HomePage() {
               trackLoading={trackLoading}
               onSelectPilot={handleSelectPilot}
               onSelectMySubmission={handleSelectMySubmission}
+              onFilePicked={setPreviewFile}
             />
           ) : null)}
 
         {/* Map — rendered inline on mobile when map view is active */}
         <div className={`home-map-mobile${mobileShowMap && activeTask ? '' : ' hidden'}`}>
-          {activeTask && <TaskMap turnpoints={activeTask.turnpoints} height="100%" track={track} />}
+          {activeTask && <TaskMap turnpoints={activeTask.turnpoints} height="100%" tracks={mapTracks} />}
         </div>
       </div>
 

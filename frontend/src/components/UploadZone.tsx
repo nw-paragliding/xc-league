@@ -123,9 +123,15 @@ interface UploadZoneProps {
   taskStatus: TaskStatus;
   task: Task;
   onSubmission?: (id: string) => void;
+  /**
+   * When set, the zone defers the actual upload to the parent. After file
+   * validation it calls this callback and leaves its own upload state idle —
+   * the parent typically swaps in a preview panel that owns the upload.
+   */
+  onFilePicked?: (file: File) => void;
 }
 
-export default function UploadZone({ taskId, taskStatus, task, onSubmission }: UploadZoneProps) {
+export default function UploadZone({ taskId, taskStatus, task, onSubmission, onFilePicked }: UploadZoneProps) {
   const { user, login } = useAuth();
   const { leagueSlug } = useLeague();
   const [showExport, setShowExport] = useState(false);
@@ -148,6 +154,15 @@ export default function UploadZone({ taskId, taskStatus, task, onSubmission }: U
     }
     if (f.size > 5 * 1024 * 1024) {
       alert('File too large — maximum 5MB');
+      return;
+    }
+    // Preview mode: hand the file to the parent and reset local state so
+    // UploadZone goes back to its "drop a file" affordance when the parent
+    // re-mounts it after the preview closes.
+    if (onFilePicked) {
+      onFilePicked(f);
+      setFile(null);
+      if (fileRef.current) fileRef.current.value = '';
       return;
     }
     setFile(f);
