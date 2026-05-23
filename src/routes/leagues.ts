@@ -1755,6 +1755,31 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         }
       }
 
+      // open_date / close_date are locked once submissions exist. Moving the
+      // window can retroactively invalidate flights — validateFlightDate
+      // rejects an IGC whose flightDate falls outside [open_date, close_date],
+      // so a future re-process would silently mark them ineligible.
+      // Admins who need to retime a task with submissions should soft-delete
+      // the offending submissions first (DELETE …/submissions/:id, #34).
+      // Compare as instants (getTime), not strings — "2026-01-01T00:00:00Z" and
+      // "2026-01-01T00:00:00.000Z" are the same moment but different strings, and
+      // we should treat re-submitting an equivalent value as a no-op.
+      const sameInstant = (a: string, b: string) => new Date(a).getTime() === new Date(b).getTime();
+      const datesChanged =
+        (body.openDate !== undefined && !sameInstant(body.openDate, existingTask.open_date)) ||
+        (body.closeDate !== undefined && !sameInstant(body.closeDate, existingTask.close_date));
+      if (datesChanged) {
+        const { c: submissionCount } = db
+          .prepare(`SELECT COUNT(*) AS c FROM flight_submissions WHERE task_id = ? AND deleted_at IS NULL`)
+          .get(taskId) as { c: number };
+        if (submissionCount > 0) {
+          return reply.status(400).send({
+            error:
+              'Cannot change openDate or closeDate while submissions exist for this task. Delete or remove submissions first.',
+          });
+        }
+      }
+
       // Build update query dynamically
       const updates: string[] = [];
       const params: any[] = [];
@@ -1771,13 +1796,17 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         updates.push('task_type = ?');
         params.push(body.taskType);
       }
+      // Normalize to canonical UTC ISO before writing. validateFlightDate (and
+      // upload/reprocess) read `open_date.slice(0, 10)` to derive the YYYY-MM-DD
+      // window, so storing the raw body string would let an admin shift the
+      // window by submitting an equivalent instant with a different offset.
       if (body.openDate !== undefined) {
         updates.push('open_date = ?');
-        params.push(body.openDate);
+        params.push(new Date(body.openDate).toISOString());
       }
       if (body.closeDate !== undefined) {
         updates.push('close_date = ?');
-        params.push(body.closeDate);
+        params.push(new Date(body.closeDate).toISOString());
       }
       if (body.taskValue !== undefined) {
         updates.push('normalized_score = ?');
