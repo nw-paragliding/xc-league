@@ -199,11 +199,27 @@ export function buildXctrackDeepLink(task: ExportTask): string {
     return obj;
   });
 
+  // For RACE_TO_GOAL, emit a single 09:00Z gate so XCTrack treats the task
+  // as a real race (start countdown + audio cues at SSS). 09:00 UTC is
+  // 02:00 PDT / 01:00 PST — effectively always-open for any real flight
+  // in this league, so the gate doesn't constrain when pilots can start.
+  //
+  // For OPEN_DISTANCE, omit `g` so XCTrack treats the task as a free
+  // task. Emitting `g:[]` doesn't work either — XCTrack rejects empty
+  // arrays with an "sss.timeGates is empty" parse error.
+  //
+  // `s.t = 1` is RACE (vs 2 = elapsed-time). `s.d` is documented as
+  // obsolete but is kept for backward compatibility with older readers.
+  const s: Record<string, unknown> = { d: 1, t: 1 };
+  if (task.taskType === 'RACE_TO_GOAL') {
+    s.g = ['09:00:00Z'];
+  }
+
   const qrTask: Record<string, unknown> = {
     taskType: 'CLASSIC',
     version: 2,
     t: turnpoints,
-    s: { d: 1, t: 1 }, // no time gates (omitting g avoids XCTrack "timeGates is empty" parse error)
+    s,
     o: { v: 2 },
     e: 0, // WGS84
   };

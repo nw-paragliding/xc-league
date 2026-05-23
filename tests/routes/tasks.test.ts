@@ -871,6 +871,21 @@ describe('buildXctrackDeepLink — XCTSK v2 format', () => {
     const obj = JSON.parse(result.slice('XCTSK:'.length));
     expect(obj.e).toBe(0);
   });
+
+  it('emits a 09:00Z start gate for RACE_TO_GOAL tasks', () => {
+    const result = buildXctrackDeepLink(baseTask);
+    const obj = JSON.parse(result.slice('XCTSK:'.length));
+    expect(obj.s.g).toEqual(['09:00:00Z']);
+  });
+
+  it('omits the start gate for OPEN_DISTANCE tasks (free task in XCTrack)', () => {
+    const openTask: ExportTask = { ...baseTask, taskType: 'OPEN_DISTANCE' };
+    const result = buildXctrackDeepLink(openTask);
+    const obj = JSON.parse(result.slice('XCTSK:'.length));
+    expect(obj.s.g).toBeUndefined();
+    expect(obj.s.d).toBe(1);
+    expect(obj.s.t).toBe(1);
+  });
 });
 
 describe('encodeXctskZ — polyline coordinate encoding', () => {
@@ -1017,12 +1032,13 @@ describe('QR roundtrip — 25_August_NWXC.xctsk → XCTSK QR', () => {
     expect(ourObj.t[6].z.endsWith(r400)).toBe(true);
   });
 
-  it('includes start section s with d and t fields', () => {
-    // g (timeGates) is intentionally omitted — passing g:[] causes XCTrack
-    // to throw "sss.timeGates is empty". We only assert the fields we set.
+  it('includes start section s with race gate at 09:00Z', () => {
+    // Reference QR (FlySkyHy) emits g:[] which XCTrack rejects with
+    // "sss.timeGates is empty". We emit a single early UTC gate so the
+    // task parses as a real race-to-goal with XCTrack's start cues.
     expect(ourObj.s.d).toBe(1);
     expect(ourObj.s.t).toBe(1);
-    expect(ourObj.s.g).toBeUndefined();
+    expect(ourObj.s.g).toEqual(['09:00:00Z']);
   });
 
   it('includes options o matching reference', () => {
