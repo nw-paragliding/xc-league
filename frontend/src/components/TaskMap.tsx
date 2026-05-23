@@ -182,7 +182,7 @@ export interface TrackOverlay {
   color: string;
   /**
    * `sequenceIndex` of every turnpoint this track touched. When present, a
-   * filled dot in the track's colour is drawn at each matching cylinder centre.
+   * checkmark in the track's colour is drawn at each matching cylinder centre.
    * Omit to skip hit markers for this track.
    */
   crossedSequenceIndexes?: number[];

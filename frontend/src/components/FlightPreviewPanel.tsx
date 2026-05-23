@@ -202,9 +202,12 @@ export default function FlightPreviewPanel({
           className="btn btn-primary"
           style={{ flex: 2, justifyContent: 'center', fontSize: 13 }}
           onClick={onSubmit}
-          disabled={uploading || !!error || !result}
+          // Parse/preview errors are unrecoverable without a different file —
+          // disable Submit. UPLOAD errors (network blip, server 5xx) are
+          // retryable against the same file so we keep Submit enabled.
+          disabled={uploading || !result || (!!error && error.stage !== 'UPLOAD')}
         >
-          {uploading ? 'Submitting…' : 'Submit Flight'}
+          {uploading ? 'Submitting…' : error?.stage === 'UPLOAD' ? 'Retry submit' : 'Submit Flight'}
         </button>
       </div>
     </div>
