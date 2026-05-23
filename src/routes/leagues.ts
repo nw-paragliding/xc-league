@@ -1761,16 +1761,20 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       // so a future re-process would silently mark them ineligible.
       // Admins who need to retime a task with submissions should soft-delete
       // the offending submissions first (DELETE …/submissions/:id, #34).
+      // Compare as instants (getTime), not strings — "2026-01-01T00:00:00Z" and
+      // "2026-01-01T00:00:00.000Z" are the same moment but different strings, and
+      // we should treat re-submitting an equivalent value as a no-op.
+      const sameInstant = (a: string, b: string) => new Date(a).getTime() === new Date(b).getTime();
       const datesChanged =
-        (body.openDate !== undefined && body.openDate !== existingTask.open_date) ||
-        (body.closeDate !== undefined && body.closeDate !== existingTask.close_date);
+        (body.openDate !== undefined && !sameInstant(body.openDate, existingTask.open_date)) ||
+        (body.closeDate !== undefined && !sameInstant(body.closeDate, existingTask.close_date));
       if (datesChanged) {
         const { c: submissionCount } = db
           .prepare(`SELECT COUNT(*) AS c FROM flight_submissions WHERE task_id = ? AND deleted_at IS NULL`)
           .get(taskId) as { c: number };
         if (submissionCount > 0) {
           return reply.status(400).send({
-            error: 'Cannot change open_date or close_date while submissions exist for this task. Delete or remove submissions first.',
+            error: 'Cannot change openDate or closeDate while submissions exist for this task. Delete or remove submissions first.',
           });
         }
       }

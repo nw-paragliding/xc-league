@@ -702,7 +702,7 @@ describe('Task lifecycle — POST publish + closed-task edit guard', () => {
       });
 
       expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.body).error).toMatch(/open_date.*close_date/i);
+      expect(JSON.parse(res.body).error).toMatch(/openDate.*closeDate/);
       const row = db.prepare(`SELECT open_date FROM tasks WHERE id = ?`).get(task.id) as any;
       expect(row.open_date).toBe(openIso);
     });
@@ -750,6 +750,26 @@ describe('Task lifecycle — POST publish + closed-task edit guard', () => {
       });
 
       expect(res.statusCode).toBe(200);
+    });
+
+    it('treats equivalent ISO formats as a no-op (millis / offset variations)', async () => {
+      // Stored as ".000Z"; admin re-submits the same instant without millis. Or
+      // in a +HH:MM offset. Both should pass the guard even with submissions.
+      const stored = '2026-01-01T00:00:00.000Z';
+      const noMillis = '2026-01-01T00:00:00Z';
+      const withOffset = '2026-01-01T05:00:00+05:00'; // same instant
+      const task = createTestTask(db, testSeason.id, testLeague.id, { openDate: stored, closeDate: closeIso });
+      createTestSubmission(db, task.id, pilotUser.id, testLeague.id);
+
+      for (const equivalent of [noMillis, withOffset]) {
+        const res = await app.inject({
+          method: 'PUT',
+          url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${task.id}`,
+          headers: { 'x-test-user-id': adminUser.id, 'content-type': 'application/json' },
+          payload: JSON.stringify({ openDate: equivalent }),
+        });
+        expect(res.statusCode).toBe(200);
+      }
     });
 
     it('open_date becomes editable again after the submission is soft-deleted', async () => {
