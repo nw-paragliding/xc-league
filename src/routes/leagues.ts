@@ -1060,14 +1060,61 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
         return reply.status(404).send({ error: 'Season not found' });
       }
 
-      // Soft delete the season
-      db.prepare(
-        `UPDATE seasons
-         SET deleted_at = datetime('now'), updated_at = datetime('now')
-         WHERE id = ?`,
-      ).run(seasonId);
+      // Soft-delete the season AND cascade to its child tasks (#35).
+      // Read paths filter on s.deleted_at IS NULL, so children stay invisible
+      // either way — but cascading keeps the data hierarchy consistent so
+      // future audit / cleanup queries don't see orphaned tasks pointing at
+      // a soft-deleted season. The task-level cascade (turnpoints, submissions,
+      // attempts, task_results) lives in the task DELETE handler and is
+      // duplicated here intentionally — pulling it into a helper would obscure
+      // that the task delete route already does this for the single-task case.
+      // CASCADE: keep the per-task block below in sync with the task DELETE handler.
+      let childTaskCount = 0;
+      db.transaction(() => {
+        db.prepare(`UPDATE seasons SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(
+          seasonId,
+        );
 
-      request.log.info({ leagueId: league.id, seasonId }, 'Season deleted');
+        // Soft-delete season-level children too (season_registrations).
+        // Same rationale as tasks: read paths already filter via the parent
+        // season's deleted_at, but cascading keeps the data hierarchy
+        // consistent and stops queries like "registered_pilot_count" from
+        // returning non-zero for a season that's been deleted.
+        db.prepare(
+          `UPDATE season_registrations SET deleted_at = datetime('now'), updated_at = datetime('now')
+           WHERE season_id = ? AND deleted_at IS NULL`,
+        ).run(seasonId);
+
+        // Filter on league_id too — tasks.league_id is denormalised and not
+        // constrained to match seasons.league_id at the DB level, so a
+        // corrupted row could otherwise let a season-delete reach across
+        // the tenant boundary.
+        const childTaskIds = db
+          .prepare(`SELECT id FROM tasks WHERE season_id = ? AND league_id = ? AND deleted_at IS NULL`)
+          .all(seasonId, league.id) as Array<{ id: string }>;
+        childTaskCount = childTaskIds.length;
+
+        // childTaskIds was filtered to deleted_at IS NULL, so an unconditional
+        // DELETE FROM task_results is safe — any already-soft-deleted task's
+        // results were already cleared at the time of its original deletion.
+        for (const { id: taskId } of childTaskIds) {
+          db.prepare(`UPDATE tasks SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(
+            taskId,
+          );
+          db.prepare(`UPDATE turnpoints SET deleted_at = datetime('now') WHERE task_id = ? AND deleted_at IS NULL`).run(
+            taskId,
+          );
+          db.prepare(
+            `UPDATE flight_submissions SET deleted_at = datetime('now') WHERE task_id = ? AND deleted_at IS NULL`,
+          ).run(taskId);
+          db.prepare(
+            `UPDATE flight_attempts SET deleted_at = datetime('now') WHERE task_id = ? AND deleted_at IS NULL`,
+          ).run(taskId);
+          db.prepare(`DELETE FROM task_results WHERE task_id = ?`).run(taskId);
+        }
+      })();
+
+      request.log.info({ leagueId: league.id, seasonId, childTaskCount }, 'Season deleted');
       return reply.send({ message: 'Season deleted' });
     });
 
@@ -1864,6 +1911,7 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       // task_results has no deleted_at (computed data) so hard-delete those rows.
       // Admin moderation (deleting closed tasks) is allowed; the cascade keeps
       // standings in sync via the live aggregate.
+      // CASCADE: keep in sync with the per-task block in the season DELETE handler.
       db.transaction(() => {
         db.prepare(`UPDATE tasks SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(
           taskId,

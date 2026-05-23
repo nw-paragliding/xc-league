@@ -226,7 +226,26 @@ CREATE INDEX idx_submissions_status ON flight_submissions (status)           WHE
 -- Duplicate detection: same pilot cannot upload the same file content twice for the same task
 CREATE UNIQUE INDEX idx_submissions_dedup ON flight_submissions (task_id, user_id, igc_sha256) WHERE deleted_at IS NULL;
 
--- Flight attempts: one per detected attempt within an IGC file
+-- Flight attempts: one per detected attempt within an IGC file.
+--
+-- INVARIANT (#36): task_results is a computed cache derived from the live
+-- (non-deleted) flight_attempts. Every code path that mutates
+-- flight_attempts MUST keep that consistency before the next read. Three
+-- patterns satisfy this — pick the one that fits:
+--   (a) Call rebuildTaskResults(db, task_id) in the same transaction —
+--       refreshes the whole task. Used by src/upload.ts after insert.
+--   (b) Hard-delete every task_results row for the affected task_id —
+--       the task is going away. Used by the task-DELETE handler.
+--   (c) Delete only the task_results rows that reference attempts you're
+--       about to remove, AND guarantee a full rebuild runs before the
+--       data is served. Used by src/reprocess.ts: per-submission cleanup
+--       skips the per-task O(N²) cost; server.ts runs the boot-time
+--       sweep over every task afterward.
+-- There is no DB-level trigger enforcing this — it's a convention. Doing
+-- none of (a)/(b)/(c) leaves task_results pointing at stale or
+-- non-existent attempts and the leaderboard silently lies. Search the
+-- repo for `rebuildTaskResults(` and `DELETE FROM task_results` to find
+-- the existing call sites.
 CREATE TABLE flight_attempts (
     id                          TEXT        PRIMARY KEY,  -- UUID
     submission_id               TEXT        NOT NULL REFERENCES flight_submissions (id),
@@ -264,7 +283,16 @@ CREATE INDEX idx_attempts_submission ON flight_attempts (submission_id)         
 CREATE INDEX idx_attempts_task_user  ON flight_attempts (task_id, user_id)       WHERE deleted_at IS NULL;
 CREATE INDEX idx_attempts_task_goal  ON flight_attempts (task_id, reached_goal)  WHERE deleted_at IS NULL;
 
--- Turnpoint crossings: one row per TP successfully crossed in an attempt
+-- Turnpoint crossings: one row per TP successfully crossed in an attempt.
+--
+-- No deleted_at column (#33): live read paths gate the lookup upstream —
+-- they only fetch crossings for attempt_ids sourced from task_results
+-- (e.g. the track endpoint reads tc.attempt_id from
+-- task_results.best_attempt_id) or by joining through flight_attempts
+-- with a deleted_at IS NULL filter. Either gate transitively excludes
+-- crossings of soft-deleted attempts. New audit / cleanup queries that
+-- query turnpoint_crossings directly without one of those gates will see
+-- phantom crossings of soft-deleted parents.
 CREATE TABLE turnpoint_crossings (
     id                      TEXT        PRIMARY KEY,  -- UUID
     attempt_id              TEXT        NOT NULL REFERENCES flight_attempts (id),
