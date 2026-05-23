@@ -871,6 +871,21 @@ describe('buildXctrackDeepLink — XCTSK v2 format', () => {
     const obj = JSON.parse(result.slice('XCTSK:'.length));
     expect(obj.e).toBe(0);
   });
+
+  it('emits a 09:00Z start gate for RACE_TO_GOAL tasks', () => {
+    const result = buildXctrackDeepLink(baseTask);
+    const obj = JSON.parse(result.slice('XCTSK:'.length));
+    expect(obj.s.g).toEqual(['09:00:00Z']);
+  });
+
+  it('omits the start gate for OPEN_DISTANCE tasks (free task in XCTrack)', () => {
+    const openTask: ExportTask = { ...baseTask, taskType: 'OPEN_DISTANCE' };
+    const result = buildXctrackDeepLink(openTask);
+    const obj = JSON.parse(result.slice('XCTSK:'.length));
+    expect(obj.s.g).toBeUndefined();
+    expect(obj.s.d).toBe(1);
+    expect(obj.s.t).toBe(1);
+  });
 });
 
 describe('encodeXctskZ — polyline coordinate encoding', () => {
