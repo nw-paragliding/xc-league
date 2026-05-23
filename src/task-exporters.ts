@@ -203,7 +203,13 @@ export function buildXctrackDeepLink(task: ExportTask): string {
     taskType: 'CLASSIC',
     version: 2,
     t: turnpoints,
-    s: { d: 1, t: 1 }, // no time gates (omitting g avoids XCTrack "timeGates is empty" parse error)
+    // Race-to-goal with a single 09:00Z gate. 09:00 UTC = ~01:00–02:00 PDT,
+    // so the gate is effectively always-open for real flights in this league
+    // while still giving XCTrack a valid race task (audio cues, countdown).
+    // `g` must be non-empty — `g:[]` triggers an "sss.timeGates is empty"
+    // parse error in XCTrack. `t:1` = RACE, `d` is documented as obsolete
+    // but kept for backward compatibility with older readers.
+    s: { g: ['09:00:00Z'], d: 1, t: 1 },
     o: { v: 2 },
     e: 0, // WGS84
   };
