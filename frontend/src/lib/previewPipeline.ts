@@ -5,8 +5,8 @@
 // submit. The server remains authoritative — this is just so the pilot can
 // see what's going to happen first.
 
-import type { ScoredAttempt } from '../../../src/pipeline';
-import { parseAndValidate, runPipeline } from '../../../src/pipeline';
+import type { ScoredAttempt } from '../../../src/shared/pipeline';
+import { parseAndValidate, runPipeline } from '../../../src/shared/pipeline';
 import type { Season } from '../api/leagues';
 import type { LeaderboardEntry, Task, Turnpoint } from '../api/tasks';
 import type { ReplayFix } from '../api/track';

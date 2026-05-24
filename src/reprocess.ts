@@ -12,7 +12,7 @@
 
 import type { Database } from 'better-sqlite3';
 import { randomUUID } from 'crypto';
-import { type PipelineInput, runPipeline, SCORER_VERSION, type TurnpointDef } from './pipeline';
+import { type PipelineInput, runPipeline, SCORER_VERSION, type TurnpointDef } from './shared/pipeline';
 
 interface SubmissionRow {
   id: string;

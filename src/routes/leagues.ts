@@ -10,7 +10,7 @@ import type { FastifyInstance } from 'fastify';
 import QRCode from 'qrcode';
 import { makeResolveLeagueHook, requireAuth, requireLeagueAdmin, requireLeagueMember } from '../auth';
 import { rebuildTaskResults } from '../job-queue';
-import { parseAndValidate } from '../pipeline';
+import { parseAndValidate } from '../shared/pipeline';
 import { type Cylinder, optimiseRoute } from '../shared/task-engine';
 import {
   buildDownloadUrl,

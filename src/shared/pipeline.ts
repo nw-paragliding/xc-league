@@ -15,7 +15,7 @@ import {
   type OptimisedRoute,
   optimiseRoute,
   tagToleranceM,
-} from './shared/task-engine';
+} from './task-engine';
 
 // =============================================================================
 // SCORER VERSION
@@ -27,8 +27,8 @@ import {
 
 export const SCORER_VERSION = '1.1';
 
-// Re-export so existing `import { tagToleranceM } from './pipeline'` paths
-// keep working. The canonical helper lives in `./shared/task-engine`.
+// Re-export so existing `import { tagToleranceM } from './shared/pipeline'`
+// paths keep working. The canonical helper lives in `./task-engine`.
 export { tagToleranceM };
 
 // =============================================================================
