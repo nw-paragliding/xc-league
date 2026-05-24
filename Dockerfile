@@ -28,13 +28,24 @@ FROM node:20-alpine AS client-builder
 ARG VITE_MAPTILER_KEY
 ARG VITE_OPENAIP_KEY
 
+# Root deps install at /build first. The frontend bundle reaches into
+# src/shared/ (pipeline.ts, task-engine.ts) for shared scoring code, and
+# pipeline.ts imports `igc-parser`. tsc/vite resolve that module via Node's
+# parent-directory walk from the importing file's location — pipeline.ts at
+# /build/src/shared/pipeline.ts must see node_modules at /build, not just
+# /build/frontend (a sibling, not an ancestor). --ignore-scripts skips
+# better-sqlite3's native build, which isn't needed for the frontend bundle.
+WORKDIR /build
+COPY package*.json ./
+RUN npm ci --ignore-scripts
+
 WORKDIR /build/frontend
 
 COPY frontend/package*.json ./
 RUN npm ci
 
 COPY frontend/ ./
-# Shared code imported by frontend components via relative path
+# Shared code imported by frontend components via relative path.
 COPY src/shared/ ../src/shared/
 
 RUN npm run build
