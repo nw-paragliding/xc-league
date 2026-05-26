@@ -34,8 +34,9 @@ import type { PipelineInput, TurnpointDef } from './pipeline';
 //   • Fix at 47.520 is INSIDE TP1 (47.52, r=400m).
 //   • Fix at 47.540 is INSIDE GOAL (47.54, r=400m).
 //
-// → SSS crossing between fixes 0 and 2, TP1 crossing between 2 and 3,
-//   GOAL crossing between 3 and 4. Pilot reaches goal.
+// → Stage 3 detects an outward SSS crossing (inside→outside) between
+//   fixes 1 and 2, a TP1 crossing between fixes 2 and 3, and a GOAL
+//   crossing between fixes 3 and 4. Pilot reaches goal.
 
 export const FIXTURE_IGC = [
   'AXLK00001',

@@ -52,29 +52,49 @@ function turnpointToDef(tp: Turnpoint) {
  * Best" — leading to nonsense like "less distance = more points" when the
  * existing leaderboard has been heavily compressed.
  *
- * Approach: pool the preview alongside the existing leaderboard, recompute
- * raw dist + time points for everyone using the new bestDist and the new
+ * Approach: pool the preview alongside the existing leaderboard (excluding
+ * the current pilot's stale row — the preview replaces it), recompute raw
+ * dist + time points for everyone using the new bestDist and the new
  * goal-time pool, find the would-be winner's raw total, scale.
  */
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
 function normalizePreviewPoints(
   preview: ScoredAttempt,
   leaderboard: LeaderboardEntry[],
+  currentUserId: string | undefined,
   taskValue: number,
 ): { distancePoints: number; timePoints: number; totalPoints: number } {
+  // Drop the current pilot's existing leaderboard row — their preview replaces
+  // it as their best-attempt candidate. Keeping both would double-count this
+  // pilot in the goal-time pool (skewing tMin/tMax) and treat their old
+  // total as a separate "competitor" against themselves.
+  const others = currentUserId ? leaderboard.filter((e) => e.pilotId !== currentUserId) : leaderboard;
+
   // bestDist drives the non-goal distance points formula. Include the preview
   // — if it flew further than anyone else, it sets the new bestDist.
-  const bestDist = Math.max(preview.distanceFlownKm, ...leaderboard.map((e) => e.distanceFlownKm ?? 0), 0);
+  // Caveat: leaderboard.distanceFlownKm is each pilot's best-ATTEMPT distance,
+  // not their max across all attempts. In the (narrow) case where a pilot's
+  // non-best attempt flew further than their best attempt, the server's
+  // rebuildTaskResults would see a larger bestDist via MAX(distance_flown_km)
+  // over flight_attempts. The preview can't observe that without an extra API.
+  const bestDist = Math.max(preview.distanceFlownKm, ...others.map((e) => e.distanceFlownKm ?? 0), 0);
   // Time points use the global goal-time pool. Include the preview's time if
   // it reached goal.
   const allGoalTimes: number[] = [
-    ...leaderboard.filter((e) => e.reachedGoal && e.taskTimeS != null).map((e) => e.taskTimeS as number),
+    ...others.filter((e) => e.reachedGoal && e.taskTimeS != null).map((e) => e.taskTimeS as number),
     ...(preview.reachedGoal && preview.taskTimeS != null ? [preview.taskTimeS] : []),
   ];
 
+  // rebuildTaskResults rounds each total to 0.1 BEFORE picking the winner.
+  // Mirror that here so a floating-point ε doesn't shift the winner and
+  // therefore the global scale.
   const rawTotal = (d: number, reachedGoal: boolean, t: number | null) => {
     const dp = computeDistancePoints(d, bestDist > 0 ? bestDist : 1, reachedGoal);
     const tp = reachedGoal && t != null ? computeTimePoints(t, allGoalTimes) : 0;
-    return dp + tp;
+    return round1(dp + tp);
   };
 
   const previewRawDist = computeDistancePoints(
@@ -84,13 +104,13 @@ function normalizePreviewPoints(
   );
   const previewRawTime =
     preview.reachedGoal && preview.taskTimeS != null ? computeTimePoints(preview.taskTimeS, allGoalTimes) : 0;
-  const previewRawTotal = previewRawDist + previewRawTime;
+  const previewRawTotal = round1(previewRawDist + previewRawTime);
 
   // Winner total across (existing best per pilot) + (this preview). Same
   // formula rebuildTaskResults uses; we treat the preview as a candidate
   // attempt — if it wins, it becomes the basis for the new scale.
   let winnerRaw = previewRawTotal;
-  for (const e of leaderboard) {
+  for (const e of others) {
     const r = rawTotal(e.distanceFlownKm, e.reachedGoal, e.taskTimeS);
     if (r > winnerRaw) winnerRaw = r;
   }
@@ -100,12 +120,12 @@ function normalizePreviewPoints(
   }
 
   const scale = taskValue / winnerRaw;
-  const distancePoints = Math.round(previewRawDist * scale * 10) / 10;
-  const timePoints = Math.round(previewRawTime * scale * 10) / 10;
+  const distancePoints = round1(previewRawDist * scale);
+  const timePoints = round1(previewRawTime * scale);
   return {
     distancePoints,
     timePoints,
-    totalPoints: Math.round((distancePoints + timePoints) * 10) / 10,
+    totalPoints: round1(distancePoints + timePoints),
   };
 }
 
@@ -133,6 +153,7 @@ export async function previewSubmission(
   task: Task,
   season: Pick<Season, 'competitionType'>,
   leaderboardEntries: LeaderboardEntry[],
+  currentUserId: string | undefined,
 ): Promise<{ ok: true; value: PreviewResult } | { ok: false; error: PreviewError }> {
   // Parse once up front. runPipelineFromParsed reuses this so we don't pay the
   // ~50-200 ms parse cost twice on multi-hour 1-Hz tracks.
@@ -177,7 +198,12 @@ export async function previewSubmission(
   // scale as the leaderboard's "Previous Best" comparison shows.
   const bestIdx = result.value.bestAttemptIndex;
   const bestAttempt = result.value.scoredAttempts[bestIdx];
-  const normalized = normalizePreviewPoints(bestAttempt, leaderboardEntries, task.taskValue ?? MAX_POINTS);
+  const normalized = normalizePreviewPoints(
+    bestAttempt,
+    leaderboardEntries,
+    currentUserId,
+    task.taskValue ?? MAX_POINTS,
+  );
   const normalizedAttempts = result.value.scoredAttempts.map((a, i) => (i === bestIdx ? { ...a, ...normalized } : a));
 
   return {

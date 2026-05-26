@@ -69,7 +69,16 @@ const leaderboardEntries = [
 
 describe('previewSubmission parity — frontend wraps runPipeline against shared fixture', () => {
   it('parses, scores, and reaches goal with numbers identical to the backend snapshot', async () => {
-    const res = await previewSubmission(FIXTURE_INPUT.igcText, task, { competitionType: 'XC' }, leaderboardEntries);
+    // currentUserId='new-pilot' so we don't dedup against the prior finisher
+    // (different pilotId), keeping the leaderboard's goal time + total in the
+    // pool for the normalisation calc.
+    const res = await previewSubmission(
+      FIXTURE_INPUT.igcText,
+      task,
+      { competitionType: 'XC' },
+      leaderboardEntries,
+      'new-pilot',
+    );
 
     expect(res.ok).toBe(true);
     if (!res.ok) return;

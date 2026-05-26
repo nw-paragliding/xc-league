@@ -373,6 +373,8 @@ export default function HomePage() {
   seasonRef.current = season;
   const activeEntriesRef = useRef(activeEntries);
   activeEntriesRef.current = activeEntries;
+  const userIdRef = useRef(user?.id);
+  userIdRef.current = user?.id;
 
   // Run the local preview pipeline whenever a new file is picked.
   useEffect(() => {
@@ -388,7 +390,13 @@ export default function HomePage() {
       try {
         const [{ previewSubmission }, text] = await Promise.all([import('../lib/previewPipeline'), previewFile.text()]);
         if (cancelled) return;
-        const res = await previewSubmission(text, task, { competitionType: seasonNow.competitionType }, entries);
+        const res = await previewSubmission(
+          text,
+          task,
+          { competitionType: seasonNow.competitionType },
+          entries,
+          userIdRef.current,
+        );
         if (cancelled) return;
         if (res.ok) setPreviewResult(res.value);
         else setPreviewError(res.error);

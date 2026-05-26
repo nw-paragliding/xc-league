@@ -45,7 +45,8 @@ function formatTimeDelta(currS: number, prevS: number) {
   const formatted =
     h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
   const sign = d > 0 ? '+' : '−';
-  // Faster (negative delta) is better — green; slower is red.
+  // Faster (negative delta) is better — paints with var(--gold), the
+  // codebase's "good outcome" token. Slower is red (--danger).
   return { text: `${sign}${formatted}`, color: d < 0 ? 'var(--gold)' : 'var(--danger)' };
 }
 

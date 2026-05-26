@@ -2,12 +2,14 @@
 // Pipeline parity — backend half
 // =============================================================================
 //
-// Runs the shared fixture through runPipeline on the Node side and snapshots
-// the numeric output. The frontend half (frontend/src/lib/previewPipeline.test.ts)
-// runs the same fixture through previewSubmission (which wraps runPipeline)
-// and asserts identical numbers. If Vite, esbuild, or igc-parser ever drift
-// between the two runtime paths, both tests will diverge in lockstep — the
-// failure points straight at the bundler.
+// Runs the shared fixture through runPipeline on the Node side and asserts
+// the raw pipeline output (distance ≈ 3.65 km, reaches goal, expected
+// turnpoint sequence). The frontend half (frontend/src/lib/previewPipeline.test.ts)
+// runs the same fixture through previewSubmission (which adds task-level
+// normalisation on top) and locks down the post-normalisation numbers. Together
+// the two tests guard the path from IGC bytes → leaderboard-scale points; if
+// Vite, esbuild, or igc-parser ever drift between Node and the browser, both
+// tests diverge in lockstep — the failure points straight at the bundler.
 // =============================================================================
 
 import { describe, expect, it } from 'vitest';
