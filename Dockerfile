@@ -33,11 +33,13 @@ ARG VITE_OPENAIP_KEY
 # pipeline.ts imports `igc-parser`. tsc/vite resolve that module via Node's
 # parent-directory walk from the importing file's location — pipeline.ts at
 # /build/src/shared/pipeline.ts must see node_modules at /build, not just
-# /build/frontend (a sibling, not an ancestor). --ignore-scripts skips
-# better-sqlite3's native build, which isn't needed for the frontend bundle.
+# /build/frontend (a sibling, not an ancestor). --omit=dev keeps the layer
+# small (skips server-only vitest/biome/tsx/etc); igc-parser is a regular
+# dep so it lands. --ignore-scripts skips better-sqlite3's native build,
+# which isn't needed for the frontend bundle.
 WORKDIR /build
 COPY package*.json ./
-RUN npm ci --ignore-scripts
+RUN npm ci --omit=dev --ignore-scripts
 
 WORKDIR /build/frontend
 
