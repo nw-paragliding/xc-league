@@ -193,6 +193,6 @@ describe('tagToleranceM', () => {
 describe('SCORER_VERSION', () => {
   it('is set so the boot reprocess loop has a concrete current value to compare', () => {
     // If you bump the version intentionally, update this expectation.
-    expect(SCORER_VERSION).toBe('1.1');
+    expect(SCORER_VERSION).toBe('1.2');
   });
 });
