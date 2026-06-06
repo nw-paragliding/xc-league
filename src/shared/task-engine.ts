@@ -301,6 +301,21 @@ export function computePartialDistanceKm(
       break;
     }
 
+    // Defensive: when only GOAL remains and the fix is geographically inside
+    // the goal cylinder, the pilot has effectively reached goal. Normally the
+    // detector tags this directly (reachedGoal=true → handled upstream) but
+    // if a missed goal tag leaks through, the 2-cylinder optimiseRoute would
+    // route from the 0-radius anchor to the goal-boundary touch point on the
+    // near side and report a small positive remaining distance — under-
+    // crediting the pilot. Treat this case as 0 remaining explicitly.
+    if (reachedIdx === n - 2) {
+      const goal = cylinders[n - 1];
+      if (haversineKm(f.lat, f.lng, goal.lat, goal.lng) * 1000 <= goal.radiusM) {
+        minRemainingKm = 0;
+        break;
+      }
+    }
+
     // Remaining task: pilot's current point as a 0-radius "cylinder" anchor,
     // followed by every cylinder the pilot has not yet tagged (including
     // GOAL). Run the same route optimiser used for the task itself.

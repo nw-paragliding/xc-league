@@ -98,6 +98,27 @@ describe('computePartialDistanceKm — anchor points on the optimised line', () 
     const d = computePartialDistanceKm(ROUTE, TASK, crossings, fixes);
     expect(d).toBeCloseTo(TASK_KM, 1);
   });
+
+  it('pilot has a fix inside GOAL cylinder without a tagged goal crossing → full task distance', () => {
+    // Edge case: detector somehow didn't tag goal (e.g. validity filter
+    // dropped the entry segment) but the pilot has a fix geographically
+    // inside the goal cylinder. Without the defensive guard, the 2-cylinder
+    // optimiseRoute([fix-0r, goal]) routes to the near-side boundary and
+    // returns a positive remaining distance, under-crediting the pilot.
+    const crossings = [
+      { sequenceIndex: 0, crossingTime: 0 },
+      { sequenceIndex: 1, crossingTime: 100_000 },
+      { sequenceIndex: 2, crossingTime: 200_000 },
+    ];
+    const fixes = [
+      fix(47.503596, -122.0, 0),
+      fix(47.6, -122.0, 100_000),
+      fix(47.7, -122.0, 200_000),
+      fix(47.8, -122.0, 300_000), // GOAL centre — inside the cylinder
+    ];
+    const d = computePartialDistanceKm(ROUTE, TASK, crossings, fixes);
+    expect(d).toBeCloseTo(TASK_KM, 1);
+  });
 });
 
 // ── The bug: tracks that diverge laterally must get DIFFERENT distances ─────
