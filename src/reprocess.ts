@@ -209,15 +209,20 @@ async function reprocessOne(db: Database, sub: SubmissionRow): Promise<void> {
       const essTs = attempt.essCrossing ? new Date(attempt.essCrossing.crossingTime).toISOString() : null;
       const goalTs = attempt.goalCrossing ? new Date(attempt.goalCrossing.crossingTime).toISOString() : null;
 
+      // distance_points / time_points / total_points columns were dropped in
+      // migration 0013 (task_results is the single source of truth for scoring).
+      // The matching INSERT in upload.ts was updated then; this one was missed,
+      // so every reprocess run threw "no column named distance_points" and the
+      // boot sweep silently failed for all submissions.
       db.prepare(
         `INSERT INTO flight_attempts (
           id, submission_id, task_id, user_id,
           sss_crossing_time, ess_crossing_time, goal_crossing_time, task_time_s,
           reached_goal, last_turnpoint_index,
-          distance_flown_km, distance_points, time_points, total_points,
+          distance_flown_km,
           has_flagged_crossings, attempt_index, scorer_version,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         attemptId,
         sub.id,
@@ -230,9 +235,6 @@ async function reprocessOne(db: Database, sub: SubmissionRow): Promise<void> {
         attempt.reachedGoal ? 1 : 0,
         attempt.lastTurnpointIndex,
         attempt.distanceFlownKm,
-        attempt.distancePoints,
-        attempt.timePoints,
-        attempt.totalPoints,
         attempt.hasFlaggedCrossings ? 1 : 0,
         attempt.attemptIndex,
         SCORER_VERSION,
