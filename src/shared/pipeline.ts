@@ -25,7 +25,7 @@ import {
 // whose stored flight_attempts.scorer_version differs from this constant.
 // =============================================================================
 
-export const SCORER_VERSION = '1.1';
+export const SCORER_VERSION = '1.2';
 
 // Re-export so existing `import { tagToleranceM } from './shared/pipeline'`
 // paths keep working. The canonical helper lives in `./task-engine`.
@@ -865,9 +865,18 @@ export function calculateDistances(attempts: AttemptTrace[], fixes: Fix[], task:
     }
 
     const sssTime = attempt.sssCrossing.crossingTime;
-    const pilotFixes = fixes.filter((f) => f.timestamp >= sssTime).map((f) => ({ lat: f.lat, lng: f.lng }));
+    const pilotFixes = fixes
+      .filter((f) => f.timestamp >= sssTime)
+      .map((f) => ({ lat: f.lat, lng: f.lng, timestamp: f.timestamp }));
 
-    const dist = computePartialDistanceKm(route, cylinders, attempt.lastTurnpointIndex, pilotFixes);
+    // FAI §9.3: feed the ordered (sequenceIndex, crossingTime) pairs so the
+    // distance routine can advance reachedIdx fix-by-fix.
+    const crossings = attempt.turnpointCrossings.map((c) => ({
+      sequenceIndex: c.sequenceIndex,
+      crossingTime: c.crossingTime,
+    }));
+
+    const dist = computePartialDistanceKm(route, cylinders, crossings, pilotFixes);
     return { ...attempt, distanceFlownKm: dist };
   });
 }

@@ -245,42 +245,79 @@ export function computeDistanceKm(cylinders: Cylinder[]): number {
 }
 
 // =============================================================================
-// PARTIAL DISTANCE  (non-goal pilots)
-// Compute best achieved distance along the optimal route for a pilot who
-// did not reach goal, given their GPS track from the SSS crossing onward.
+// FLOWN DISTANCE  (non-goal pilots) — FAI Sporting Code §9.3
+//
+// §9.3: "we determine for each point where the pilot is still flying the
+//  remaining distance to goal from that point, considering any previously
+//  reached control zones. For this the same method is used as for calculating
+//  the task distance. Then we calculate the flight distance as the task
+//  distance minus the smallest of those remaining distances."
+//
+// Algorithm: at every post-SSS fix, build the *remaining task* as
+//   [fix-as-0-radius-cylinder, ...cylinders after the last reached one],
+// run the route optimiser on it, and remember the smallest remaining
+// distance seen. The pilot's flown distance is taskDistance minus that
+// minimum.
+//
+// This supersedes the previous "project the fix onto the next leg's
+// direction vector and clamp to legLen" approximation, which (a) hid all
+// extra progress past an un-tagged next TP, and (b) over-credited tracks
+// that drifted laterally off-line.
+//
+// The `crossings` argument carries the (sequenceIndex, crossingTime) pairs
+// in time order, so the loop can keep `reachedIdx` in sync with each fix's
+// timestamp in a single O(N) sweep.
 // =============================================================================
 
 export function computePartialDistanceKm(
   route: OptimisedRoute,
   cylinders: Cylinder[],
-  lastTpIdx: number, // index of last TP achieved (0 = only SSS crossed)
-  pilotFixes: Array<{ lat: number; lng: number }>,
+  crossings: Array<{ sequenceIndex: number; crossingTime: number }>,
+  pilotFixes: Array<{ lat: number; lng: number; timestamp: number }>,
 ): number {
+  if (pilotFixes.length === 0) return 0;
   const n = cylinders.length;
+  if (n < 2) return 0;
 
-  const completedKm = route.legDistancesKm.slice(0, lastTpIdx).reduce((s, d) => s + d, 0);
+  const taskKm = route.totalDistanceKm;
 
-  if (lastTpIdx >= n - 1) return route.totalDistanceKm;
+  // Walk crossings alongside the fix stream so reachedIdx tracks how many
+  // cylinders the pilot has tagged by each fix's timestamp.
+  let crossingPtr = 0;
+  let reachedIdx = -1;
+  let minRemainingKm = taskKm;
 
-  // Project into local flat space
-  const oLat = cylinders.reduce((s, c) => s + c.lat, 0) / n;
-  const oLng = cylinders.reduce((s, c) => s + c.lng, 0) / n;
+  for (const f of pilotFixes) {
+    while (crossingPtr < crossings.length && crossings[crossingPtr].crossingTime <= f.timestamp) {
+      const idx = crossings[crossingPtr].sequenceIndex;
+      if (idx > reachedIdx) reachedIdx = idx;
+      crossingPtr++;
+    }
 
-  const lastLocal = project(route.touchPoints[lastTpIdx].lat, route.touchPoints[lastTpIdx].lng, oLat, oLng);
-  const nextLocal = project(route.touchPoints[lastTpIdx + 1].lat, route.touchPoints[lastTpIdx + 1].lng, oLat, oLng);
+    // Goal-tagged attempts are handled by calculateDistances (it short-circuits
+    // to the full route distance), but guard here too.
+    if (reachedIdx >= n - 1) {
+      minRemainingKm = 0;
+      break;
+    }
 
-  const legDir = normalise(sub(nextLocal, lastLocal));
-  const legLenM = route.legDistancesKm[lastTpIdx] * 1000;
+    // Remaining task: pilot's current point as a 0-radius "cylinder" anchor,
+    // followed by every cylinder the pilot has not yet tagged (including
+    // GOAL). Run the same route optimiser used for the task itself.
+    const start: Cylinder = { lat: f.lat, lng: f.lng, radiusM: 0, type: 'CYLINDER' };
+    const remaining: Cylinder[] = [start, ...cylinders.slice(reachedIdx + 1)];
 
-  let bestM = 0;
-  for (const fix of pilotFixes) {
-    const fixLocal = project(fix.lat, fix.lng, oLat, oLng);
-    const dot = (fixLocal.x - lastLocal.x) * legDir.x + (fixLocal.y - lastLocal.y) * legDir.y;
-    const clamped = Math.max(0, Math.min(legLenM, dot));
-    if (clamped > bestM) bestM = clamped;
+    let remDistKm: number;
+    try {
+      remDistKm = optimiseRoute(remaining).totalDistanceKm;
+    } catch {
+      continue;
+    }
+
+    if (remDistKm < minRemainingKm) minRemainingKm = remDistKm;
   }
 
-  return completedKm + bestM / 1000;
+  return Math.max(0, taskKm - minRemainingKm);
 }
 
 // =============================================================================
