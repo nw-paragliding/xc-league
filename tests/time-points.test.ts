@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeTimePoints, MAX_POINTS } from '../src/shared/task-engine';
+import { computeDistancePoints, computeTimePoints, MAX_POINTS } from '../src/shared/task-engine';
 
 const hms = (h: number, m: number, s: number) => h * 3600 + m * 60 + s;
 
@@ -53,5 +53,21 @@ describe('computeTimePoints (FAI S7F §12.2)', () => {
     // A pilot faster than the pool minimum (should not happen — the pool
     // includes the pilot) clamps to full points rather than NaN.
     expect(computeTimePoints(3000, [3600])).toBe(MAX_POINTS);
+  });
+});
+
+// Rounding to one decimal happens exactly once, on the persisted value after
+// normalisation (rebuildTaskResults) — the compute functions themselves must
+// return full precision, or the later scale-then-round compounds two rounding
+// errors (S7F round-once principle).
+describe('compute functions return unrounded values', () => {
+  it('computeTimePoints keeps full precision', () => {
+    // A 0.1-pre-rounded return would collapse this to exactly 686.3.
+    expect(computeTimePoints(3032, [2314, 3032])).toBeCloseTo(686.3155932494, 6);
+  });
+
+  it('computeDistancePoints keeps full precision', () => {
+    // 1000 * sqrt(60.0089 / 80) — a 0.1-pre-rounded return would give 866.1.
+    expect(computeDistancePoints(60.0089, 80, false)).toBeCloseTo(866.089631620192, 6);
   });
 });

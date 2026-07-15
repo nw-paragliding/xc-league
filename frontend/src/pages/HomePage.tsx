@@ -641,6 +641,7 @@ export default function HomePage() {
               result={previewResult}
               error={previewError}
               previousBest={previousBestEntry}
+              predicted={previewResult?.predicted ?? null}
               uploading={uploading}
               onSubmit={handleSubmitPreview}
               onCancel={() => {

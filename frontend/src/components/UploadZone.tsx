@@ -67,6 +67,12 @@ function ScoreResult({ result, onReset }: { result: SubmissionResponse; onReset:
   }
 
   const best = result.bestAttempt;
+  // While the task is open, ALL score components are provisional, not just
+  // time: later uploads can move t_best (lowering time points) and the
+  // task-level normalisation rescales distance points whenever the winner's
+  // raw total or best distance moves. Show every value and flag them all
+  // uniformly rather than hiding one addend of a displayed sum.
+  const prov = result.timePointsProvisional;
   return (
     <div className="result-panel fade-in">
       <div className="result-status">
@@ -81,17 +87,15 @@ function ScoreResult({ result, onReset }: { result: SubmissionResponse; onReset:
       <div className="score-grid">
         <div className="score-cell">
           <div className="score-cell-label">Distance</div>
-          <div className="score-cell-value">{fmtPts(best.distancePoints)}</div>
+          <div className={`score-cell-value${prov ? ' prov' : ''}`}>{fmtPts(best.distancePoints)}</div>
         </div>
         <div className="score-cell">
           <div className="score-cell-label">Time</div>
-          <div className={`score-cell-value ${result.timePointsProvisional ? 'prov' : ''}`}>
-            {result.timePointsProvisional ? '—' : fmtPts(best.timePoints)}
-          </div>
+          <div className={`score-cell-value${prov ? ' prov' : ''}`}>{fmtPts(best.timePoints)}</div>
         </div>
         <div className="score-cell" style={{ border: '1px solid var(--gold-dim)' }}>
           <div className="score-cell-label">Total</div>
-          <div className="score-cell-value gold">{fmtPts(best.totalPoints)}</div>
+          <div className={`score-cell-value gold${prov ? ' prov' : ''}`}>{fmtPts(best.totalPoints)}</div>
         </div>
       </div>
       {best.reachedGoal && (
@@ -102,9 +106,9 @@ function ScoreResult({ result, onReset }: { result: SubmissionResponse; onReset:
           </span>
         </div>
       )}
-      {result.timePointsProvisional && (
+      {prov && (
         <div className="provisional-note" style={{ marginTop: 8 }}>
-          ⏳ Time points provisional — final when task closes
+          ⏳ Scores provisional — final when task closes
         </div>
       )}
       <button className="btn btn-ghost" style={{ marginTop: 10, fontSize: 12 }} onClick={onReset}>

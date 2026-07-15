@@ -259,18 +259,22 @@ interface ScoredAttemptRow {
   total_points: number;
 }
 
+// One decimal place, per S7F §12 — the only rounding in the scoring path.
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
 // Goal first, then highest points, then fastest time (NULLs last).
 // Returns negative if a is the better attempt.
 //
 // Note: this priority order intentionally differs from the rank-sort below
-// (which is total_points → task_time_s → reached_goal). For the *picker*
-// goal-attempt > non-goal-attempt is meaningful even at equal total_points
-// because we want the goal-recording attempt's metadata (task_time_s,
-// crossings) preferred. For the *rank* a goal pilot's total_points already
-// exceeds any non-goal pilot's by construction, so the reached_goal tier is
-// never load-bearing — kept only as a final tiebreaker. If a future scoring
-// change ever lets non-goal pilots out-score goal pilots, this divergence
-// will need a second look.
+// (which is total_points → goal pilots' task_time_s → reached_goal). For the
+// *picker* goal-attempt > non-goal-attempt is meaningful even at equal
+// total_points because we want the goal-recording attempt's metadata
+// (task_time_s, crossings) preferred. In the *rank*, reached_goal is
+// load-bearing: under the §12.2 absolute cutoff a slow goal pilot scores 0
+// time points and can tie a bestDist non-goal pilot on total_points — the
+// goal pilot then ranks first via the reached_goal tier.
 function compareBestAttempt(a: ScoredAttemptRow, b: ScoredAttemptRow): number {
   if (a.reached_goal !== b.reached_goal) return b.reached_goal - a.reached_goal;
   if (a.total_points !== b.total_points) return b.total_points - a.total_points;
@@ -322,11 +326,16 @@ function rebuildTaskResultsInner(db: Database, taskId: string): void {
   }
   const goalTimes = Array.from(fastestGoalTimeByPilot.values());
 
+  // Points stay at full precision here — best-attempt selection and the
+  // normalisation scale both work on unrounded values so that rounding to
+  // one decimal happens exactly once, on the persisted result (S7F
+  // round-once principle; rounding before scaling compounds to ~0.2 pt of
+  // error, enough to flip adjacent ranks).
   const scored: ScoredAttemptRow[] = attempts.map((a) => {
     const distance_points = computeDistancePoints(a.distance_flown_km, bestDistKm, a.reached_goal === 1);
     const time_points =
       a.reached_goal === 1 && a.task_time_s !== null ? computeTimePoints(a.task_time_s, goalTimes) : 0;
-    const total_points = Math.round((distance_points + time_points) * 10) / 10;
+    const total_points = distance_points + time_points;
     return { ...a, distance_points, time_points, total_points };
   });
 
@@ -353,23 +362,30 @@ function rebuildTaskResultsInner(db: Database, taskId: string): void {
     // reduce, not Math.max(...arr): see note at bestDistKm above.
     let winnerTotal = 0;
     for (const r of bestList) if (r.total_points > winnerTotal) winnerTotal = r.total_points;
-    if (winnerTotal > 0) {
-      const scale = normalized / winnerTotal;
-      bestList = bestList.map((r) => {
-        const distance_points = Math.round(r.distance_points * scale * 10) / 10;
-        const time_points = Math.round(r.time_points * scale * 10) / 10;
-        const total_points = Math.round((distance_points + time_points) * 10) / 10;
-        return { ...r, distance_points, time_points, total_points };
-      });
-    }
+    // Scale the raw (unrounded) components, then round each once and
+    // re-derive total from the rounded components so dp + tp = total holds
+    // exactly on persisted rows. winnerTotal = 0 means every component is
+    // exactly 0, so scale = 1 is a safe passthrough there.
+    const scale = winnerTotal > 0 ? normalized / winnerTotal : 1;
+    bestList = bestList.map((r) => {
+      const distance_points = round1(r.distance_points * scale);
+      const time_points = round1(r.time_points * scale);
+      const total_points = round1(distance_points + time_points);
+      return { ...r, distance_points, time_points, total_points };
+    });
   }
 
-  // Rank by total_points DESC, task_time_s ASC (NULLs last), reached_goal DESC.
+  // Rank by total_points DESC, task_time_s ASC (goal pilots only, NULLs last),
+  // reached_goal DESC. task_time_s is stored for any ESS crossing, including
+  // pilots who landed short of goal — but §13.1 sets the PG time-points
+  // parameter to 0%, so a speed-section time must earn nothing (not even rank
+  // order) without reaching goal. Treat non-goal times as absent.
   // Ties share a rank (RANK semantics, matching the previous SQL window).
+  const rankTimeS = (r: ScoredAttemptRow): number | null => (r.reached_goal === 1 ? r.task_time_s : null);
   bestList.sort((a, b) => {
     if (b.total_points !== a.total_points) return b.total_points - a.total_points;
-    const at = a.task_time_s ?? Number.POSITIVE_INFINITY;
-    const bt = b.task_time_s ?? Number.POSITIVE_INFINITY;
+    const at = rankTimeS(a) ?? Number.POSITIVE_INFINITY;
+    const bt = rankTimeS(b) ?? Number.POSITIVE_INFINITY;
     if (at !== bt) return at - bt;
     return b.reached_goal - a.reached_goal;
   });
@@ -388,7 +404,7 @@ function rebuildTaskResultsInner(db: Database, taskId: string): void {
   let prevRank = 0;
   for (let i = 0; i < bestList.length; i++) {
     const r = bestList[i];
-    const key = `${r.total_points}|${r.task_time_s ?? 'null'}|${r.reached_goal}`;
+    const key = `${r.total_points}|${rankTimeS(r) ?? 'null'}|${r.reached_goal}`;
     const rank = key === prevKey ? prevRank : i + 1;
     prevKey = key;
     prevRank = rank;

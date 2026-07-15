@@ -25,7 +25,7 @@ import {
 // whose stored flight_attempts.scorer_version differs from this constant.
 // =============================================================================
 
-export const SCORER_VERSION = '1.2';
+export const SCORER_VERSION = '1.3';
 
 // Re-export so existing `import { tagToleranceM } from './shared/pipeline'`
 // paths keep working. The canonical helper lives in `./task-engine`.
@@ -273,57 +273,120 @@ export interface AttemptTrace {
   lastTurnpointIndex: number;
   taskTimeS: number | null; // (ESS or goal crossing time - SSS crossing time) / 1000
   distanceFlownKm: number; // populated by calculateDistances (initialised to 0 here)
+  // XC only: the GLOBAL landing cutoff for the whole track — the start of the
+  // first landing-stillness window (≥ 30 s of every fix below 5 km/h with a
+  // gpsAlt range under 15 m) that begins at/after the track's first valid SSS
+  // crossing. A §12.1 XC flight ends at the first landing, so the same cutoff
+  // applies to every attempt: fixes and crossings from this timestamp onward
+  // are post-landing and dead, and attempts whose SSS crossing postdates the
+  // cutoff are suppressed before they exist. null when the pilot never went
+  // still, or for HAF where ground travel is legitimate.
+  landingCutoffMs?: number | null;
+  // Set when the landing cutoff voided at least one otherwise-valid crossing
+  // (a turnpoint/goal crossing past the cutoff, or a whole suppressed
+  // attempt). Surfaces as hasFlaggedCrossings (⚑) so admins can review the
+  // truncation instead of it failing silently. Distance-only truncation
+  // (no voided crossing) does not set it.
+  truncationVoidedCrossing?: boolean;
 }
 
 /**
  * Stage 3: detectAttempts
  *
- * For each SSS outward crossing:
+ * For each SSS boundary crossing (either direction — §6.2.1/§9.2.1 make the
+ * crossing direction irrelevant, so entry-style starts work too):
  *   - Greedily match remaining TPs forward using segment-circle intersection
  *   - Build an AttemptTrace per SSS crossing
  */
-export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<AttemptTrace[], AttemptDetectionError> {
+export function detectAttempts(
+  fixes: Fix[],
+  task: TaskDefinition,
+  competitionType: 'XC' | 'HIKE_AND_FLY',
+): Result<AttemptTrace[], AttemptDetectionError> {
   if (task.turnpoints.length < 2) {
     return err({ code: 'NO_SSS_CROSSING', message: 'Task has fewer than 2 turnpoints' });
   }
 
   const sss = task.turnpoints[0];
 
-  // ── Step 1: Find all SSS outward crossings ──────────────────────────────────
+  // ── Step 1: Find all SSS boundary crossings ─────────────────────────────────
   // FAI Sporting Code S7F §9.1.3 tolerance: a fix at distance d from the
   // cylinder centre is "inside" iff d ≤ r + tolerance. The boundary effectively
-  // shifts outward by `tagToleranceM(r)`. For SSS this means the exit gate
-  // widens — pilots get the benefit of the doubt that they are still inside
+  // shifts outward by `tagToleranceM(r)` — pilots get the benefit of the doubt
   // near the boundary.
+  //
+  // §6.2.1/§9.2.1: a valid crossing is "into or out of the turnpoint's
+  // tolerance zone, in any direction". Every boundary crossing — entry, exit,
+  // or both legs of a graze-through — spawns an attempt; Stage 7 picks the
+  // best, so extra attempts are harmless.
+  //
+  // Movement gate (XC only): an XC start is flown, not walked. A boundary
+  // crossing only spawns an attempt when the crossing segment shows movement
+  // — the faster of its two endpoint fixes is at least
+  // SSS_CROSSING_MIN_SPEED_KMH. This ignores on-foot crossings (~4–6 km/h
+  // walk-in to an entry-style start) and parked-drift crossings, which
+  // previously anchored the landing scan at launch prep and silently zeroed
+  // the whole flight; a walk-in track now gets the explicit NO_SSS_CROSSING
+  // error again. Accepted edge: a pilot parked exactly on the boundary in
+  // strong wind loses that particular crossing and starts on a later one. A
+  // fix with an unknown speed passes the gate (benefit of the doubt). HAF is
+  // exempt — travelling on foot is the point of the game there.
   const sssCrossings: Array<{ fixIndex: number; t: number; crossingTime: number }> = [];
   const sssEffectiveR = sss.radiusM + tagToleranceM(sss.radiusM);
+  const applyMovementGate = competitionType === 'XC';
 
   for (let i = 0; i < fixes.length - 1; i++) {
     const a = fixes[i];
     const b = fixes[i + 1];
+    const segmentMaxSpeed = Math.max(
+      a.derivedSpeedKmh ?? Number.POSITIVE_INFINITY,
+      b.derivedSpeedKmh ?? Number.POSITIVE_INFINITY,
+    );
+    if (applyMovementGate && segmentMaxSpeed < SSS_CROSSING_MIN_SPEED_KMH) continue;
     const aLocal = projectToLocal(a.lat, a.lng, sss.lat, sss.lng);
     const bLocal = projectToLocal(b.lat, b.lng, sss.lat, sss.lng);
-    const distA = Math.sqrt(aLocal.x ** 2 + aLocal.y ** 2);
-    const distB = Math.sqrt(bLocal.x ** 2 + bLocal.y ** 2);
 
-    // Outward: inside → outside (against the effective boundary)
-    if (distA <= sssEffectiveR && distB > sssEffectiveR) {
-      const t = segmentIntersectsCircle(aLocal, bLocal, sssEffectiveR);
-      if (t !== null) {
-        sssCrossings.push({ fixIndex: i, t, crossingTime: interpolateCrossingTime(a, b, t) });
-      }
+    for (const t of segmentCircleBoundaryCrossings(aLocal, bLocal, sssEffectiveR)) {
+      sssCrossings.push({ fixIndex: i, t, crossingTime: interpolateCrossingTime(a, b, t) });
     }
   }
 
   if (sssCrossings.length === 0) {
-    return err({ code: 'NO_SSS_CROSSING', message: 'No SSS outward cylinder crossing was detected in the track' });
+    return err({ code: 'NO_SSS_CROSSING', message: 'No SSS cylinder crossing was detected in the track' });
   }
+
+  // XC: a landed pilot's later fixes (packing up, walking, car retrieve)
+  // must not earn crossings or distance — §9.3 counts only points "where
+  // the pilot is still flying", §12.1 only "up until the pilot landed".
+  // The landing is GLOBAL to the track: the start of the first
+  // landing-stillness window (≥ 30 s in which every fix is below 5 km/h
+  // AND the gpsAlt range stays under 15 m — a glider parked in ridge lift
+  // bobs in altitude; a landed pilot's GPS alt is flat within noise) that
+  // begins at/after the FIRST valid SSS crossing. Anchoring at the first
+  // crossing keeps pre-launch rigging stillness out of scope; using one
+  // cutoff for every attempt means a post-landing retrieve that re-crosses
+  // the SSS boundary can never spawn a scoreable attempt.
+  // HAF is exempt: travelling on the ground is part of the game there.
+  const landingCutoffMs =
+    competitionType === 'XC'
+      ? findLandingCutoffMs(fixes.filter((f) => f.timestamp >= sssCrossings[0].crossingTime))
+      : null;
 
   // ── Step 2: For each SSS crossing, greedily match remaining TPs ────────────
   const attempts: AttemptTrace[] = [];
+  // §12.1: the XC flight ended at the landing, so an SSS crossing at/after
+  // the cutoff is on the ground and can never start a valid attempt. The
+  // suppressed crossing itself passed the movement gate, so the suppression
+  // voids an otherwise-valid crossing — flag the surviving attempts (⚑) so
+  // the truncation is visible for review.
+  let suppressedAttempt = false;
 
   for (let ai = 0; ai < sssCrossings.length; ai++) {
     const sssCross = sssCrossings[ai];
+    if (landingCutoffMs !== null && sssCross.crossingTime >= landingCutoffMs) {
+      suppressedAttempt = true;
+      continue;
+    }
 
     const sssCrossing: CylinderCrossing = {
       turnpointId: sss.id,
@@ -341,6 +404,14 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
     let reachedGoal = false;
     let essCrossing: CylinderCrossing | null = null;
     let goalCrossing: CylinderCrossing | null = null;
+
+    // §9.2.1.2a: each crossing must be recorded strictly after the previous
+    // cylinder's crossing (and hence after the start itself).
+    let lastCrossingTimeMs = sssCrossing.crossingTime;
+
+    // Set when the landing cutoff voids an otherwise-valid crossing for
+    // this attempt — surfaces as ⚑ instead of a silent rescore.
+    let truncationVoidedCrossing = false;
 
     // Pre-compute goal line bearing once per attempt (avoid re-running optimiseRoute per segment)
     const goalTp = task.turnpoints[task.turnpoints.length - 1];
@@ -367,7 +438,10 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
       }
     }
 
-    // Use while loop so we can re-check the same fix-pair after a TP is achieved
+    // Use while loop so we can re-check the same fix-pair after a TP is achieved.
+    // The scan deliberately continues PAST the landing cutoff: a would-be
+    // crossing found beyond it is voided (never recorded), but its existence
+    // flags the attempt so the truncation is visible for review.
     let fixI = sssCross.fixIndex;
     while (fixI < fixes.length - 1 && tpIdx < task.turnpoints.length) {
       const tp = task.turnpoints[tpIdx];
@@ -413,17 +487,62 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
       }
 
       if (crossed && crossT !== null) {
+        let crossingTime = interpolateCrossingTime(a, b, crossT);
+        // §9.2.1.2a: a crossing must be recorded strictly after the previous
+        // cylinder's crossing (and hence after the start itself) — same-
+        // segment re-checks and already-inside tags can otherwise stamp a
+        // time at or before the previous crossing, shortening (or negating)
+        // task time. A premature candidate does NOT abandon the segment:
+        // §6.2.1 makes every boundary root a crossing in its own right, so
+        // re-consult ALL of the segment's boundary roots and accept the
+        // earliest one that postdates the previous crossing. This covers a
+        // graze-through whose entry root is pre-start but whose exit root is
+        // valid, and an already-inside segment-start fix where the pilot
+        // exits the zone before the next fix. Only when no root on the
+        // segment qualifies do we advance to the next fix (a pilot still
+        // inside the cylinder then picks the tag up at the first fix that
+        // postdates the previous crossing). GOAL_LINE candidates come from
+        // chord/arc geometry rather than a cylinder boundary, so they have
+        // no extra roots to retry.
+        if (crossingTime <= lastCrossingTimeMs) {
+          let retriedTime: number | null = null;
+          if (tp.type !== 'GOAL_LINE') {
+            for (const t of segmentCircleBoundaryCrossings(aLocal, bLocal, effectiveR)) {
+              const candidateTime = interpolateCrossingTime(a, b, t);
+              if (candidateTime > lastCrossingTimeMs) {
+                retriedTime = candidateTime;
+                break;
+              }
+            }
+          }
+          if (retriedTime === null) {
+            fixI++;
+            continue;
+          }
+          crossingTime = retriedTime;
+        }
+
+        // §9.3/§12.1: a crossing at/after the landing cutoff is on the
+        // ground. It is otherwise valid (in order, past the gate), so void
+        // it, flag the attempt for review, and stop — everything beyond the
+        // landing is dead for scoring.
+        if (landingCutoffMs !== null && crossingTime >= landingCutoffMs) {
+          truncationVoidedCrossing = true;
+          break;
+        }
+
         const groundCheckRequired = tp.forceGround === true;
         const crossing: CylinderCrossing = {
           turnpointId: tp.id,
           sequenceIndex: tp.sequenceIndex,
-          crossingTime: interpolateCrossingTime(a, b, crossT),
+          crossingTime,
           segmentStartFix: a,
           segmentEndFix: b,
           groundCheckRequired,
           detectedMaxSpeedKmh: null,
           groundConfirmed: !groundCheckRequired,
         };
+        lastCrossingTimeMs = crossingTime;
 
         turnpointCrossings.push(crossing);
 
@@ -451,7 +570,9 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
     const taskTimeS = timingCrossing !== null ? (timingCrossing.crossingTime - sssCrossing.crossingTime) / 1000 : null;
 
     attempts.push({
-      attemptIndex: ai,
+      // attempts.length, not the crossing index: suppressed crossings leave
+      // gaps in `ai`, and attemptIndex must stay contiguous for persistence.
+      attemptIndex: attempts.length,
       sssCrossing,
       essCrossing,
       goalCrossing,
@@ -460,7 +581,24 @@ export function detectAttempts(fixes: Fix[], task: TaskDefinition): Result<Attem
       lastTurnpointIndex,
       taskTimeS,
       distanceFlownKm: 0, // populated by calculateDistances
+      landingCutoffMs,
+      truncationVoidedCrossing,
     });
+  }
+
+  if (attempts.length === 0) {
+    // Every gate-passing SSS crossing postdated the landing — degenerate,
+    // but surface the same explicit error a crossing-free track gets.
+    return err({
+      code: 'NO_SSS_CROSSING',
+      message: 'No SSS cylinder crossing was detected before the landing',
+    });
+  }
+
+  if (suppressedAttempt) {
+    // A whole attempt was voided by the landing cutoff — make the
+    // suppression visible on everything that survives.
+    for (const attempt of attempts) attempt.truncationVoidedCrossing = true;
   }
 
   return ok(attempts);
@@ -513,6 +651,27 @@ export function segmentIntersectsCircle(a: Point2D, b: Point2D, r: number): numb
   if (t1 >= 0 && t1 <= 1) return t1;
   if (t2 >= 0 && t2 <= 1) return t2;
   return null;
+}
+
+/**
+ * Every parameter t ∈ [0,1] at which segment A→B crosses the boundary of a
+ * circle of radius r centred at origin, in ascending order (0, 1, or 2
+ * entries). Unlike `segmentIntersectsCircle`, this reports both legs of a
+ * graze-through (both endpoints outside, segment clipping the circle) — each
+ * root is a boundary crossing in its own right. A tangent touch (zero
+ * discriminant) is not a crossing and yields no entries.
+ */
+export function segmentCircleBoundaryCrossings(a: Point2D, b: Point2D, r: number): number[] {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const qa = dx * dx + dy * dy;
+  if (qa === 0) return [];
+  const qb = 2 * (a.x * dx + a.y * dy);
+  const qc = a.x * a.x + a.y * a.y - r * r;
+  const disc = qb * qb - 4 * qa * qc;
+  if (disc <= 0) return [];
+  const sqrtDisc = Math.sqrt(disc);
+  return [(-qb - sqrtDisc) / (2 * qa), (-qb + sqrtDisc) / (2 * qa)].filter((t) => t >= 0 && t <= 1);
 }
 
 /**
@@ -733,6 +892,17 @@ export function geodesicDistanceM(lat1: number, lng1: number, lat2: number, lng2
 
 const SUSTAINED_STILLNESS_WINDOW_S = 20;
 const SUSTAINED_STILLNESS_SPEED_KMH = 5;
+// XC landing detection (Stage 3). Deliberately stricter than HAF ground
+// confirmation: a HAF false negative merely flags a crossing for review,
+// whereas an XC landing false positive silently discards flight. The longer
+// window plus altitude flatness keeps a glider parked in ridge lift (steady
+// 0–4 km/h ground speed but bobbing in lift) from reading as landed.
+const LANDING_STILLNESS_WINDOW_S = 30;
+const LANDING_MAX_ALT_RANGE_M = 15;
+// Stage 3 movement gate: minimum endpoint ground speed for an SSS boundary
+// crossing to spawn an attempt. Walking pace is ~4–6 km/h; slow flight in
+// wind stays comfortably above this.
+const SSS_CROSSING_MIN_SPEED_KMH = 8;
 const EARTH_RADIUS_M = 6_371_000;
 const DEG_RAD = Math.PI / 180;
 
@@ -748,23 +918,96 @@ function fixDistanceToTpM(fix: Fix, tp: TurnpointDef): number {
 }
 
 /**
- * Does the fix sequence contain a continuous run of at least
- * SUSTAINED_STILLNESS_WINDOW_S seconds where every fix has ground speed
- * below SUSTAINED_STILLNESS_SPEED_KMH? Expects fixes in ascending time order.
+ * Start timestamp of the first continuous run of at least
+ * SUSTAINED_STILLNESS_WINDOW_S seconds in which every fix has ground speed
+ * below SUSTAINED_STILLNESS_SPEED_KMH, or null if the fixes contain no such
+ * run. Expects fixes in ascending time order.
+ *
+ * Stage 4 uses this to confirm a HAF touch-down inside a force-ground
+ * cylinder. Stage 3's XC landing detection uses the stricter
+ * `findLandingCutoffMs` instead — see the constants above for why the two
+ * signatures differ.
  */
-function hasSustainedStillness(fixes: Fix[]): boolean {
+function findSustainedStillnessStartMs(fixes: Fix[]): number | null {
   const windowMs = SUSTAINED_STILLNESS_WINDOW_S * 1000;
   let runStart: number | null = null;
   for (const f of fixes) {
     const speed = f.derivedSpeedKmh ?? Number.POSITIVE_INFINITY;
     if (speed < SUSTAINED_STILLNESS_SPEED_KMH) {
       if (runStart === null) runStart = f.timestamp;
-      else if (f.timestamp - runStart >= windowMs) return true;
+      else if (f.timestamp - runStart >= windowMs) return runStart;
     } else {
       runStart = null;
     }
   }
-  return false;
+  return null;
+}
+
+/**
+ * Does the fix sequence contain a continuous run of at least
+ * SUSTAINED_STILLNESS_WINDOW_S seconds where every fix has ground speed
+ * below SUSTAINED_STILLNESS_SPEED_KMH? Expects fixes in ascending time order.
+ */
+function hasSustainedStillness(fixes: Fix[]): boolean {
+  return findSustainedStillnessStartMs(fixes) !== null;
+}
+
+/**
+ * XC landing detection: start timestamp of the first landing-stillness
+ * window in the fix sequence, or null when the pilot never landed on camera.
+ *
+ * A landing-stillness window is ≥ LANDING_STILLNESS_WINDOW_S seconds in
+ * which EVERY fix has ground speed below SUSTAINED_STILLNESS_SPEED_KMH AND
+ * the gpsAlt spread across the window is under LANDING_MAX_ALT_RANGE_M.
+ * Speed alone false-positives on a glider parked in strong laminar wind
+ * (steady 0–4 km/h over the ground); the altitude-flatness requirement
+ * breaks that case, because a parked glider rides the lift band up and down
+ * while a landed pilot's GPS altitude is flat within receiver noise.
+ *
+ * The caller pre-filters the fixes to those at/after the first valid SSS
+ * crossing, so a window straddling that boundary only counts from its
+ * post-crossing portion. Expects fixes in ascending time order.
+ */
+function findLandingCutoffMs(fixes: Fix[]): number | null {
+  const windowMs = LANDING_STILLNESS_WINDOW_S * 1000;
+
+  // Walk the low-speed runs; within each, look for the earliest sub-window
+  // that satisfies both the duration and the altitude-flatness constraints.
+  let runStartIdx: number | null = null;
+  for (let i = 0; i <= fixes.length; i++) {
+    const isStill =
+      i < fixes.length && (fixes[i].derivedSpeedKmh ?? Number.POSITIVE_INFINITY) < SUSTAINED_STILLNESS_SPEED_KMH;
+    if (isStill) {
+      if (runStartIdx === null) runStartIdx = i;
+      continue;
+    }
+    if (runStartIdx !== null) {
+      const start = earliestFlatWindowStartMs(fixes, runStartIdx, i - 1, windowMs);
+      if (start !== null) return start;
+      runStartIdx = null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Earliest window start within fixes[lo..hi] (an all-below-stillness-speed
+ * run) whose duration reaches windowMs while the gpsAlt spread stays under
+ * LANDING_MAX_ALT_RANGE_M, or null. O(run × window) — runs are seconds-to-
+ * minutes of 1 Hz fixes, so this is cheap.
+ */
+function earliestFlatWindowStartMs(fixes: Fix[], lo: number, hi: number, windowMs: number): number | null {
+  for (let i = lo; i <= hi; i++) {
+    let minAlt = fixes[i].gpsAlt;
+    let maxAlt = fixes[i].gpsAlt;
+    for (let j = i + 1; j <= hi; j++) {
+      minAlt = Math.min(minAlt, fixes[j].gpsAlt);
+      maxAlt = Math.max(maxAlt, fixes[j].gpsAlt);
+      if (maxAlt - minAlt >= LANDING_MAX_ALT_RANGE_M) break; // this start can't flatten out again
+      if (fixes[j].timestamp - fixes[i].timestamp >= windowMs) return fixes[i].timestamp;
+    }
+  }
+  return null;
 }
 
 /**
@@ -865,8 +1108,13 @@ export function calculateDistances(attempts: AttemptTrace[], fixes: Fix[], task:
     }
 
     const sssTime = attempt.sssCrossing.crossingTime;
+    // §9.3 sweeps only points "where the pilot is still flying": lower-bound
+    // the scan at this attempt's start and upper-bound it at the landing
+    // cutoff detectAttempts found (null for HAF and for pilots who never went
+    // still), so retrieve fixes can't shrink the remaining distance.
+    const cutoffMs = attempt.landingCutoffMs ?? null;
     const pilotFixes = fixes
-      .filter((f) => f.timestamp >= sssTime)
+      .filter((f) => f.timestamp >= sssTime && (cutoffMs === null || f.timestamp < cutoffMs))
       .map((f) => ({ lat: f.lat, lng: f.lng, timestamp: f.timestamp }));
 
     // FAI §9.3: feed the ordered (sequenceIndex, crossingTime) pairs so the
@@ -929,7 +1177,11 @@ export function scoreAttempts(
       distancePoints,
       timePoints,
       totalPoints: distancePoints + timePoints,
-      hasFlaggedCrossings: attempt.turnpointCrossings.some((c) => c.groundCheckRequired && !c.groundConfirmed),
+      // ⚑ for review: a HAF ground check failed, or the XC landing cutoff
+      // voided an otherwise-valid crossing (truncation must not be silent).
+      hasFlaggedCrossings:
+        attempt.turnpointCrossings.some((c) => c.groundCheckRequired && !c.groundConfirmed) ||
+        attempt.truncationVoidedCrossing === true,
     };
   });
 }
@@ -1037,7 +1289,7 @@ export async function runPipelineFromParsed(
   if (!dateResult.ok) return err({ stage: 'DATE', error: dateResult.error });
 
   // Stage 3: Attempt detection
-  const detectionResult = detectAttempts(track.fixes, input.task);
+  const detectionResult = detectAttempts(track.fixes, input.task, input.competitionType);
   if (!detectionResult.ok) return err({ stage: 'DETECTION', error: detectionResult.error });
   let attempts = detectionResult.value;
 

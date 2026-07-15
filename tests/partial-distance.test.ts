@@ -121,6 +121,76 @@ describe('computePartialDistanceKm — anchor points on the optimised line', () 
   });
 });
 
+// ── Goal LINE: §9.3 computes line-goal remaining distance with no radius ────
+
+describe('computePartialDistanceKm — GOAL_LINE (§9.3: no radius term)', () => {
+  // Same collinear geometry, but the task ends in a 400 m goal LINE
+  // (radiusM = 200 holds the half line-length). For a line the optimised
+  // route ends at the goal CENTRE, so only the SSS boundary offset is
+  // subtracted: 33.358 − 0.400 = 32.958 km.
+  const TASK_LINE: Cylinder[] = [
+    { lat: 47.5, lng: -122.0, radiusM: 400, type: 'SSS' },
+    { lat: 47.6, lng: -122.0, radiusM: 400, type: 'CYLINDER' },
+    { lat: 47.7, lng: -122.0, radiusM: 400, type: 'CYLINDER' },
+    { lat: 47.8, lng: -122.0, radiusM: 200, type: 'GOAL_LINE' },
+  ];
+  const ROUTE_LINE = optimiseRoute(TASK_LINE);
+  const TASK_LINE_KM = ROUTE_LINE.totalDistanceKm;
+
+  const crossings = [
+    { sequenceIndex: 0, crossingTime: 0 },
+    { sequenceIndex: 1, crossingTime: 100_000 },
+    { sequenceIndex: 2, crossingTime: 200_000 },
+  ];
+  const DEG_PER_M = 1 / 111_194; // latitude degrees per metre
+
+  it('line-goal task distance ends at the goal centre (≈ 32.96 km)', () => {
+    expect(TASK_LINE_KM).toBeCloseTo(32.958, 2);
+  });
+
+  it('fix 150 m short of the line on the near side yields taskKm − 0.15, not taskKm', () => {
+    // 150 m is within radiusM of the goal centre. The pre-fix guard applied
+    // cylinder semantics (inside radius ⇒ remaining = 0) and credited the
+    // full task distance to a pilot who never crossed the line; §9.3's line
+    // formula is the optimised distance to the goal point — 150 m left.
+    const fixes = [
+      fix(47.503596, -122.0, 0),
+      fix(47.6, -122.0, 100_000),
+      fix(47.7, -122.0, 200_000),
+      fix(47.8 - 150 * DEG_PER_M, -122.0, 300_000), // 150 m before goal centre
+    ];
+    const d = computePartialDistanceKm(ROUTE_LINE, TASK_LINE, crossings, fixes);
+    expect(d).toBeCloseTo(TASK_LINE_KM - 0.15, 2);
+  });
+
+  it('un-tagged fix past the line (inside the D-zone) scores distance-to-goal-point', () => {
+    // A tagged goal crossing short-circuits upstream (full distance). If the
+    // tag is missing, §9.3's line formula still measures to the goal point —
+    // no radius credit in either direction.
+    const fixes = [
+      fix(47.503596, -122.0, 0),
+      fix(47.6, -122.0, 100_000),
+      fix(47.7, -122.0, 200_000),
+      fix(47.8 + 100 * DEG_PER_M, -122.0, 300_000), // 100 m beyond goal centre
+    ];
+    const d = computePartialDistanceKm(ROUTE_LINE, TASK_LINE, crossings, fixes);
+    expect(d).toBeCloseTo(TASK_LINE_KM - 0.1, 2);
+  });
+
+  it('fix inside a GOAL_CYLINDER still zeroes remaining distance (guard retained)', () => {
+    // The cylinder branch of the guard must survive the goal-type split:
+    // 150 m from the centre of a 400 m goal cylinder IS inside goal.
+    const fixes = [
+      fix(47.503596, -122.0, 0),
+      fix(47.6, -122.0, 100_000),
+      fix(47.7, -122.0, 200_000),
+      fix(47.8 - 150 * DEG_PER_M, -122.0, 300_000),
+    ];
+    const d = computePartialDistanceKm(ROUTE, TASK, crossings, fixes);
+    expect(d).toBeCloseTo(TASK_KM, 1);
+  });
+});
+
 // ── The bug: tracks that diverge laterally must get DIFFERENT distances ─────
 
 describe('computePartialDistanceKm — lateral divergence (was: same score)', () => {
