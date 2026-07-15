@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeDistancePoints, computeTimePoints, MAX_POINTS } from '../src/shared/task-engine';
+import { computeDistancePoints, computeTimePoints, goalRatioWeights, MAX_POINTS } from '../src/shared/task-engine';
 
 const hms = (h: number, m: number, s: number) => h * 3600 + m * 60 + s;
 
@@ -53,6 +53,61 @@ describe('computeTimePoints (FAI S7F §12.2)', () => {
     // A pilot faster than the pool minimum (should not happen — the pool
     // includes the pilot) clamps to full points rather than NaN.
     expect(computeTimePoints(3000, [3600])).toBe(MAX_POINTS);
+  });
+});
+
+// FAI S7F §11: the distance/time split depends on the goal ratio.
+//   DistanceWeight = 0.9 - 1.665*GR + 1.713*GR² - 0.587*GR³
+// Leading and arrival points are deliberately dropped in this league, so
+// TimeWeight absorbs the full remainder (1 - DistanceWeight).
+describe('goalRatioWeights (FAI S7F §11)', () => {
+  it('GR = 0 (nobody in goal): distance gets 90%, time the 10% remainder', () => {
+    const { distanceWeight, timeWeight } = goalRatioWeights(0);
+    expect(distanceWeight).toBeCloseTo(0.9, 12);
+    expect(timeWeight).toBeCloseTo(0.1, 12);
+  });
+
+  it('GR = 0.5: DW = 0.9 - 0.8325 + 0.42825 - 0.073375 = 0.422375 exactly', () => {
+    const { distanceWeight, timeWeight } = goalRatioWeights(0.5);
+    expect(distanceWeight).toBeCloseTo(0.422375, 12);
+    expect(timeWeight).toBeCloseTo(0.577625, 12);
+  });
+
+  it('GR = 1 (everyone in goal): DW = 0.9 - 1.665 + 1.713 - 0.587 = 0.361', () => {
+    const { distanceWeight, timeWeight } = goalRatioWeights(1);
+    expect(distanceWeight).toBeCloseTo(0.361, 12);
+    expect(timeWeight).toBeCloseTo(0.639, 12);
+  });
+
+  it('weights always sum to 1 and clamp out-of-range ratios', () => {
+    for (const gr of [0, 0.1, 0.25, 0.33, 0.5, 0.75, 0.9, 1]) {
+      const { distanceWeight, timeWeight } = goalRatioWeights(gr);
+      expect(distanceWeight + timeWeight).toBeCloseTo(1, 12);
+      expect(distanceWeight).toBeGreaterThan(0);
+      expect(distanceWeight).toBeLessThan(1);
+    }
+    expect(goalRatioWeights(-0.5)).toEqual(goalRatioWeights(0));
+    expect(goalRatioWeights(1.5)).toEqual(goalRatioWeights(1));
+  });
+});
+
+describe('availablePoints pools scale the compute functions linearly', () => {
+  it('computeDistancePoints returns the pool for goal pilots and scales sqrt for the rest', () => {
+    // GR = 0 → AvailableDistancePoints = 0.9 * 1000 = 900 raw.
+    expect(computeDistancePoints(50, 50, true, 900)).toBe(900);
+    expect(computeDistancePoints(25, 100, false, 900)).toBeCloseTo(450, 9);
+    // Default remains MAX_POINTS for isolated unit use.
+    expect(computeDistancePoints(50, 50, true)).toBe(MAX_POINTS);
+  });
+
+  it('computeTimePoints returns the pool for t_best and scales the fraction', () => {
+    expect(computeTimePoints(3000, [3000, 3600], 639)).toBe(639);
+    expect(computeTimePoints(3600, [3000, 3600], 639)).toBeCloseTo(
+      0.639 * computeTimePoints(3600, [3000, 3600]),
+      9,
+    );
+    // Sole/no finisher degenerate branch honours the pool too.
+    expect(computeTimePoints(5000, [], 639)).toBe(639);
   });
 });
 

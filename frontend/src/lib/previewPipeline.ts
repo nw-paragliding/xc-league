@@ -8,7 +8,7 @@
 
 import type { PipelineError, ScoredAttempt } from '../../../src/shared/pipeline';
 import { parseAndValidate, runPipelineFromParsed } from '../../../src/shared/pipeline';
-import { computeDistancePoints, computeTimePoints, MAX_POINTS } from '../../../src/shared/task-engine';
+import { computeDistancePoints, computeTimePoints, goalRatioWeights, MAX_POINTS } from '../../../src/shared/task-engine';
 import type { Season } from '../api/leagues';
 import type { LeaderboardEntry, Task, Turnpoint } from '../api/tasks';
 import type { ReplayFix } from '../api/track';
@@ -78,11 +78,12 @@ function turnpointToDef(tp: Turnpoint) {
 /**
  * Mirror the task-level normalisation that `rebuildTaskResults` runs server-
  * side after every upload (src/job-queue.ts). The pipeline returns raw GAP
- * points (max 1000 each for dist + time); the leaderboard shows those points
- * rescaled so the winner's total equals the task's `normalized_score` (1000
- * by default). Without applying the same scale here, the preview's "Total
- * pts" would be on a different scale from the comparison panel's "Previous
- * Best" — leading to nonsense like "less distance = more points" when the
+ * points split by the §11 goal-ratio weights (availableDistancePoints +
+ * availableTimePoints = 1000); the leaderboard shows those points rescaled
+ * so the winner's total equals the task's `normalized_score` (1000 by
+ * default). Without applying the same scale here, the preview's "Total pts"
+ * would be on a different scale from the comparison panel's "Previous Best"
+ * — leading to nonsense like "less distance = more points" when the
  * existing leaderboard has been heavily compressed.
  *
  * Approach: pool the preview alongside the FULL existing leaderboard —
@@ -93,10 +94,11 @@ function turnpointToDef(tp: Turnpoint) {
  * Dropping the pilot's row here would move t_best when they hold it —
  * e.g. pilot A holds t_best = 3600 s, B in goal at 4500 s, A previews a
  * 5400 s flight: the server keeps the pool at {3600, 4500, 5400} (A stays
- * winner at 1000, B keeps 685.0 raw time points), whereas a pool without
- * A's row would wrongly anchor t_best at 4500 s. The pilot's row and the
- * preview together contribute ONE winner-scale candidate: whichever of the
- * two the server would keep as their best attempt.
+ * winner at raw 1000, B keeps 437.7 raw time points over the GR=1 pool of
+ * 639), whereas a pool without A's row would wrongly anchor t_best at
+ * 4500 s. The pilot's row and the preview together contribute ONE
+ * winner-scale candidate: whichever of the two the server would keep as
+ * their best attempt.
  */
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
@@ -141,9 +143,22 @@ export function normalizePreviewPoints(
     ...(preview.reachedGoal && preview.taskTimeS != null ? [preview.taskTimeS] : []),
   ];
 
+  // §11 goal-ratio weights, mirroring rebuildTaskResults: pilots flying =
+  // every leaderboard row (one row per pilot) plus the previewing pilot when
+  // they are not already on it; a pilot is "in goal" with any goal-reaching
+  // attempt — for the previewing pilot that's their existing row OR the
+  // preview (a non-goal→goal preview therefore moves the goal ratio and the
+  // weights, exactly as the server rebuild would after the upload).
+  const pilotsFlown = leaderboard.length + (existing ? 0 : 1);
+  const previewPilotInGoal = (existing?.reachedGoal ?? false) || preview.reachedGoal;
+  const pilotsInGoal = others.filter((e) => e.reachedGoal).length + (previewPilotInGoal ? 1 : 0);
+  const { distanceWeight, timeWeight } = goalRatioWeights(pilotsFlown > 0 ? pilotsInGoal / pilotsFlown : 0);
+  const availableDistancePoints = distanceWeight * MAX_POINTS;
+  const availableTimePoints = timeWeight * MAX_POINTS;
+
   const rawPoints = (d: number, reachedGoal: boolean, t: number | null) => {
-    const dp = computeDistancePoints(d, bestDist > 0 ? bestDist : 1, reachedGoal);
-    const tp = reachedGoal && t != null ? computeTimePoints(t, allGoalTimes) : 0;
+    const dp = computeDistancePoints(d, bestDist > 0 ? bestDist : 1, reachedGoal, availableDistancePoints);
+    const tp = reachedGoal && t != null ? computeTimePoints(t, allGoalTimes, availableTimePoints) : 0;
     return { dp, tp };
   };
   // rebuildTaskResults keeps raw totals at full precision (rounding to 0.1
@@ -264,6 +279,14 @@ export async function previewSubmission(
     .filter((e) => e.reachedGoal && e.taskTimeS != null)
     .map((e) => e.taskTimeS as number);
 
+  // §11 goal-ratio field counts, mirroring the server upload path: each
+  // leaderboard row is one pilot; a row's reachedGoal is a faithful "has a
+  // goal attempt" signal because best-attempt selection prefers goal
+  // attempts. The previewing pilot's own row is excluded — scoreAttempts
+  // folds them back in based on the previewed track.
+  const existingEntry = (currentUserId && leaderboardEntries.find((e) => e.pilotId === currentUserId)) || null;
+  const otherEntries = existingEntry ? leaderboardEntries.filter((e) => e !== existingEntry) : leaderboardEntries;
+
   const result = await runPipelineFromParsed(
     parsed.value,
     {
@@ -274,6 +297,11 @@ export async function previewSubmission(
       },
       existingGoalTimes,
       competitionType: season.competitionType,
+      fieldCounts: {
+        otherPilotsFlown: otherEntries.length,
+        otherPilotsInGoal: otherEntries.filter((e) => e.reachedGoal).length,
+        pilotAlreadyInGoal: existingEntry?.reachedGoal ?? false,
+      },
     },
     task.openDate,
     task.closeDate,

@@ -235,6 +235,22 @@ export async function handleIgcUpload(
     .get(taskId) as { best: number | null };
   const taskBestDistanceKm = bestDistRow.best ?? 0;
 
+  // ── §11 goal-ratio field counts ────────────────────────────────────────────
+  // Distinct-pilot counts excluding the uploader (scoreAttempts folds the
+  // uploader back in once it knows whether this submission reaches goal), so
+  // the provisional weights equal the ones rebuildTaskResults derives from
+  // the post-insert attempt set in the same transaction below.
+  const fieldRow = db
+    .prepare(
+      `SELECT
+         COUNT(DISTINCT CASE WHEN user_id != ? THEN user_id END) AS othersFlown,
+         COUNT(DISTINCT CASE WHEN user_id != ? AND reached_goal = 1 THEN user_id END) AS othersInGoal,
+         MAX(CASE WHEN user_id = ? AND reached_goal = 1 THEN 1 ELSE 0 END) AS pilotInGoal
+       FROM flight_attempts
+       WHERE task_id = ? AND deleted_at IS NULL`,
+    )
+    .get(userId, userId, userId, taskId) as { othersFlown: number; othersInGoal: number; pilotInGoal: number | null };
+
   // ── Build pipeline input ───────────────────────────────────────────────────
   const pipelineInput: PipelineInput = {
     igcText: fileBuffer.toString('utf8'),
@@ -244,6 +260,11 @@ export async function handleIgcUpload(
     },
     existingGoalTimes: existingGoalTimesS,
     competitionType: task.competition_type === 'HIKE_AND_FLY' ? 'HIKE_AND_FLY' : 'XC',
+    fieldCounts: {
+      otherPilotsFlown: fieldRow.othersFlown,
+      otherPilotsInGoal: fieldRow.othersInGoal,
+      pilotAlreadyInGoal: fieldRow.pilotInGoal === 1,
+    },
   };
 
   // ── Run pipeline ───────────────────────────────────────────────────────────

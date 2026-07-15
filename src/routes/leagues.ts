@@ -264,7 +264,14 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
          JOIN users u ON u.id = tr.user_id
          LEFT JOIN flight_attempts fa ON fa.id = tr.best_attempt_id
          WHERE tr.task_id = ?
-         ORDER BY tr.rank ASC`,
+         ORDER BY tr.rank ASC,
+                  -- Equal totals share a rank (S7F competition ranking);
+                  -- mirror rebuildTaskResults' deterministic render order
+                  -- within a shared rank: goal-gated task time, goal flag,
+                  -- then pilot id.
+                  COALESCE(CASE WHEN tr.reached_goal = 1 THEN tr.task_time_s END, 1e15) ASC,
+                  tr.reached_goal DESC,
+                  tr.user_id ASC`,
         )
         .all(taskId) as any[];
 

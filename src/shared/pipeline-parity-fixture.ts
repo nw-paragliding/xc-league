@@ -63,6 +63,10 @@ export const FIXTURE_INPUT: PipelineInput = {
   task: { id: 'fixture-task', turnpoints: FIXTURE_TURNPOINTS },
   existingGoalTimes: [120], // one prior finisher in 2 minutes — gives this attempt provisional time points
   competitionType: 'XC',
+  // §11 field counts matching existingGoalTimes: one other pilot, in goal.
+  // With this submission also reaching goal the goal ratio is 2/2 = 1 →
+  // DistanceWeight 0.361, TimeWeight 0.639.
+  fieldCounts: { otherPilotsFlown: 1, otherPilotsInGoal: 1, pilotAlreadyInGoal: false },
 };
 
 export const FIXTURE_TASK_OPEN_DATE = '2026-01-01';
