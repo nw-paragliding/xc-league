@@ -311,10 +311,9 @@ function rebuildTaskResultsInner(db: Database, taskId: string): void {
   // task in the DB.)
   let bestDistKm = 0;
   for (const a of attempts) if (a.distance_flown_km > bestDistKm) bestDistKm = a.distance_flown_km;
-  // Build the goal-times set from the *fastest* goal time per pilot. Without
-  // dedup, a pilot who uploads the same goal flight twice (or two different
-  // goal flights) would contribute multiple entries and shift tMin/tMax for
-  // everyone — scoring should depend on one attempt per pilot.
+  // Build the goal-times set from the *fastest* goal time per pilot. The
+  // §12.2 formula only depends on t_best, which slower duplicates can't
+  // shift, but scoring should still depend on one attempt per pilot.
   const fastestGoalTimeByPilot = new Map<string, number>();
   for (const a of attempts) {
     if (a.reached_goal !== 1 || a.task_time_s === null) continue;

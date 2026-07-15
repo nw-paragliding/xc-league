@@ -396,30 +396,30 @@ describe('rebuildTaskResults', () => {
       .all(taskTime.id) as any[];
     expect(rows).toHaveLength(4);
 
-    // tMin=3000, tMax=5400; ratio = (t - 3000) / 2400.
-    // time_points = 1000 * (1 - ratio^(2/3)).
+    // FAI S7F §12.2: bestTime=3000s (0.8333h), cutoff at best + sqrt(best) ≈ 6286s.
+    // time_points = 1000 * max(0, 1 - ((t - best) / sqrt(best))^(5/6)), times in hours.
     const byUser = new Map(rows.map((r) => [r.user_id, r]));
     expect(byUser.get(pilot4.id).time_points).toBeCloseTo(1000, 0); // fastest
-    expect(byUser.get(pilot.id).time_points).toBeCloseTo(603, 0); // 3600
-    expect(byUser.get(pilot2.id).time_points).toBeCloseTo(370, 0); // 4200
-    expect(byUser.get(pilot3.id).time_points).toBeCloseTo(0, 0); // slowest
+    expect(byUser.get(pilot.id).time_points).toBeCloseTo(757.6, 1); // 3600
+    expect(byUser.get(pilot2.id).time_points).toBeCloseTo(568.1, 1); // 4200
+    expect(byUser.get(pilot3.id).time_points).toBeCloseTo(230.4, 1); // slowest, still inside cutoff
     // distance_points are tied at 1000 (all four flew 50km of best=50km).
     for (const r of rows) expect(r.distance_points).toBeCloseTo(1000, 0);
   });
 
   // Regression: goalTimes is built per-pilot (fastest), not per-attempt.
-  // A pilot uploading two goal flights for the same task must not contribute
-  // two entries to the goal-time set — that would distort tMin/tMax for
-  // everyone else.
+  // Under the §12.2 formula only the fastest time (t_best) matters, so a
+  // pilot's slower duplicate attempts can no longer distort anyone's score —
+  // but the per-pilot dedup guard stays, and a pilot with multiple goal
+  // attempts must still be scored on their fastest one.
   it('dedups goal times by pilot when computing time_points', () => {
     const taskTime = createTestTask(db, season.id, league.id, { name: 'Dedup' });
     db.prepare(`UPDATE tasks SET normalized_score = 2000 WHERE id = ?`).run(taskTime.id);
 
     // Pilot A: two goal attempts in one submission — fastest=3600s, slower=4200s.
-    // (Could also be two different submissions; same bug either way since goalTimes
-    // is built from flight_attempts, not submissions.) If we don't dedup,
-    // goalTimes = [3600, 4200, 3000] → tMin=3000, tMax=4200. With dedup,
-    // goalTimes = [3600, 3000] → tMin=3000, tMax=3600.
+    // (Could also be two different submissions; goalTimes is built from
+    // flight_attempts, not submissions.) Pilot A must be scored on their
+    // fastest attempt (3600), and t_best for the field is pilot B's 3000.
     const subA = createTestSubmission(db, taskTime.id, pilot.id, league.id);
     createTestAttempt(db, subA, taskTime.id, pilot.id, league.id, {
       reachedGoal: true,
@@ -447,10 +447,9 @@ describe('rebuildTaskResults', () => {
       .all(taskTime.id) as any[];
     expect(rows).toHaveLength(2);
     const byUser = new Map(rows.map((r) => [r.user_id, r]));
-    // tMin=3000, tMax=3600 → ratio = (t - 3000) / 600.
-    // Pilot B at 3000: 1000.
-    // Pilot A's *best* is 3600 (slower 4200 is ignored): ratio=1 → 0.
+    // §12.2 with t_best=3000s: pilot B at 3000 → 1000.
+    // Pilot A's *best* is 3600 (slower 4200 is ignored) → 757.6.
     expect(byUser.get(pilot2.id).time_points).toBeCloseTo(1000, 0);
-    expect(byUser.get(pilot.id).time_points).toBeCloseTo(0, 0);
+    expect(byUser.get(pilot.id).time_points).toBeCloseTo(757.6, 1);
   });
 });

@@ -353,18 +353,24 @@ export function computeDistancePoints(distKm: number, bestDistKm: number, reache
 }
 
 /**
- * Time points for one goal pilot.
- *   Sole finisher or all same time: MAX_POINTS
- *   Otherwise: MAX_POINTS * (1 - ((t - t_min) / (t_max - t_min)) ^ (2/3))
+ * Time points for one goal pilot — FAI Sporting Code S7F §12.2.
+ *
+ *   SpeedFraction = max(0, 1 - ((T - BestTime) / sqrt(BestTime)) ^ (5/6))
+ *   TimePoints    = SpeedFraction * MAX_POINTS
+ *
+ * Times in the formula are in HOURS (per the spec). BestTime is the fastest
+ * task time among goal pilots. A pilot scores zero only when their time is at
+ * or beyond BestTime + sqrt(BestTime) — an absolute cutoff anchored to the
+ * winner's time, not to the slowest finisher.
  *
  * @param taskTimeS      This pilot's task time in seconds
  * @param allGoalTimesS  All goal pilots' task times including this one
  */
 export function computeTimePoints(taskTimeS: number, allGoalTimesS: number[]): number {
   if (allGoalTimesS.length === 0) return MAX_POINTS;
-  const tMin = Math.min(...allGoalTimesS);
-  const tMax = Math.max(...allGoalTimesS);
-  if (tMin === tMax) return MAX_POINTS;
-  const ratio = (taskTimeS - tMin) / (tMax - tMin);
-  return Math.round(MAX_POINTS * (1 - ratio ** (2 / 3)) * 10) / 10;
+  const bestTimeH = Math.min(...allGoalTimesS) / 3600;
+  if (bestTimeH <= 0) return taskTimeS <= 0 ? MAX_POINTS : 0;
+  const excessH = Math.max(0, taskTimeS / 3600 - bestTimeH);
+  const speedFraction = Math.max(0, 1 - (excessH / Math.sqrt(bestTimeH)) ** (5 / 6));
+  return Math.round(MAX_POINTS * speedFraction * 10) / 10;
 }

@@ -136,7 +136,7 @@ export default function ScoringExplainer() {
           pill="TIME"
           pillColor="#4a9eff"
           label="Goal pilots only"
-          sub="Measures your speed through the speed section. Faster pilots and days with more goal crossings earn more time points. Provisional until the task closes — final standings depend on the full field."
+          sub="Measures your speed through the speed section against the fastest pilot in goal (FAI S7F §12.2). You only score zero if you take longer than the best time plus its square root. Provisional until the task closes — a faster finisher can still lower everyone's time points."
         />
         <div
           style={{
