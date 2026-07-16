@@ -378,9 +378,7 @@ describe('rebuildTaskResults', () => {
     rebuildTaskResults(db, taskHalf.id);
 
     const rows = db
-      .prepare(
-        'SELECT user_id, distance_points, total_points FROM task_results WHERE task_id = ? ORDER BY rank',
-      )
+      .prepare('SELECT user_id, distance_points, total_points FROM task_results WHERE task_id = ? ORDER BY rank')
       .all(taskHalf.id) as any[];
     expect(rows).toHaveLength(2);
     expect(rows[0].user_id).toBe(pilot.id);

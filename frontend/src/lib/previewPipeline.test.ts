@@ -125,7 +125,7 @@ describe('previewSubmission parity — frontend wraps runPipeline against shared
     expect(res.value.fixes[4].lat).toBeCloseTo(47.54, 3);
   });
 
-  it('keeps the current pilot\'s standing goal time in the t_best pool when they preview a slower flight', async () => {
+  it("keeps the current pilot's standing goal time in the t_best pool when they preview a slower flight", async () => {
     // Pilot 'me' holds t_best = 100 s and previews the fixture flight
     // (goal at ~147.2 s). The server never discards the old attempt, so:
     //   - goal-time pool stays {100, 120, 147.2} → preview raw time = 879.8
@@ -168,12 +168,7 @@ describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () =>
       mkEntry({ pilotId: 'A', distanceFlownKm: 50, reachedGoal: true, taskTimeS: 3600 }),
       mkEntry({ pilotId: 'B', distanceFlownKm: 50, reachedGoal: true, taskTimeS: 4500 }),
     ];
-    const r = normalizePreviewPoints(
-      { distanceFlownKm: 50, reachedGoal: true, taskTimeS: 5400 },
-      entries,
-      'A',
-      1000,
-    );
+    const r = normalizePreviewPoints({ distanceFlownKm: 50, reachedGoal: true, taskTimeS: 5400 }, entries, 'A', 1000);
 
     expect(r.distancePoints).toBeCloseTo(500, 1);
     expect(r.timePoints).toBeCloseTo(219.4, 1);
@@ -191,12 +186,7 @@ describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () =>
       mkEntry({ pilotId: 'me', distanceFlownKm: 50, reachedGoal: false }),
       mkEntry({ pilotId: 'other', distanceFlownKm: 40, reachedGoal: false }),
     ];
-    const r = normalizePreviewPoints(
-      { distanceFlownKm: 50, reachedGoal: true, taskTimeS: 3600 },
-      entries,
-      'me',
-      1000,
-    );
+    const r = normalizePreviewPoints({ distanceFlownKm: 50, reachedGoal: true, taskTimeS: 3600 }, entries, 'me', 1000);
 
     // Preview wins → winner raw = 1000 dist + 1000 time (sole goal time) =
     // 2000, scale 0.5.
@@ -241,12 +231,7 @@ describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () =>
 
   it('treats the preview as the only candidate when the pilot has no leaderboard row', () => {
     const entries = [mkEntry({ pilotId: 'other', distanceFlownKm: 40, reachedGoal: false })];
-    const r = normalizePreviewPoints(
-      { distanceFlownKm: 20, reachedGoal: false, taskTimeS: null },
-      entries,
-      'me',
-      1000,
-    );
+    const r = normalizePreviewPoints({ distanceFlownKm: 20, reachedGoal: false, taskTimeS: null }, entries, 'me', 1000);
 
     expect(r.predicted.source).toBe('preview');
     // bestDist = 40 → preview raw = 1000·sqrt(20/40) = 707.1; winner is

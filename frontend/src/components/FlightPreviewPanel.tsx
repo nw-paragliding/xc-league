@@ -225,16 +225,15 @@ export default function FlightPreviewPanel({
                   borderRadius: 6,
                   fontSize: 11,
                   fontFamily: 'var(--font-mono)',
-                  background:
-                    predicted.source === 'existing' ? 'rgba(167,139,250,0.08)' : 'rgba(16,185,129,0.06)',
+                  background: predicted.source === 'existing' ? 'rgba(167,139,250,0.08)' : 'rgba(16,185,129,0.06)',
                   border: `1px solid ${predicted.source === 'existing' ? 'rgba(167,139,250,0.3)' : 'rgba(16,185,129,0.25)'}`,
                   color: 'var(--text)',
                 }}
               >
                 {predicted.source === 'existing' ? (
                   <>
-                    This flight would <strong>not</strong> displace your current best — your leaderboard row
-                    keeps it, at <strong>{fmtPts(predicted.totalPoints)} pts</strong> after upload.
+                    This flight would <strong>not</strong> displace your current best — your leaderboard row keeps it,
+                    at <strong>{fmtPts(predicted.totalPoints)} pts</strong> after upload.
                   </>
                 ) : previousBest ? (
                   <>
@@ -250,8 +249,8 @@ export default function FlightPreviewPanel({
             )}
             {previousBest && predicted?.source === 'preview' && (
               <div style={{ marginTop: 4, fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text3)' }}>
-                Previous-best points aren't shown: the leaderboard rescales after every upload, so its stored
-                points aren't comparable with this preview.
+                Previous-best points aren't shown: the leaderboard rescales after every upload, so its stored points
+                aren't comparable with this preview.
               </div>
             )}
           </>
