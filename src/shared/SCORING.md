@@ -21,7 +21,7 @@ availableDistancePoints = DistanceWeight × 1000
 availableTimePoints     = TimeWeight × 1000
 ```
 
-Full FAI PG carves a LeadingTimeRatio share (default 26%) plus arrival points out of the `1 − DistanceWeight` remainder; because leading and arrival points are deliberately dropped here, **time absorbs the full remainder**. Reference points: GR = 0 → 900/100, GR = 0.5 → 422.375/577.625, GR = 1 → 361/639.
+Full FAI PG carves only a LeadingTimeRatio share (default 26%) out of the `1 − DistanceWeight` remainder — arrival points are always 0 for paragliding, and at GR = 0 FAI gives leading the *entire* remainder (FAI PG time weight is 0 there). Because leading points are deliberately dropped here, **time absorbs the full remainder**, which makes this deviation largest at low goal ratios. Reference points: GR = 0 → 900/100, GR = 0.5 → 422.375/577.625, GR = 1 → 361/639.
 
 ### Distance Points
 

@@ -1362,30 +1362,6 @@ export function scoreAttempts(
   });
 }
 
-/**
- * Rescore: recalculate time points for all goal attempts on a task.
- *
- * NOTE: legacy entry point with no production callers — rebuildTaskResults
- * (src/job-queue.ts) is the authoritative rescore path and applies the §11
- * goal-ratio weights there. This helper recomputes over the raw MAX_POINTS
- * pool only.
- */
-export function rescoreTimePoints(allTaskAttempts: ScoredAttempt[]): ScoredAttempt[] {
-  const goalTimes = allTaskAttempts.filter((a) => a.reachedGoal && a.taskTimeS !== null).map((a) => a.taskTimeS!);
-
-  return allTaskAttempts.map((attempt) => {
-    if (!attempt.reachedGoal || attempt.taskTimeS === null) {
-      return { ...attempt, timePoints: 0, totalPoints: attempt.distancePoints };
-    }
-    const timePoints = computeTimePoints(attempt.taskTimeS, goalTimes);
-    return {
-      ...attempt,
-      timePoints,
-      totalPoints: attempt.distancePoints + timePoints,
-    };
-  });
-}
-
 // =============================================================================
 // STAGE 7: SELECT BEST ATTEMPT
 // =============================================================================
@@ -1492,24 +1468,6 @@ export async function runPipelineFromParsed(
     flightDate: track.flightDate,
     gapCount: track.gapCount,
   });
-}
-
-// =============================================================================
-// RESCORE JOB ENTRY POINT
-// =============================================================================
-
-export interface RescoreInput {
-  taskId: string;
-  allAttemptsForTask: ScoredAttempt[];
-}
-
-export interface RescoreOutput {
-  updatedAttempts: ScoredAttempt[];
-}
-
-export function runRescore(input: RescoreInput): RescoreOutput {
-  const updatedAttempts = rescoreTimePoints(input.allAttemptsForTask);
-  return { updatedAttempts };
 }
 
 // =============================================================================
