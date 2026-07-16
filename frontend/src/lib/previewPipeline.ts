@@ -8,7 +8,12 @@
 
 import type { PipelineError, ScoredAttempt } from '../../../src/shared/pipeline';
 import { parseAndValidate, runPipelineFromParsed } from '../../../src/shared/pipeline';
-import { computeDistancePoints, computeTimePoints, goalRatioWeights, MAX_POINTS } from '../../../src/shared/task-engine';
+import {
+  computeDistancePoints,
+  computeTimePoints,
+  goalRatioWeights,
+  MAX_POINTS,
+} from '../../../src/shared/task-engine';
 import type { Season } from '../api/leagues';
 import type { LeaderboardEntry, Task, Turnpoint } from '../api/tasks';
 import type { ReplayFix } from '../api/track';

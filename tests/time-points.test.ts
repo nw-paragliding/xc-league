@@ -102,10 +102,7 @@ describe('availablePoints pools scale the compute functions linearly', () => {
 
   it('computeTimePoints returns the pool for t_best and scales the fraction', () => {
     expect(computeTimePoints(3000, [3000, 3600], 639)).toBe(639);
-    expect(computeTimePoints(3600, [3000, 3600], 639)).toBeCloseTo(
-      0.639 * computeTimePoints(3600, [3000, 3600]),
-      9,
-    );
+    expect(computeTimePoints(3600, [3000, 3600], 639)).toBeCloseTo(0.639 * computeTimePoints(3600, [3000, 3600]), 9);
     // Sole/no finisher degenerate branch honours the pool too.
     expect(computeTimePoints(5000, [], 639)).toBe(639);
   });

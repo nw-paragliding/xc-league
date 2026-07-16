@@ -294,12 +294,7 @@ describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () =>
     // preview must show those exact numbers — a 50/50 (or GR = 0) split
     // would not.
     const entries = [mkEntry({ pilotId: 'other', distanceFlownKm: 40, reachedGoal: false })];
-    const r = normalizePreviewPoints(
-      { distanceFlownKm: 50, reachedGoal: true, taskTimeS: 3600 },
-      entries,
-      'me',
-      1000,
-    );
+    const r = normalizePreviewPoints({ distanceFlownKm: 50, reachedGoal: true, taskTimeS: 3600 }, entries, 'me', 1000);
 
     expect(r.distancePoints).toBeCloseTo(422.4, 1);
     expect(r.timePoints).toBeCloseTo(577.6, 1);
