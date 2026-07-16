@@ -584,7 +584,7 @@ runPipeline result
 | `detectAttempts` | Quadratic formula (parameterised segment-circle intersection); linear time interpolation at parameter `t`; goal line via segment-segment intersection; multiple SSS crossings → multiple attempts | `NO_SSS_CROSSING` |
 | `classifyGroundState` | 30s sustained speed window classifies each fix `GROUND` / `AIRBORNE` / `UNKNOWN`; 60s window around `GROUND_ONLY` crossing stores `detectedMaxSpeedKmh` | (no error — informational only) |
 | `calculateDistances` | Vincenty geodesic (`geographiclib-geodesic`) for point-to-point legs; goal pilots get full `optimisedDistanceKm`; partial pilots get cumulative distance + closest approach to next TP | — |
-| `scoreAttempts` | **Distance:** `938 * sqrt(d_pilot / d_best)` (or 938 for goal). **Time:** `938 * (1 - ((t_pilot - t_min) / (t_max - t_min))^(2/3))` — provisional until task closes | — |
+| `scoreAttempts` | **Distance:** `938 * sqrt(d_pilot / d_best)` (or 938 for goal). **Time (FAI S7F §12.2):** `938 * max(0, 1 - ((t_pilot - t_best) / sqrt(t_best))^(5/6))`, times in hours — provisional until task closes | — |
 | `selectBestAttempt` | Priority: (1) reached goal, (2) highest total points, (3) lowest task time | — |
 
 **Rescoring:** When a new goal pilot is detected, `RESCORE_TASK` job calls `rescoreTimePoints` — the same GAP formula applied across all known goal times for that task. `task_results` and `season_standings` are updated atomically via follow-up jobs.
