@@ -892,9 +892,9 @@ export function calculateDistances(attempts: AttemptTrace[], fixes: Fix[], task:
  *   Goal: distancePoints = MAX_POINTS
  *   Else: distancePoints = MAX_POINTS * sqrt(dist / bestDist)
  *
- * Time points (goal pilots only):
- *   timePoints = MAX_POINTS * (1 - ((t_pilot - t_min) / (t_max - t_min)) ^ (2/3))
- *   Sole finisher or all same time: timePoints = MAX_POINTS
+ * Time points (goal pilots only) — FAI S7F §12.2:
+ *   timePoints = MAX_POINTS * max(0, 1 - ((t_pilot - t_best) / sqrt(t_best)) ^ (5/6))
+ *   (times in hours; t_best = fastest goal time; sole finisher gets MAX_POINTS)
  */
 export function scoreAttempts(
   attempts: AttemptTrace[],

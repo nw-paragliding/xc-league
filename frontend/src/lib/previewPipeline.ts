@@ -69,8 +69,9 @@ function normalizePreviewPoints(
 ): { distancePoints: number; timePoints: number; totalPoints: number } {
   // Drop the current pilot's existing leaderboard row — their preview replaces
   // it as their best-attempt candidate. Keeping both would double-count this
-  // pilot in the goal-time pool (skewing tMin/tMax) and treat their old
-  // total as a separate "competitor" against themselves.
+  // pilot in the goal-time pool (potentially pinning t_best to their old,
+  // faster time) and treat their old total as a separate "competitor"
+  // against themselves.
   const others = currentUserId ? leaderboard.filter((e) => e.pilotId !== currentUserId) : leaderboard;
 
   // bestDist drives the non-goal distance points formula. Include the preview

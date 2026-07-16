@@ -24,18 +24,19 @@ The square root curve rewards pilots who fly further but does not linearly scale
 
 ### Time Points
 
-Only goal pilots receive time points.
+Only goal pilots receive time points. The curve is the FAI Sporting Code S7F §12.2 formula:
 
-| Condition | Formula |
-|---|---|
-| Sole finisher, or all goal pilots finish in the same time | `1000` |
-| Otherwise | `1000 × (1 - ((t − t_min) / (t_max − t_min))^(2/3))` |
+```
+SpeedFraction = max(0, 1 - ((t − t_best) / √t_best)^(5/6))
+timePoints    = 1000 × SpeedFraction
+```
 
-- `t` — this pilot's task time (SSS crossing → goal crossing)
-- `t_min` — fastest goal time
-- `t_max` — slowest goal time
+- `t` — this pilot's task time **in hours** (ESS crossing if the task has an ESS, else goal crossing, measured from the SSS crossing)
+- `t_best` — the fastest task time among pilots who reached goal, in hours
 
-The `^(2/3)` exponent gives more weight to the faster end — a pilot 50% of the way through the time spread loses much less than 500 points.
+The cutoff is absolute, anchored to the winner: a pilot scores zero time points only when
+their time is at or beyond `t_best + √t_best` (e.g. best time 1h → zero at 2h; best time
+4h → zero at 6h). A sole finisher is their own `t_best` and scores the full 1000.
 
 Non-goal pilots receive **0 time points**.
 
@@ -86,4 +87,4 @@ Pilots are ranked by total points descending. Tie-breaking is not currently impl
 
 ## Rescoring
 
-Time points are recalculated every time a new result is submitted while a task is open. This means a pilot's score can change when other pilots submit results that shift `t_min` or `t_max`. Scores are finalized when an admin freezes the task.
+Time points are recalculated every time a new result is submitted while a task is open. Because the §12.2 formula depends only on the fastest goal time, a pilot's time points change only when someone submits a *faster* goal time (shifting `t_best`); slower finishers arriving later never affect existing scores. Scores are finalized when an admin freezes the task.

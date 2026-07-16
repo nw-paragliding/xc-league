@@ -96,17 +96,18 @@ describe('previewSubmission parity — frontend wraps runPipeline against shared
     expect(best.taskTimeS).toBeGreaterThan(0);
 
     // previewSubmission also applies the same task-level normalisation that
-    // rebuildTaskResults runs server-side. Fixture setup:
+    // rebuildTaskResults runs server-side. Fixture setup (§12.2 time points):
     //   - prior finisher: goal at 120 s → raw 1000 dist + 1000 time = 2000
-    //   - preview: goal at ~148 s → raw 1000 dist + 0 time = 1000
+    //   - preview: goal ~27 s slower; t_best = 120 s → raw time 929.6,
+    //     so raw 1000 dist + 929.6 time = 1929.6
     //   - winner raw = 2000 → scale = 1000 / 2000 = 0.5
-    //   - preview normalised: 500 dist + 0 time = 500
+    //   - preview normalised: 500 dist + 464.8 time = 964.8
     // If this assertion ever drifts, either the normalisation logic changed
     // or the underlying scoring formulas did — both cases want a closer look
     // because the backend's rebuildTaskResults would have followed suit.
     expect(best.distancePoints).toBeCloseTo(500, 0);
-    expect(best.timePoints).toBeCloseTo(0, 0);
-    expect(best.totalPoints).toBeCloseTo(500, 0);
+    expect(best.timePoints).toBeCloseTo(464.8, 1);
+    expect(best.totalPoints).toBeCloseTo(964.8, 1);
 
     // Frontend-only: previewSubmission also surfaces fixes for the map. Each
     // B record should produce one fix.
