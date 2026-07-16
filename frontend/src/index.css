@@ -431,3 +431,13 @@ label {
 .tooltip-host:hover .tooltip {
   opacity: 1 !important;
 }
+
+/* Provisional score values (UploadZone): open tasks can still rescore */
+.score-cell-value.prov {
+  opacity: 0.75;
+  font-style: italic;
+}
+.provisional-note {
+  font-size: 12px;
+  color: var(--text3);
+}

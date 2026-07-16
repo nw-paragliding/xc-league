@@ -1,5 +1,5 @@
 import type { LeaderboardEntry } from '../api/tasks';
-import type { PreviewError, PreviewResult } from '../lib/previewPipeline';
+import type { PredictedStanding, PreviewError, PreviewResult } from '../lib/previewPipeline';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -61,6 +61,13 @@ interface Props {
   error: PreviewError | null;
   /** The pilot's current best on this task. null = first submission for this pilot. */
   previousBest: LeaderboardEntry | null;
+  /**
+   * The pilot's leaderboard row after this upload (previewPipeline's
+   * PredictedStanding) — points re-normalized under the POST-upload pool.
+   * null while the preview is loading. `source: 'existing'` means the
+   * previewed flight would NOT displace the pilot's current best.
+   */
+  predicted: PredictedStanding | null;
   uploading: boolean;
   onSubmit: () => void;
   onCancel: () => void;
@@ -71,6 +78,7 @@ export default function FlightPreviewPanel({
   result,
   error,
   previousBest,
+  predicted,
   uploading,
   onSubmit,
   onCancel,
@@ -87,6 +95,10 @@ export default function FlightPreviewPanel({
         reachedGoal: best.reachedGoal,
         turnpointsCrossed: best.turnpointCrossings.length,
         taskTimeS: best.taskTimeS,
+        // Truncation-voided crossings (XC) or failed ground checks (HAF).
+        // Surfaced with the same ⚑ glyph the leaderboard uses, so the pilot
+        // isn't shown a clean preview of a flight that will land flagged.
+        flagged: best.hasFlaggedCrossings,
       }
     : null;
 
@@ -156,41 +168,102 @@ export default function FlightPreviewPanel({
             Analysing flight…
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontFamily: 'var(--font-mono)' }}>
-            <Column
-              label="Previous Best"
-              violet
-              metrics={
-                previousBest
-                  ? {
-                      distance: previousBest.distanceFlownKm,
-                      totalPoints: previousBest.totalPoints,
-                      distancePoints: previousBest.distancePoints,
-                      timePoints: previousBest.timePoints,
-                      reachedGoal: previousBest.reachedGoal,
-                      taskTimeS: previousBest.taskTimeS,
-                    }
-                  : null
-              }
-            />
-            <Column
-              label="This Flight"
-              green
-              metrics={previewMetrics}
-              previousMetrics={
-                previousBest
-                  ? {
-                      distance: previousBest.distanceFlownKm,
-                      totalPoints: previousBest.totalPoints,
-                      distancePoints: previousBest.distancePoints,
-                      timePoints: previousBest.timePoints,
-                      reachedGoal: previousBest.reachedGoal,
-                      taskTimeS: previousBest.taskTimeS,
-                    }
-                  : null
-              }
-            />
-          </div>
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontFamily: 'var(--font-mono)' }}>
+              {/*
+                Single-scale comparison. "This Flight" points are normalized
+                under the POST-upload pool (previewPipeline mirrors the
+                server's rebuildTaskResults), but the previous best's STORED
+                points were normalized under the PRE-upload pool — showing
+                them side by side produced nonsense deltas. So the Previous
+                Best column shows scale-free facts (distance / goal / task
+                time) always, and points only when `predicted` tells us the
+                previous best stays the pilot's row (source 'existing') —
+                in that case predicted's values ARE that flight's
+                re-normalized post-upload points.
+              */}
+              <Column
+                label="Previous Best"
+                violet
+                metrics={
+                  previousBest
+                    ? {
+                        distance: previousBest.distanceFlownKm,
+                        reachedGoal: previousBest.reachedGoal,
+                        taskTimeS: previousBest.taskTimeS,
+                        ...(predicted?.source === 'existing'
+                          ? {
+                              totalPoints: predicted.totalPoints,
+                              distancePoints: predicted.distancePoints,
+                              timePoints: predicted.timePoints,
+                            }
+                          : {}),
+                      }
+                    : null
+                }
+              />
+              <Column
+                label="This Flight"
+                green
+                metrics={previewMetrics}
+                // Facts only — distance/time deltas are scale-free and stay;
+                // points deltas are omitted (pre- vs post-upload scales don't
+                // compare, and the after-upload note below carries the
+                // points story).
+                previousMetrics={
+                  previousBest
+                    ? {
+                        distance: previousBest.distanceFlownKm,
+                        reachedGoal: previousBest.reachedGoal,
+                        taskTimeS: previousBest.taskTimeS,
+                      }
+                    : null
+                }
+              />
+            </div>
+            {predicted && (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: '8px 10px',
+                  borderRadius: 6,
+                  fontSize: 11,
+                  fontFamily: 'var(--font-mono)',
+                  background: predicted.source === 'existing' ? 'rgba(167,139,250,0.08)' : 'rgba(16,185,129,0.06)',
+                  border: `1px solid ${predicted.source === 'existing' ? 'rgba(167,139,250,0.3)' : 'rgba(16,185,129,0.25)'}`,
+                  color: 'var(--text)',
+                }}
+              >
+                {predicted.source === 'existing' ? (
+                  <>
+                    This flight would <strong>not</strong> displace your current best — your leaderboard row keeps it,
+                    at <strong>{fmtPts(predicted.totalPoints)} pts</strong> after upload.
+                  </>
+                ) : previousBest ? (
+                  <>
+                    This flight would become your new best — your leaderboard row after upload:{' '}
+                    <strong>{fmtPts(predicted.totalPoints)} pts</strong>.
+                  </>
+                ) : (
+                  <>
+                    Your leaderboard row after upload: <strong>{fmtPts(predicted.totalPoints)} pts</strong>.
+                  </>
+                )}
+                {predicted.hasFlaggedCrossings && (
+                  <div style={{ marginTop: 4, color: 'var(--warning)' }}>
+                    <strong>⚑</strong> Your leaderboard row will carry the review flag — this track has crossings
+                    flagged for admin review.
+                  </div>
+                )}
+              </div>
+            )}
+            {previousBest && predicted?.source === 'preview' && (
+              <div style={{ marginTop: 4, fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text3)' }}>
+                Previous-best points aren't shown: the leaderboard rescales after every upload, so its stored points
+                aren't comparable with this preview.
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -232,12 +305,22 @@ export default function FlightPreviewPanel({
 
 interface ColumnMetrics {
   distance: number;
-  totalPoints: number;
-  distancePoints: number;
-  timePoints: number;
+  // Points are optional so the Previous Best column can render facts without
+  // points when the stored (pre-upload-scale) values would be misleading next
+  // to the preview's post-upload-scale numbers. fmtPts renders absent as '—',
+  // and delta() skips rows where either side is missing.
+  totalPoints?: number | null;
+  distancePoints?: number | null;
+  timePoints?: number | null;
   reachedGoal: boolean;
   turnpointsCrossed?: number;
   taskTimeS: number | null;
+  /**
+   * hasFlaggedCrossings on the attempt — rendered as the leaderboard's ⚑
+   * glyph. Optional so the Previous Best column (which doesn't set it) stays
+   * unchanged.
+   */
+  flagged?: boolean;
 }
 
 function Column({
@@ -307,6 +390,20 @@ function Column({
       <Row k="Goal" v={metrics.reachedGoal ? '✓' : '✗'} />
       {metrics.turnpointsCrossed != null && <Row k="Turnpoints" v={String(metrics.turnpointsCrossed)} />}
       <Row k="Task time" v={fmtTime(metrics.taskTimeS)} delta={dTime} />
+      {metrics.flagged && (
+        <div
+          style={{
+            marginTop: 6,
+            paddingTop: 6,
+            borderTop: '1px solid var(--border)',
+            fontSize: 10,
+            fontWeight: 700,
+            color: 'var(--warning)',
+          }}
+        >
+          ⚑ flagged for review
+        </div>
+      )}
     </div>
   );
 }

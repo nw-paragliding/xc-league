@@ -308,9 +308,16 @@ export function computePartialDistanceKm(
     // route from the 0-radius anchor to the goal-boundary touch point on the
     // near side and report a small positive remaining distance — under-
     // crediting the pilot. Treat this case as 0 remaining explicitly.
+    //
+    // GOAL_LINE is excluded: §9.3 defines line-goal remaining distance as the
+    // optimised distance to the goal *point* with no radius term, and for a
+    // line radiusM holds the half line-length — proximity to the goal centre
+    // says nothing about having crossed the line (a fix 150 m short on the
+    // near side is within radiusM but has 150 m still to fly). The unguarded
+    // optimiser path below already computes exactly the §9.3 line formula.
     if (reachedIdx === n - 2) {
       const goal = cylinders[n - 1];
-      if (haversineKm(f.lat, f.lng, goal.lat, goal.lng) * 1000 <= goal.radiusM) {
+      if (goal.type !== 'GOAL_LINE' && haversineKm(f.lat, f.lng, goal.lat, goal.lng) * 1000 <= goal.radiusM) {
         minRemainingKm = 0;
         break;
       }
@@ -345,11 +352,15 @@ export const MAX_POINTS = 1000;
  * Distance points for one pilot.
  *   Goal:     MAX_POINTS
  *   Non-goal: MAX_POINTS * sqrt(dist / bestDist)
+ *
+ * Returns full precision — rounding to one decimal happens exactly once, on
+ * the final persisted value after task-level normalisation
+ * (rebuildTaskResults in src/job-queue.ts), per the S7F round-once principle.
  */
 export function computeDistancePoints(distKm: number, bestDistKm: number, reachedGoal: boolean): number {
   if (reachedGoal) return MAX_POINTS;
   if (bestDistKm <= 0) return 0;
-  return Math.round(MAX_POINTS * Math.sqrt(distKm / bestDistKm) * 10) / 10;
+  return MAX_POINTS * Math.sqrt(distKm / bestDistKm);
 }
 
 /**
@@ -363,6 +374,9 @@ export function computeDistancePoints(distKm: number, bestDistKm: number, reache
  * or beyond BestTime + sqrt(BestTime) — an absolute cutoff anchored to the
  * winner's time, not to the slowest finisher.
  *
+ * Returns full precision — see computeDistancePoints for where rounding
+ * happens.
+ *
  * @param taskTimeS      This pilot's task time in seconds
  * @param allGoalTimesS  All goal pilots' task times including this one
  */
@@ -372,5 +386,5 @@ export function computeTimePoints(taskTimeS: number, allGoalTimesS: number[]): n
   if (bestTimeH <= 0) return taskTimeS <= 0 ? MAX_POINTS : 0;
   const excessH = Math.max(0, taskTimeS / 3600 - bestTimeH);
   const speedFraction = Math.max(0, 1 - (excessH / Math.sqrt(bestTimeH)) ** (5 / 6));
-  return Math.round(MAX_POINTS * speedFraction * 10) / 10;
+  return MAX_POINTS * speedFraction;
 }

@@ -1769,12 +1769,14 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       // Verify task belongs to this season/league
       const existingTask = db
         .prepare(
-          `SELECT t.id, t.open_date, t.close_date
+          `SELECT t.id, t.open_date, t.close_date, t.normalized_score
          FROM tasks t
          JOIN seasons s ON s.id = t.season_id
          WHERE t.id = ? AND t.season_id = ? AND s.league_id = ? AND t.deleted_at IS NULL`,
         )
-        .get(taskId, seasonId, league.id) as { id: string; open_date: string; close_date: string } | undefined;
+        .get(taskId, seasonId, league.id) as
+        | { id: string; open_date: string; close_date: string; normalized_score: number | null }
+        | undefined;
 
       if (!existingTask) {
         return reply.status(404).send({ error: 'Task not found' });
@@ -1867,7 +1869,17 @@ export async function registerLeagueRoutes(fastify: FastifyInstance, opts: Leagu
       updates.push("updated_at = datetime('now')");
       params.push(taskId);
 
-      db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+      // task_results rows store points pre-scaled by normalized_score, so a
+      // changed task value must rescale them immediately — otherwise the
+      // leaderboard and standings stay on the old scale until the next
+      // upload/delete/restart triggers a rebuild.
+      const taskValueChanged =
+        body.taskValue !== undefined && (body.taskValue ?? null) !== existingTask.normalized_score;
+
+      db.transaction(() => {
+        db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+        if (taskValueChanged) rebuildTaskResults(db, taskId);
+      })();
 
       const task = db
         .prepare(

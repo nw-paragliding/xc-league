@@ -353,12 +353,48 @@ describe('rebuildTaskResults', () => {
     expect(rows[1].rank).toBe(2);
   });
 
+  // Regression for double rounding: components must be rounded to one decimal
+  // exactly once, AFTER the normalisation scale is applied. Rounding before
+  // scaling too (the old behavior) compounds two rounding errors — here raw
+  // dp = 866.0896... at scale 0.5 lands on 433.0 single-rounded but 433.1
+  // double-rounded (866.1 * 0.5 = 433.05 rounds up).
+  it('rounds components once, after normalisation scaling', () => {
+    const taskHalf = createTestTask(db, season.id, league.id, { name: 'Half-scale' });
+    db.prepare(`UPDATE tasks SET normalized_score = 500 WHERE id = ?`).run(taskHalf.id);
+
+    // Winner: non-goal at bestDist → raw dp = 1000 exactly, so scale = 0.5 exactly.
+    const sub1 = createTestSubmission(db, taskHalf.id, pilot.id, league.id);
+    createTestAttempt(db, sub1, taskHalf.id, pilot.id, league.id, {
+      reachedGoal: false,
+      distanceFlownKm: 80,
+    });
+    // Runner-up: raw dp = 1000 * sqrt(60.0089 / 80) = 866.089631...
+    const sub2 = createTestSubmission(db, taskHalf.id, pilot2.id, league.id);
+    createTestAttempt(db, sub2, taskHalf.id, pilot2.id, league.id, {
+      reachedGoal: false,
+      distanceFlownKm: 60.0089,
+    });
+
+    rebuildTaskResults(db, taskHalf.id);
+
+    const rows = db
+      .prepare('SELECT user_id, distance_points, total_points FROM task_results WHERE task_id = ? ORDER BY rank')
+      .all(taskHalf.id) as any[];
+    expect(rows).toHaveLength(2);
+    expect(rows[0].user_id).toBe(pilot.id);
+    expect(rows[0].distance_points).toBe(500); // winner lands exactly on normalized_score
+    expect(rows[0].total_points).toBe(500);
+    expect(rows[1].user_id).toBe(pilot2.id);
+    expect(rows[1].distance_points).toBe(433); // 433.1 would mean a pre-scale rounding crept back in
+    expect(rows[1].total_points).toBe(433);
+  });
+
   // Regression for time-point staleness: when a new goal time enters the set,
   // every goal pilot's time_points must reflect the full updated range.
   it('rescores time_points across all goal pilots when the goal-times set changes', () => {
     // normalized_score=2000 matches the unscaled winner total
-    // (distance_points=1000 + time_points=1000 for the fastest pilot),
-    // so the post-rebuild values are the raw computeTimePoints outputs.
+    // (distance_points=1000 + time_points=1000 for the fastest pilot), so the
+    // post-rebuild values are the computeTimePoints outputs rounded to 0.1.
     const taskTime = createTestTask(db, season.id, league.id, { name: 'Time-points' });
     db.prepare(`UPDATE tasks SET normalized_score = 2000 WHERE id = ?`).run(taskTime.id);
 
@@ -451,5 +487,80 @@ describe('rebuildTaskResults', () => {
     // Pilot A's *best* is 3600 (slower 4200 is ignored) → 757.6.
     expect(byUser.get(pilot2.id).time_points).toBeCloseTo(1000, 0);
     expect(byUser.get(pilot.id).time_points).toBeCloseTo(757.6, 1);
+  });
+
+  // §13.1: the PG time-points parameter is 0% — a speed-section time earns
+  // nothing without reaching goal, including rank order. task_time_s is
+  // stored for any ESS crossing (even when the pilot lands short), so an
+  // ESS-but-no-goal time must not split equal-total pilots.
+  it('does not split equal-total non-goal pilots by an ESS-only task_time_s', () => {
+    const sub1 = createTestSubmission(db, task.id, pilot.id, league.id);
+    const sub2 = createTestSubmission(db, task.id, pilot2.id, league.id);
+    // Both land short at 40 km; pilot A crossed ESS (task_time_s set).
+    createTestAttempt(db, sub1, task.id, pilot.id, league.id, {
+      reachedGoal: false,
+      distanceFlownKm: 40,
+      taskTimeS: 4000,
+    });
+    createTestAttempt(db, sub2, task.id, pilot2.id, league.id, {
+      reachedGoal: false,
+      distanceFlownKm: 40,
+    });
+
+    rebuildTaskResults(db, task.id);
+
+    const rows = db
+      .prepare('SELECT user_id, total_points, rank FROM task_results WHERE task_id = ?')
+      .all(task.id) as any[];
+    expect(rows).toHaveLength(2);
+    expect(rows[0].total_points).toBe(rows[1].total_points);
+    expect(rows[0].rank).toBe(1);
+    expect(rows[1].rank).toBe(1); // shared rank — the ESS time confers nothing
+  });
+
+  it('ranks a goal pilot above an equal-total non-goal pilot regardless of ESS times', () => {
+    // Under the §12.2 absolute cutoff a goal pilot slower than
+    // t_best + sqrt(t_best) scores 0 time points, so a non-goal pilot at
+    // bestDist can tie them on total_points. The goal pilot must still rank
+    // first — a fast ESS-only time must not flip the order.
+    const fast = createTestUser(db, { email: 'fast@test.com', displayName: 'Fast Finisher' });
+    addLeagueMember(db, league.id, fast.id, 'pilot');
+
+    // t_best = 3000 s (0.8333 h) → zero cutoff ≈ 3000 + 3286 = 6286 s.
+    const subFast = createTestSubmission(db, task.id, fast.id, league.id);
+    createTestAttempt(db, subFast, task.id, fast.id, league.id, {
+      reachedGoal: true,
+      distanceFlownKm: 50,
+      taskTimeS: 3000,
+    });
+    // Goal pilot past the cutoff: full distance points + 0 time points.
+    const subSlow = createTestSubmission(db, task.id, pilot.id, league.id);
+    createTestAttempt(db, subSlow, task.id, pilot.id, league.id, {
+      reachedGoal: true,
+      distanceFlownKm: 50,
+      taskTimeS: 7000,
+    });
+    // Non-goal pilot at bestDist with a fast ESS crossing.
+    const subEss = createTestSubmission(db, task.id, pilot2.id, league.id);
+    createTestAttempt(db, subEss, task.id, pilot2.id, league.id, {
+      reachedGoal: false,
+      distanceFlownKm: 50,
+      taskTimeS: 3100,
+    });
+
+    rebuildTaskResults(db, task.id);
+
+    const rows = db
+      .prepare('SELECT user_id, reached_goal, total_points, rank FROM task_results WHERE task_id = ? ORDER BY rank')
+      .all(task.id) as any[];
+    expect(rows).toHaveLength(3);
+    expect(rows[0].user_id).toBe(fast.id);
+    // Slow goal pilot and non-goal pilot tie on points…
+    expect(rows[1].total_points).toBe(rows[2].total_points);
+    // …but the goal pilot ranks above; the non-goal ESS time earns nothing.
+    expect(rows[1].user_id).toBe(pilot.id);
+    expect(rows[1].reached_goal).toBe(1);
+    expect(rows[2].user_id).toBe(pilot2.id);
+    expect(rows[2].rank).toBe(3);
   });
 });

@@ -805,6 +805,82 @@ describe('Task lifecycle — POST publish + closed-task edit guard', () => {
       expect(row.open_date).toBe(newOpen);
     });
   });
+
+  // task_results rows store points pre-scaled by normalized_score, so a PUT
+  // that changes taskValue must rescale them in the same request — previously
+  // the cache stayed on the old scale until an unrelated trigger (upload,
+  // submission delete, restart) fired a rebuild.
+  describe('taskValue edit rebuilds task_results', () => {
+    const openIso = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+    const closeIso = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    /** Task with two scored non-goal pilots: 80 km winner + 20 km (sqrt(20/80) = 0.5). */
+    function seedScoredTask() {
+      const task = createTestTask(db, testSeason.id, testLeague.id, { openDate: openIso, closeDate: closeIso });
+      const subA = createTestSubmission(db, task.id, adminUser.id, testLeague.id);
+      createTestAttempt(db, subA, task.id, adminUser.id, testLeague.id, { reachedGoal: false, distanceFlownKm: 80 });
+      const subB = createTestSubmission(db, task.id, pilotUser.id, testLeague.id);
+      createTestAttempt(db, subB, task.id, pilotUser.id, testLeague.id, { reachedGoal: false, distanceFlownKm: 20 });
+      rebuildTaskResults(db, task.id);
+      return task;
+    }
+
+    const points = (taskId: string) =>
+      new Map(
+        (db.prepare('SELECT user_id, total_points FROM task_results WHERE task_id = ?').all(taskId) as any[]).map(
+          (r) => [r.user_id, r.total_points],
+        ),
+      );
+
+    const putTask = (taskId: string, payload: object) =>
+      app.inject({
+        method: 'PUT',
+        url: `/leagues/${testLeague.slug}/seasons/${testSeason.id}/tasks/${taskId}`,
+        headers: { 'x-test-user-id': adminUser.id, 'content-type': 'application/json' },
+        payload: JSON.stringify(payload),
+      });
+
+    it('rescales existing task_results when taskValue changes, without a new upload', async () => {
+      const task = seedScoredTask();
+      // Default scale (normalized_score NULL → 1000): winner 1000, other 500.
+      expect(points(task.id).get(adminUser.id)).toBe(1000);
+      expect(points(task.id).get(pilotUser.id)).toBe(500);
+
+      const res = await putTask(task.id, { taskValue: 500 });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).task.taskValue).toBe(500);
+      // Rescaled in the same request — no upload needed.
+      expect(points(task.id).get(adminUser.id)).toBe(500);
+      expect(points(task.id).get(pilotUser.id)).toBe(250);
+    });
+
+    it('clearing taskValue (null) rescales back to the default 1000', async () => {
+      const task = seedScoredTask();
+      db.prepare(`UPDATE tasks SET normalized_score = 500 WHERE id = ?`).run(task.id);
+      rebuildTaskResults(db, task.id);
+      expect(points(task.id).get(adminUser.id)).toBe(500);
+
+      const res = await putTask(task.id, { taskValue: null });
+
+      expect(res.statusCode).toBe(200);
+      expect(points(task.id).get(adminUser.id)).toBe(1000);
+      expect(points(task.id).get(pilotUser.id)).toBe(500);
+    });
+
+    it('does not rebuild when taskValue is absent or unchanged', async () => {
+      const task = seedScoredTask();
+      // Sentinel a rebuild would overwrite.
+      db.prepare(`UPDATE task_results SET total_points = 123.4 WHERE task_id = ?`).run(task.id);
+
+      // Name-only edit, then a no-op taskValue (null → stored NULL).
+      for (const payload of [{ name: 'Renamed, no taskValue' }, { taskValue: null }]) {
+        const res = await putTask(task.id, payload);
+        expect(res.statusCode).toBe(200);
+        expect(points(task.id).get(adminUser.id)).toBe(123.4); // sentinel survived — no rebuild
+      }
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
