@@ -426,12 +426,14 @@ const MULTI_ATTEMPT_IGC = [
 
 describe('previewSubmission — every attempt shares the post-upload scale', () => {
   it('applies the single taskValue/winnerRaw scale to non-best attempts (no raw-1000-scale leftovers)', async () => {
-    // Prior finisher at 120 s holds the winner raw total (2000), so the
-    // normalisation scale is well below 1 — any attempt left on the raw
-    // pipeline scale would stick out.
+    // Under the §11 split a goal winner's raw total is exactly 1000
+    // (availDist + availTime), so a default task value of 1000 gives
+    // scale = 1 and this test would lose its teeth. taskValue 500 forces
+    // scale = 0.5 — any attempt left on the raw pipeline scale sticks out.
+    const scaledTask = { ...task, taskValue: 500 };
     const res = await previewSubmission(
       MULTI_ATTEMPT_IGC,
-      task,
+      scaledTask,
       { competitionType: 'XC' },
       leaderboardEntries,
       'new-pilot',
@@ -471,7 +473,7 @@ describe('previewSubmission — every attempt shares the post-upload scale', () 
       raw.value.scoredAttempts[bestIdx],
       leaderboardEntries,
       'new-pilot',
-      1000,
+      500,
     );
     expect(scale).toBeGreaterThan(0);
     expect(scale).toBeLessThan(1); // guard: the scale actually moves the numbers
