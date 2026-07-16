@@ -199,15 +199,14 @@ Handles `POST .../tasks/:taskId/submissions` and `GET .../submissions/:submissio
 6. Call `runPipeline` inline — result delivered in the HTTP response (design decision: synchronous scoring)
 7. On pipeline failure: 422 with human-readable error via `formatPipelineError`
 8. On success: atomic transaction inserting into `flight_submissions` + `turnpoint_crossings`
-9. If `reachedGoal`: enqueue `RESCORE_TASK` (time points are provisional)
-10. Return 201 with scored submission + `provisional: true` flag
+9. `rebuildTaskResults` runs synchronously in the same transaction — the whole task rescores
+10. Return 201 with scored submission + `timePointsProvisional: true` (any later upload can rescore everyone while the task is open)
 
 **Download handler (`handleIgcDownload`):**
 
-Serves raw IGC BLOB. Access control:
-- Own submission: always accessible
-- Other pilot's file: hidden (403) until `scores_frozen_at` is set
-- Frozen files: `Cache-Control: public, max-age=86400`
+Serves raw IGC BLOB. Access control: own submission or league membership. (The old
+`scores_frozen_at`-gated visibility rule was removed along with the freeze concept in
+migration 0013 — "closed" is derived from `close_date`.)
 
 ---
 
@@ -217,7 +216,7 @@ Handles `GET .../submissions/:submissionId/track`.
 
 **Design decision:** GPS fixes are **not stored** in the database. They are re-parsed from the raw IGC BLOB on every request (~10–30 ms). Storing ~10,000 fixes per submission at club scale (e.g. 200 submissions) would add ~50 MB of rarely-accessed data to SQLite. Turnpoint crossing events (computed at submission time) are loaded from the DB and overlaid on the re-parsed fixes.
 
-**Access control:** Own submission or league admin always has access. Other pilots' tracks are hidden (403) until `scores_frozen_at` — prevents live-tracking competitors during an open task.
+**Access control:** League-scoped (the resolve-league hook); the freeze-gated visibility rule went away with `scores_frozen_at` in migration 0013.
 
 **Response shape:** `{ submissionId, taskId, pilotId, pilotName, flightDate, fixes[], crossings[], bounds, meta }` — fixes are compact `{ t, lat, lng, alt }` tuples; `bounds` is a pre-computed bounding box with 5% padding.
 
@@ -320,7 +319,7 @@ Cannot reopen a closed season.
 ```
 draft ──publish──▶ published  (requires at least one turnpoint)
 published ──unpublish──▶ draft  (blocked if any submissions exist)
-published ──freeze──▶ published + scores_frozen_at set  (cannot unfreeze)
+(no freeze step: submissions stop at close_date; scores settle naturally — migration 0013)
 ```
 
 ---
@@ -346,7 +345,6 @@ leagues ────────────────────────
   │                      │ 1:N flight_attempts                      │
   │                              │ 1:N turnpoint_crossings          │
   │                                      │ 1:N turnpoint_overrides  │
-  │ 1:N season_standings ◀────────────────────────────── users      │
   │ 1:N task_results ◀────────────────────────────────── users      │
   │                                                                 │
 jobs (queue)                                                        │
@@ -382,7 +380,7 @@ admin_audit_log
 
 | Table | Key columns | Notes |
 |---|---|---|
-| `tasks` | `id`, `season_id`, `league_id` (denormalised), `name`, `task_type`, `open_date`, `close_date`, `scores_frozen_at`, `status` (`draft`\|`published`), `sss_turnpoint_id`, `ess_turnpoint_id`, `goal_turnpoint_id`, `optimised_distance_km`, `task_data_source`, `task_data_raw` | FK cycle on SSS/ESS/goal IDs enforced in application layer (SQLite deferred FK limitation) |
+| `tasks` | `id`, `season_id`, `league_id` (denormalised), `name`, `task_type`, `open_date`, `close_date`, `status` (`draft`\|`published`), `normalized_score`, `sss_turnpoint_id`, `ess_turnpoint_id`, `goal_turnpoint_id`, `task_data_source`, `task_data_raw` | FK cycle on SSS/ESS/goal IDs enforced in application layer (SQLite deferred FK limitation); `scores_frozen_at` dropped in migration 0013 |
 | `turnpoints` | `task_id`, `league_id` (denormalised), `sequence_index`, `name`, `latitude`, `longitude`, `radius_m`, `type`, `goal_line_bearing_deg` | `type` values: `CYLINDER`, `GROUND_ONLY`, `AIR_OR_GROUND`, `SSS`, `ESS`, `GOAL_CYLINDER`, `GOAL_LINE`; unique on `(task_id, sequence_index)` |
 
 #### Submission / Scoring
@@ -398,8 +396,7 @@ admin_audit_log
 
 | Table | Key columns | Notes |
 |---|---|---|
-| `season_standings` | `season_id`, `user_id`, `total_points`, `tasks_completed`, `rank` | Upserted by `REBUILD_STANDINGS` job; primary key `(season_id, user_id)` |
-| `task_results` | `task_id`, `user_id`, `total_points`, `distance_points`, `time_points`, `rank`, `best_attempt_id` | Upserted by `RESCORE_TASK` job |
+| `task_results` | `task_id`, `user_id`, `total_points`, `distance_points`, `time_points`, `rank`, `best_attempt_id` | Rebuilt synchronously by `rebuildTaskResults` on every upload/delete/`normalized_score` edit — the single source of truth for scoring. (`season_standings` was dropped in migration 0013; standings are a live SQL aggregate.) |
 
 #### Infrastructure
 
@@ -419,7 +416,6 @@ idx_submissions_user    ON flight_submissions (user_id)   WHERE deleted_at IS NU
 idx_submissions_dedup   ON flight_submissions (task_id, user_id, igc_sha256) UNIQUE WHERE deleted_at IS NULL
 idx_turnpoints_task     ON turnpoints (task_id)           WHERE deleted_at IS NULL
 idx_jobs_status         ON jobs (status, scheduled_at)    WHERE status IN ('PENDING', 'FAILED')
-idx_standings_season    ON season_standings (season_id, total_points DESC)
 idx_task_results_task   ON task_results (task_id, total_points DESC)
 ```
 
@@ -473,8 +469,8 @@ POST .../tasks/:taskId/submissions
       INSERT flight_submissions (status='PROCESSED', igc_data BLOB, scores)
       INSERT turnpoint_crossings (per crossing)
       UPDATE flight_submissions SET best_attempt_id = ?
-  → if reachedGoal: queue.enqueue('RESCORE_TASK')
-  → 201 { submission, provisional: reachedGoal }
+  → rebuildTaskResults(db, taskId)   (synchronous, same transaction)
+  → 201 { submission, timePointsProvisional: true }
 ```
 
 ### Background Job Lifecycle
@@ -584,10 +580,10 @@ runPipeline result
 | `detectAttempts` | Quadratic formula (parameterised segment-circle intersection); linear time interpolation at parameter `t`; goal line via segment-segment intersection; multiple SSS crossings → multiple attempts | `NO_SSS_CROSSING` |
 | `classifyGroundState` | 30s sustained speed window classifies each fix `GROUND` / `AIRBORNE` / `UNKNOWN`; 60s window around `GROUND_ONLY` crossing stores `detectedMaxSpeedKmh` | (no error — informational only) |
 | `calculateDistances` | Vincenty geodesic (`geographiclib-geodesic`) for point-to-point legs; goal pilots get full `optimisedDistanceKm`; partial pilots get cumulative distance + closest approach to next TP | — |
-| `scoreAttempts` | **Distance:** `938 * sqrt(d_pilot / d_best)` (or 938 for goal). **Time (FAI S7F §12.2):** `938 * max(0, 1 - ((t_pilot - t_best) / sqrt(t_best))^(5/6))`, times in hours — provisional until task closes | — |
+| `scoreAttempts` | Available pools split by goal ratio (FAI S7F §11): `availDist = DW * 1000`, `availTime = (1 - DW) * 1000`. **Distance:** `availDist * sqrt(d_pilot / d_best)` (or `availDist` for goal). **Time (§12.2):** `availTime * max(0, 1 - ((t_pilot - t_best) / sqrt(t_best))^(5/6))`, times in hours — provisional until task closes | — |
 | `selectBestAttempt` | Priority: (1) reached goal, (2) highest total points, (3) lowest task time | — |
 
-**Rescoring:** When a new goal pilot is detected, `RESCORE_TASK` job calls `rescoreTimePoints` — the same GAP formula applied across all known goal times for that task. `task_results` and `season_standings` are updated atomically via follow-up jobs.
+**Rescoring:** Every upload, submission delete, and `normalized_score` edit triggers a synchronous `rebuildTaskResults` (src/job-queue.ts) inside the same transaction. The rebuild re-derives everything for the whole task from stored attempts: `t_best`, best distance, the §11 goal-ratio distance/time split, and the normalization scale — any single upload can move every pilot's points. Season standings are a live SQL aggregate over `task_results`; there are no rescore jobs. (`rescoreTimePoints`/`RESCORE_TASK` were the pre-0013 job-based flow and no longer exist.)
 
 ---
 
@@ -623,24 +619,12 @@ runPipeline result
 
 ### Job Types
 
-| Type | Trigger | Action |
-|---|---|---|
-| `RESCORE_TASK` | New goal submission; task freeze | Recalculate time points for all goal attempts; upsert `task_results`; enqueue `REBUILD_STANDINGS` and optionally `NOTIFY_PILOTS` |
-| `FREEZE_TASK_SCORES` | Task creation (scheduled at `close_date`) | Set `scores_frozen_at`; enqueue final `RESCORE_TASK` |
-| `REBUILD_STANDINGS` | After any rescore | Aggregate `task_results` into `season_standings` with ranking |
-| `REPROCESS_ALL_SUBMISSIONS` | Admin edits turnpoints | Re-run full pipeline per submission sequentially; errors on individual submissions are caught and logged |
-| `NOTIFY_PILOTS` | After rescore with score changes | Bulk insert `notifications` rows for affected pilots |
-
-### Job Dependency Graph
-
-```
-New goal submission ──▶ RESCORE_TASK ──▶ REBUILD_STANDINGS
-                                     └──▶ NOTIFY_PILOTS
-
-Task created ──▶ FREEZE_TASK_SCORES (at close_date) ──▶ RESCORE_TASK (final)
-
-Admin edits TPs ──▶ REPROCESS_ALL_SUBMISSIONS ──▶ RESCORE_TASK ──▶ ...
-```
+**None are registered today.** Scoring became fully synchronous (migration 0013):
+`rebuildTaskResults` runs inline on the upload and delete paths, standings are a live SQL
+aggregate, and stale-track reprocessing runs at boot (`src/reprocess.ts`, keyed off
+`SCORER_VERSION`). The queue/worker infrastructure remains for future async work
+(notifications etc.); the server deletes jobs of removed types (`RESCORE_TASK`,
+`FREEZE_TASK_SCORES`, `REBUILD_STANDINGS`, …) at startup.
 
 ### Retry Policy
 
@@ -720,11 +704,11 @@ All major tables have `deleted_at TEXT NULL`. Queries use `WHERE deleted_at IS N
 
 ### Denormalised `league_id`
 
-`league_id` is stored directly on tasks, turnpoints, submissions, attempts, `task_results`, and `season_standings`. This avoids JOIN chains (e.g. `submission → task → season → league`) on every query and makes tenant-scoping straightforward.
+`league_id` is stored directly on tasks, turnpoints, submissions, attempts, and `task_results`. This avoids JOIN chains (e.g. `submission → task → season → league`) on every query and makes tenant-scoping straightforward.
 
-### Materialised caches for leaderboards
+### Materialised task results
 
-`season_standings` and `task_results` are pre-computed by background jobs rather than calculated on every request. The cost of slightly stale data (up to one job cycle behind) is outweighed by consistent O(1) leaderboard reads.
+`task_results` is rebuilt synchronously from `flight_attempts` on every scoring-relevant write, so leaderboard reads are O(1) and never stale. Season standings are aggregated live from `task_results` in SQL (small enough at club scale; `season_standings` was dropped in migration 0013).
 
 ---
 

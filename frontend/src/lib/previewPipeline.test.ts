@@ -114,22 +114,23 @@ describe('previewSubmission parity — frontend wraps runPipeline against shared
 
     // previewSubmission also applies the same task-level normalisation that
     // rebuildTaskResults runs server-side. Fixture setup:
-    //   - prior finisher: goal at 120 s → raw 1000 dist + 1000 time = 2000
-    //   - preview: goal at ~147 s → raw 1000 dist + 929.6 time (§12.2,
-    //     anchored at t_best = 120 s)
-    //   - winner raw = 2000 → scale = 1000 / 2000 = 0.5
-    //   - preview normalised: 500 dist + 464.8 time = 964.8
+    //   - both pilots in goal → §11 goal ratio 1 → DW 0.361 / TW 0.639
+    //   - prior finisher: goal at 120 s → raw 361 dist + 639 time = 1000
+    //   - preview: goal at ~147 s → raw 361 dist + 594.0 time (§12.2,
+    //     anchored at t_best = 120 s, over the 639 pool)
+    //   - winner raw = 1000 → scale = 1000 / 1000 = 1
+    //   - preview normalised: 361 dist + 594.0 time = 955.0
     // If this assertion ever drifts, either the normalisation logic changed
     // or the underlying scoring formulas did — both cases want a closer look
     // because the backend's rebuildTaskResults would have followed suit.
-    expect(best.distancePoints).toBeCloseTo(500, 1);
-    expect(best.timePoints).toBeCloseTo(464.8, 1);
-    expect(best.totalPoints).toBeCloseTo(964.8, 1);
+    expect(best.distancePoints).toBeCloseTo(361, 1);
+    expect(best.timePoints).toBeCloseTo(594.0, 1);
+    expect(best.totalPoints).toBeCloseTo(955.0, 1);
 
     // First submission for 'new-pilot' — the preview itself is the pilot's
     // predicted leaderboard row.
     expect(res.value.predicted.source).toBe('preview');
-    expect(res.value.predicted.totalPoints).toBeCloseTo(964.8, 1);
+    expect(res.value.predicted.totalPoints).toBeCloseTo(955.0, 1);
 
     // Frontend-only: previewSubmission also surfaces fixes for the map. Each
     // B record should produce one fix.
@@ -140,13 +141,16 @@ describe('previewSubmission parity — frontend wraps runPipeline against shared
 
   it("keeps the current pilot's standing goal time in the t_best pool when they preview a slower flight", async () => {
     // Pilot 'me' holds t_best = 100 s and previews the fixture flight
-    // (goal at ~147.2 s). The server never discards the old attempt, so:
-    //   - goal-time pool stays {100, 120, 147.2} → preview raw time = 879.8
-    //   - me's existing attempt (raw 2000) stays their best AND the winner
-    //   - scale = 1000 / 2000 = 0.5 → preview shows 500 + 439.9 = 939.9
+    // (goal at ~147.2 s). Everyone is in goal → GR 1 → DW 0.361 / TW 0.639.
+    // The server never discards the old attempt, so:
+    //   - goal-time pool stays {100, 120, 147.2} → preview raw time = 562.2
+    //     (§12.2 SpeedFraction over the 639 pool)
+    //   - me's existing attempt (raw 361 + 639 = 1000) stays their best AND
+    //     the winner → scale = 1000 / 1000 = 1
+    //   - preview shows 361 + 562.2 = 923.2
     //   - predicted row = the existing attempt at the full 1000
-    // The pre-fix code dropped me's row, anchoring t_best at 120 s (preview
-    // time 464.8 normalised) and predicting the preview as me's new row.
+    // The pre-fix code dropped me's row, anchoring t_best at 120 s and
+    // predicting the preview as me's new row.
     const entries = [
       mkEntry({ pilotId: 'me', distanceFlownKm: 3.65, reachedGoal: true, taskTimeS: 100 }),
       mkEntry({ pilotId: 'other', distanceFlownKm: 3.65, reachedGoal: true, taskTimeS: 120 }),
@@ -157,14 +161,14 @@ describe('previewSubmission parity — frontend wraps runPipeline against shared
     if (!res.ok) return;
 
     const best = res.value.attempts[res.value.bestAttemptIndex];
-    expect(best.distancePoints).toBeCloseTo(500, 1);
-    expect(best.timePoints).toBeCloseTo(439.9, 1);
-    expect(best.totalPoints).toBeCloseTo(939.9, 1);
+    expect(best.distancePoints).toBeCloseTo(361, 1);
+    expect(best.timePoints).toBeCloseTo(562.2, 1);
+    expect(best.totalPoints).toBeCloseTo(923.2, 1);
 
     expect(res.value.predicted.source).toBe('existing');
     expect(res.value.predicted.taskTimeS).toBe(100);
-    expect(res.value.predicted.distancePoints).toBeCloseTo(500, 1);
-    expect(res.value.predicted.timePoints).toBeCloseTo(500, 1);
+    expect(res.value.predicted.distancePoints).toBeCloseTo(361, 1);
+    expect(res.value.predicted.timePoints).toBeCloseTo(639, 1);
     expect(res.value.predicted.totalPoints).toBeCloseTo(1000, 1);
   });
 });
@@ -172,11 +176,12 @@ describe('previewSubmission parity — frontend wraps runPipeline against shared
 describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () => {
   it('matches the server when the previewing pilot holds t_best (verifier worked example)', () => {
     // A holds t_best = 3600 s, B in goal at 4500 s, A previews 5400 s,
-    // taskValue 1000. Server truth: pool stays {3600, 4500, 5400}, A's best
-    // attempt remains the 3600 s one → A stays winner at 1000 and B keeps
-    // 685.0 raw time points. The preview's own §12.2 time points anchor at
-    // 3600 s → raw 438.8, scaled by 1000/2000 → 219.4 (NOT the 856.5 total
-    // the pre-fix pool {4500, 5400} produced).
+    // taskValue 1000. Both pilots in goal → GR 1 → DW 0.361 / TW 0.639.
+    // Server truth: pool stays {3600, 4500, 5400}, A's best attempt remains
+    // the 3600 s one → A stays winner at raw 361 + 639 = 1000 (scale 1) and
+    // B keeps 437.7 raw time points. The preview's own §12.2 time points
+    // anchor at 3600 s → 280.4 over the 639 pool (NOT the larger figure a
+    // pool without A's row, anchored at 4500 s, would produce).
     const entries = [
       mkEntry({ pilotId: 'A', distanceFlownKm: 50, reachedGoal: true, taskTimeS: 3600 }),
       mkEntry({ pilotId: 'B', distanceFlownKm: 50, reachedGoal: true, taskTimeS: 4500 }),
@@ -188,9 +193,9 @@ describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () =>
       1000,
     );
 
-    expect(r.distancePoints).toBeCloseTo(500, 1);
-    expect(r.timePoints).toBeCloseTo(219.4, 1);
-    expect(r.totalPoints).toBeCloseTo(719.4, 1);
+    expect(r.distancePoints).toBeCloseTo(361, 1);
+    expect(r.timePoints).toBeCloseTo(280.4, 1);
+    expect(r.totalPoints).toBeCloseTo(641.4, 1);
 
     expect(r.predicted.source).toBe('existing');
     expect(r.predicted.taskTimeS).toBe(3600);
@@ -211,8 +216,9 @@ describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () =>
       1000,
     );
 
-    // Preview wins → winner raw = 1000 dist + 1000 time (sole goal time) =
-    // 2000, scale 0.5.
+    // Preview wins → GR = 1/2 (me in goal via the preview, other not) →
+    // DW 0.422375; winner raw = 422.375 dist + 577.625 time (sole goal
+    // time) = 1000, scale 1.
     expect(r.predicted.source).toBe('preview');
     expect(r.predicted.reachedGoal).toBe(true);
     expect(r.totalPoints).toBeCloseTo(1000, 1);
@@ -234,8 +240,8 @@ describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () =>
       1000,
     );
 
-    // Preview raw: 1000 dist (full task distance in goal) + 1000 time (sole
-    // goal time) = 2000 → winner → scale 0.5 → normalized 1000.
+    // Sole pilot, now in goal → GR 1 → DW 0.361. Preview raw: 361 dist +
+    // 639 time (sole goal time) = 1000 → winner → scale 1 → normalized 1000.
     expect(r.totalPoints).toBeCloseTo(1000, 1);
     expect(r.predicted.source).toBe('preview');
     expect(r.predicted.reachedGoal).toBe(true);
@@ -246,7 +252,9 @@ describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () =>
   it('keeps the existing further non-goal flight as the predicted row and in the bestDist pool', () => {
     // me's standing 30 km row stays in the bestDist pool (server pools
     // MAX(distance) over ALL attempts), so the 10 km preview scores
-    // sqrt(10/30) of 1000, and the standing row remains the winner.
+    // sqrt(10/30) of the winner's 1000, and the standing row remains the
+    // winner. (GR = 0 → the 0.9 distance weight scales winner and preview
+    // alike, so normalization washes it out of the ratio.)
     const entries = [mkEntry({ pilotId: 'me', distanceFlownKm: 30, reachedGoal: false })];
     const r = normalizePreviewPoints(
       att({ distanceFlownKm: 10, reachedGoal: false, taskTimeS: null }),
@@ -272,9 +280,27 @@ describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () =>
     );
 
     expect(r.predicted.source).toBe('preview');
-    // bestDist = 40 → preview raw = 1000·sqrt(20/40) = 707.1; winner is
-    // 'other' at raw 1000 → scale 1.
+    // GR = 0 → pool 900. bestDist = 40 → preview raw = 900·√(20/40) =
+    // 636.4; winner is 'other' at raw 900 → scale 1000/900 → 707.1.
     expect(r.totalPoints).toBeCloseTo(707.1, 1);
+  });
+
+  it('a goal preview moves the goal ratio and reproduces the server rebuild exactly', () => {
+    // Companion to the standings.test.ts case "GR-changing upload parity":
+    // one non-goal pilot at 40 km is on the board (GR = 0); pilot 'me'
+    // previews a goal flight at 50 km / 3600 s. Post-upload the server field
+    // is 2 pilots with 1 in goal → GR = 0.5 → DW = 0.422375 / TW = 0.577625,
+    // and the rebuild persists 422.4 + 577.6 = 1000 for the goal pilot. The
+    // preview must show those exact numbers — a 50/50 (or GR = 0) split
+    // would not.
+    const entries = [mkEntry({ pilotId: 'other', distanceFlownKm: 40, reachedGoal: false })];
+    const r = normalizePreviewPoints({ distanceFlownKm: 50, reachedGoal: true, taskTimeS: 3600 }, entries, 'me', 1000);
+
+    expect(r.distancePoints).toBeCloseTo(422.4, 1);
+    expect(r.timePoints).toBeCloseTo(577.6, 1);
+    expect(r.totalPoints).toBeCloseTo(1000, 1);
+    expect(r.predicted.source).toBe('preview');
+    expect(r.predicted.totalPoints).toBeCloseTo(1000, 1);
   });
 });
 
@@ -400,12 +426,14 @@ const MULTI_ATTEMPT_IGC = [
 
 describe('previewSubmission — every attempt shares the post-upload scale', () => {
   it('applies the single taskValue/winnerRaw scale to non-best attempts (no raw-1000-scale leftovers)', async () => {
-    // Prior finisher at 120 s holds the winner raw total (2000), so the
-    // normalisation scale is well below 1 — any attempt left on the raw
-    // pipeline scale would stick out.
+    // Under the §11 split a goal winner's raw total is exactly 1000
+    // (availDist + availTime), so a default task value of 1000 gives
+    // scale = 1 and this test would lose its teeth. taskValue 500 forces
+    // scale = 0.5 — any attempt left on the raw pipeline scale sticks out.
+    const scaledTask = { ...task, taskValue: 500 };
     const res = await previewSubmission(
       MULTI_ATTEMPT_IGC,
-      task,
+      scaledTask,
       { competitionType: 'XC' },
       leaderboardEntries,
       'new-pilot',
@@ -445,7 +473,7 @@ describe('previewSubmission — every attempt shares the post-upload scale', () 
       raw.value.scoredAttempts[bestIdx],
       leaderboardEntries,
       'new-pilot',
-      1000,
+      500,
     );
     expect(scale).toBeGreaterThan(0);
     expect(scale).toBeLessThan(1); // guard: the scale actually moves the numbers

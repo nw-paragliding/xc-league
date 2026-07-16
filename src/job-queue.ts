@@ -13,7 +13,7 @@
 
 import type { Database } from 'better-sqlite3';
 import { randomUUID } from 'crypto';
-import { computeDistancePoints, computeTimePoints } from './shared/task-engine';
+import { computeDistancePoints, computeTimePoints, goalRatioWeights, MAX_POINTS } from './shared/task-engine';
 
 // ── Minimal typed EventEmitter (no @types/node dependency) ───────────────────
 
@@ -267,14 +267,16 @@ function round1(n: number): number {
 // Goal first, then highest points, then fastest time (NULLs last).
 // Returns negative if a is the better attempt.
 //
-// Note: this priority order intentionally differs from the rank-sort below
-// (which is total_points → goal pilots' task_time_s → reached_goal). For the
-// *picker* goal-attempt > non-goal-attempt is meaningful even at equal
-// total_points because we want the goal-recording attempt's metadata
-// (task_time_s, crossings) preferred. In the *rank*, reached_goal is
-// load-bearing: under the §12.2 absolute cutoff a slow goal pilot scores 0
-// time points and can tie a bestDist non-goal pilot on total_points — the
-// goal pilot then ranks first via the reached_goal tier.
+// Note: this priority order intentionally differs from the row-order sort
+// below (total_points → goal pilots' task_time_s → reached_goal → user_id).
+// For the *picker* goal-attempt > non-goal-attempt is meaningful even at
+// equal total_points because we want the goal-recording attempt's metadata
+// (task_time_s, crossings) preferred. The *rank* value is competition
+// ranking on the rounded total alone (equal totals share a rank — S7F
+// treats the rounded TotalScore as the score); the sort keys below the
+// total only stabilise the render order within a shared rank, e.g. a goal
+// pilot who ties a bestDist non-goal pilot on points is listed first but
+// shares the rank number.
 function compareBestAttempt(a: ScoredAttemptRow, b: ScoredAttemptRow): number {
   if (a.reached_goal !== b.reached_goal) return b.reached_goal - a.reached_goal;
   if (a.total_points !== b.total_points) return b.total_points - a.total_points;
@@ -326,15 +328,32 @@ function rebuildTaskResultsInner(db: Database, taskId: string): void {
   }
   const goalTimes = Array.from(fastestGoalTimeByPilot.values());
 
+  // FAI S7F §11: the distance/time split depends on the task's goal ratio —
+  // pilots with ≥ 1 goal-reaching attempt over pilots with ≥ 1 attempt.
+  // The weights set the MIX of a pilot's score; the normalisation below sets
+  // the SCALE (winner = normalized_score) exactly as before.
+  const pilotsFlown = new Set(attempts.map((a) => a.user_id)).size;
+  const pilotsInGoal = new Set(attempts.filter((a) => a.reached_goal === 1).map((a) => a.user_id)).size;
+  const { distanceWeight, timeWeight } = goalRatioWeights(pilotsInGoal / pilotsFlown);
+  const availableDistancePoints = distanceWeight * MAX_POINTS;
+  const availableTimePoints = timeWeight * MAX_POINTS;
+
   // Points stay at full precision here — best-attempt selection and the
   // normalisation scale both work on unrounded values so that rounding to
   // one decimal happens exactly once, on the persisted result (S7F
   // round-once principle; rounding before scaling compounds to ~0.2 pt of
   // error, enough to flip adjacent ranks).
   const scored: ScoredAttemptRow[] = attempts.map((a) => {
-    const distance_points = computeDistancePoints(a.distance_flown_km, bestDistKm, a.reached_goal === 1);
+    const distance_points = computeDistancePoints(
+      a.distance_flown_km,
+      bestDistKm,
+      a.reached_goal === 1,
+      availableDistancePoints,
+    );
     const time_points =
-      a.reached_goal === 1 && a.task_time_s !== null ? computeTimePoints(a.task_time_s, goalTimes) : 0;
+      a.reached_goal === 1 && a.task_time_s !== null
+        ? computeTimePoints(a.task_time_s, goalTimes, availableTimePoints)
+        : 0;
     const total_points = distance_points + time_points;
     return { ...a, distance_points, time_points, total_points };
   });
@@ -375,19 +394,27 @@ function rebuildTaskResultsInner(db: Database, taskId: string): void {
     });
   }
 
-  // Rank by total_points DESC, task_time_s ASC (goal pilots only, NULLs last),
-  // reached_goal DESC. task_time_s is stored for any ESS crossing, including
-  // pilots who landed short of goal — but §13.1 sets the PG time-points
-  // parameter to 0%, so a speed-section time must earn nothing (not even rank
-  // order) without reaching goal. Treat non-goal times as absent.
-  // Ties share a rank (RANK semantics, matching the previous SQL window).
+  // Row ORDER: total_points DESC, then — for equal totals only, to keep the
+  // leaderboard render deterministic — task_time_s ASC (goal pilots only,
+  // NULLs last), reached_goal DESC, user_id ASC. task_time_s is stored for
+  // any ESS crossing, including pilots who landed short of goal — but §13.1
+  // sets the PG time-points parameter to 0%, so a speed-section time must
+  // earn nothing without reaching goal. Treat non-goal times as absent.
+  //
+  // The rank VALUE is standard competition ranking on the persisted
+  // (rounded) total_points alone (S7F §12/§14: the rounded one-decimal
+  // TotalScore IS the score; nothing in S7F splits equal scores by elapsed
+  // time). Equal totals share a rank; the next distinct total gets
+  // 1 + count of better pilots (1, 1, 3, ...). The order keys below the
+  // total are cosmetic and never influence the rank.
   const rankTimeS = (r: ScoredAttemptRow): number | null => (r.reached_goal === 1 ? r.task_time_s : null);
   bestList.sort((a, b) => {
     if (b.total_points !== a.total_points) return b.total_points - a.total_points;
     const at = rankTimeS(a) ?? Number.POSITIVE_INFINITY;
     const bt = rankTimeS(b) ?? Number.POSITIVE_INFINITY;
     if (at !== bt) return at - bt;
-    return b.reached_goal - a.reached_goal;
+    if (a.reached_goal !== b.reached_goal) return b.reached_goal - a.reached_goal;
+    return a.user_id < b.user_id ? -1 : a.user_id > b.user_id ? 1 : 0;
   });
 
   const now = new Date().toISOString();
@@ -400,13 +427,12 @@ function rebuildTaskResultsInner(db: Database, taskId: string): void {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  let prevKey: string | null = null;
+  let prevTotal: number | null = null;
   let prevRank = 0;
   for (let i = 0; i < bestList.length; i++) {
     const r = bestList[i];
-    const key = `${r.total_points}|${rankTimeS(r) ?? 'null'}|${r.reached_goal}`;
-    const rank = key === prevKey ? prevRank : i + 1;
-    prevKey = key;
+    const rank = r.total_points === prevTotal ? prevRank : i + 1;
+    prevTotal = r.total_points;
     prevRank = rank;
     ins.run(
       randomUUID(),

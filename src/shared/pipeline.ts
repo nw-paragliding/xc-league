@@ -12,6 +12,8 @@ import {
   computeDistancePoints,
   computePartialDistanceKm,
   computeTimePoints,
+  goalRatioWeights,
+  MAX_POINTS,
   type OptimisedRoute,
   optimiseRoute,
   tagToleranceM,
@@ -25,7 +27,7 @@ import {
 // whose stored flight_attempts.scorer_version differs from this constant.
 // =============================================================================
 
-export const SCORER_VERSION = '1.3';
+export const SCORER_VERSION = '1.4';
 
 // Re-export so existing `import { tagToleranceM } from './shared/pipeline'`
 // paths keep working. The canonical helper lives in `./task-engine`.
@@ -97,6 +99,26 @@ export interface PipelineInput {
   existingGoalTimes: number[]; // task times (seconds) of all pilots who already reached goal
   // used to compute time points for this submission
   competitionType: 'XC' | 'HIKE_AND_FLY';
+  // §11 goal-ratio field counts for the provisional score — see
+  // TaskFieldCounts. Omitted → the submission is scored as a single-pilot
+  // field (goal ratio 0 or 1 from this track alone).
+  fieldCounts?: TaskFieldCounts;
+}
+
+/**
+ * FAI S7F §11 goal-ratio inputs: distinct-pilot counts over the task's
+ * stored attempts EXCLUDING the submitting pilot, plus whether the
+ * submitting pilot already has a stored goal-reaching attempt.
+ * scoreAttempts folds the submitting pilot in itself — they always count
+ * as flying, and count as in goal when `pilotAlreadyInGoal` is set or any
+ * attempt in this submission reaches goal — so the provisional weights
+ * match the goal ratio rebuildTaskResults derives once the submission's
+ * attempts are inserted in the same transaction.
+ */
+export interface TaskFieldCounts {
+  otherPilotsFlown: number; // distinct pilots with ≥ 1 attempt, excluding the submitter
+  otherPilotsInGoal: number; // distinct pilots with ≥ 1 goal attempt, excluding the submitter
+  pilotAlreadyInGoal: boolean; // submitter already has a stored goal attempt
 }
 
 export interface TaskDefinition {
@@ -1270,18 +1292,25 @@ export function calculateDistances(attempts: AttemptTrace[], fixes: Fix[], task:
 /**
  * Stage 6: scoreAttempts
  *
+ * §11 split: availableDistancePoints = DistanceWeight * 1000 and
+ * availableTimePoints = TimeWeight * 1000, where the weights depend on the
+ * task's goal ratio (goalRatioWeights). `fieldCounts` supplies the rest of
+ * the field; the submitting pilot is folded in here so the provisional
+ * numbers use the same weights the post-insert rebuild will derive.
+ *
  * Distance points:
- *   Goal: distancePoints = MAX_POINTS
- *   Else: distancePoints = MAX_POINTS * sqrt(dist / bestDist)
+ *   Goal: distancePoints = availableDistancePoints
+ *   Else: distancePoints = availableDistancePoints * sqrt(dist / bestDist)
  *
  * Time points (goal pilots only) — FAI S7F §12.2:
- *   timePoints = MAX_POINTS * max(0, 1 - ((t_pilot - t_best) / sqrt(t_best)) ^ (5/6))
- *   (times in hours; t_best = fastest goal time; sole finisher gets MAX_POINTS)
+ *   timePoints = availableTimePoints * max(0, 1 - ((t_pilot - t_best) / sqrt(t_best)) ^ (5/6))
+ *   (times in hours; t_best = fastest goal time; sole finisher gets the full pool)
  */
 export function scoreAttempts(
   attempts: AttemptTrace[],
   existingGoalTimesS: number[],
   taskBestDistanceKm: number,
+  fieldCounts?: TaskFieldCounts,
 ): ScoredAttempt[] {
   // Collect goal task times including this submission's attempts
   const newGoalTimesS = attempts.filter((a) => a.reachedGoal && a.taskTimeS !== null).map((a) => a.taskTimeS!);
@@ -1290,13 +1319,26 @@ export function scoreAttempts(
   // Best distance across all pilots including this submission
   const thisBestDist = Math.max(taskBestDistanceKm, ...attempts.map((a) => a.distanceFlownKm));
 
+  // §11 goal ratio over the whole field, this pilot included. A pilot counts
+  // as "in goal" with a single goal-reaching attempt (best-attempt selection
+  // always prefers goal attempts, so this matches the leaderboard rows).
+  const counts = fieldCounts ?? { otherPilotsFlown: 0, otherPilotsInGoal: 0, pilotAlreadyInGoal: false };
+  const pilotInGoal = counts.pilotAlreadyInGoal || attempts.some((a) => a.reachedGoal);
+  const pilotsFlown = counts.otherPilotsFlown + 1;
+  const pilotsInGoal = counts.otherPilotsInGoal + (pilotInGoal ? 1 : 0);
+  const { distanceWeight, timeWeight } = goalRatioWeights(pilotsInGoal / pilotsFlown);
+  const availableDistancePoints = distanceWeight * MAX_POINTS;
+  const availableTimePoints = timeWeight * MAX_POINTS;
+
   return attempts.map((attempt) => {
     const dist = attempt.distanceFlownKm;
     const bestDist = Math.max(thisBestDist, dist);
 
-    const distancePoints = computeDistancePoints(dist, bestDist, attempt.reachedGoal);
+    const distancePoints = computeDistancePoints(dist, bestDist, attempt.reachedGoal, availableDistancePoints);
     const timePoints =
-      attempt.reachedGoal && attempt.taskTimeS !== null ? computeTimePoints(attempt.taskTimeS, allGoalTimesS) : 0;
+      attempt.reachedGoal && attempt.taskTimeS !== null
+        ? computeTimePoints(attempt.taskTimeS, allGoalTimesS, availableTimePoints)
+        : 0;
 
     return {
       attemptIndex: attempt.attemptIndex,
@@ -1316,25 +1358,6 @@ export function scoreAttempts(
       hasFlaggedCrossings:
         attempt.turnpointCrossings.some((c) => c.groundCheckRequired && !c.groundConfirmed) ||
         attempt.truncationVoidedCrossing === true,
-    };
-  });
-}
-
-/**
- * Rescore: recalculate time points for all goal attempts on a task.
- */
-export function rescoreTimePoints(allTaskAttempts: ScoredAttempt[]): ScoredAttempt[] {
-  const goalTimes = allTaskAttempts.filter((a) => a.reachedGoal && a.taskTimeS !== null).map((a) => a.taskTimeS!);
-
-  return allTaskAttempts.map((attempt) => {
-    if (!attempt.reachedGoal || attempt.taskTimeS === null) {
-      return { ...attempt, timePoints: 0, totalPoints: attempt.distancePoints };
-    }
-    const timePoints = computeTimePoints(attempt.taskTimeS, goalTimes);
-    return {
-      ...attempt,
-      timePoints,
-      totalPoints: attempt.distancePoints + timePoints,
     };
   });
 }
@@ -1434,7 +1457,7 @@ export async function runPipelineFromParsed(
   attempts = calculateDistances(attempts, track.fixes, input.task);
 
   // Stage 6: Scoring
-  const scoredAttempts = scoreAttempts(attempts, input.existingGoalTimes, taskBestDistanceKm);
+  const scoredAttempts = scoreAttempts(attempts, input.existingGoalTimes, taskBestDistanceKm, input.fieldCounts);
 
   // Stage 7: Select best
   const bestAttemptIndex = selectBestAttempt(scoredAttempts);
@@ -1445,24 +1468,6 @@ export async function runPipelineFromParsed(
     flightDate: track.flightDate,
     gapCount: track.gapCount,
   });
-}
-
-// =============================================================================
-// RESCORE JOB ENTRY POINT
-// =============================================================================
-
-export interface RescoreInput {
-  taskId: string;
-  allAttemptsForTask: ScoredAttempt[];
-}
-
-export interface RescoreOutput {
-  updatedAttempts: ScoredAttempt[];
-}
-
-export function runRescore(input: RescoreInput): RescoreOutput {
-  const updatedAttempts = rescoreTimePoints(input.allAttemptsForTask);
-  return { updatedAttempts };
 }
 
 // =============================================================================

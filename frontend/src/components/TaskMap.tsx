@@ -468,8 +468,8 @@ export default function TaskMap({ turnpoints, height = 300, track, tracks }: Tas
     // the role colour on every channel means a ground SSS still reads as
     // blue — you don't have to remember which earth-tone overlay belongs to
     // which role. Outside each strict ring we shade the annular band between
-    // r and r + tagToleranceM(r) (max(5 m, 0.5 % of r)) — the band the
-    // scoring pipeline actually accepts for tag detection.
+    // r and r + tagToleranceM(r) (§9.1.1: max(5 m, 0.1 % of r)) — the band
+    // the scoring pipeline actually accepts for tag detection.
     for (const group of groups) {
       for (const { radiusM, color, forceGround } of mergeCircles(group.entries.filter((e) => !e.isGoalLine))) {
         const { r } = projR(group.lng, group.lat, radiusM);
@@ -477,7 +477,7 @@ export default function TaskMap({ turnpoints, height = 300, track, tracks }: Tas
 
         // Annular tolerance band (donut between r and r + tolerance) drawn as
         // a single path with two subpaths and evenodd fill-rule. The buffer
-        // is small in absolute terms (5 m floor, then 0.5 % of r), so we
+        // is small in absolute terms (5 m floor, then 0.1 % of r), so we
         // shade the band rather than drawing a thin ring — much more
         // visible on big cylinders and still tolerable on small ones. No
         // `stroke` here on purpose: a stroke would paint both subpaths and

@@ -87,6 +87,29 @@ export async function reprocessStaleSubmissions(db: Database): Promise<{ reproce
   return { reprocessed, failed };
 }
 
+// Drop task_results / turnpoint_crossings / flight_attempts rows for a single
+// submission, in FK-safe order. Shared by the successful-reprocess path
+// (which reinserts fresh rows right after) and the DETECTION-failure path
+// (which reinserts nothing — the flight simply no longer scores). Must run
+// inside a caller-owned transaction.
+function clearSubmissionAttempts(db: Database, submissionId: string): void {
+  // Drop only the task_results rows that point at this submission's
+  // attempts — the FK is task_results.best_attempt_id → flight_attempts(id),
+  // and we're about to delete those attempts. A full per-task DELETE +
+  // rebuild here would be O(N²) when many stale submissions share a task;
+  // the boot sweep in server.ts re-derives the whole table once afterward.
+  db.prepare(
+    `DELETE FROM task_results
+     WHERE best_attempt_id IN (SELECT id FROM flight_attempts WHERE submission_id = ?)`,
+  ).run(submissionId);
+
+  db.prepare(
+    `DELETE FROM turnpoint_crossings
+     WHERE attempt_id IN (SELECT id FROM flight_attempts WHERE submission_id = ?)`,
+  ).run(submissionId);
+  db.prepare(`DELETE FROM flight_attempts WHERE submission_id = ?`).run(submissionId);
+}
+
 async function reprocessOne(db: Database, sub: SubmissionRow): Promise<void> {
   const task = db
     .prepare(
@@ -167,10 +190,37 @@ async function reprocessOne(db: Database, sub: SubmissionRow): Promise<void> {
     taskBestDistanceKm,
   );
   if (!result.ok) {
-    // The original upload succeeded against the prior scorer; failure here
-    // means the IGC is somehow incompatible with the current code (e.g. a
-    // header parser tightened). Skip without modifying stored data so the
-    // pilot's existing flight_attempts stay intact.
+    if (result.error.stage === 'DETECTION') {
+      // The IGC parsed and date-validated fine, but under the CURRENT rules
+      // (e.g. the §9.1.3 tolerance tightening this reprocess run exists to
+      // apply) it produces zero valid attempts — most commonly NO_SSS_CROSSING
+      // for a submission whose only SSS tag fell in a tolerance band that has
+      // since been retired. This is a legitimate re-scoring outcome, not an
+      // incompatibility: the flight no longer scores under today's rules, so
+      // we clear its stored attempt data the same way a successful reprocess
+      // replaces it (just with nothing to insert afterward). Leaving the old
+      // 1.3-era rows in place would let the pilot keep points earned under a
+      // retired tolerance forever, and the staleness probe would re-select
+      // and re-fail this submission on every boot.
+      const code = (result.error.error as { code: string }).code;
+      console.log(
+        `[reprocess] submission ${sub.id} (task ${sub.task_id}, pilot ${sub.user_id}) no longer produces a ` +
+          `valid attempt under current rules (DETECTION/${code}) — clearing stored attempt data`,
+      );
+      db.transaction(() => {
+        clearSubmissionAttempts(db, sub.id);
+        db.prepare(`UPDATE flight_submissions SET best_attempt_id = NULL, updated_at = ? WHERE id = ?`).run(
+          new Date().toISOString(),
+          sub.id,
+        );
+      })();
+      return;
+    }
+    // PARSE/DATE-stage failures mean the IGC itself is incompatible with the
+    // current parser/date validation (e.g. a header parser tightened) rather
+    // than a legitimate re-scoring outcome. Skip without modifying stored
+    // data so the pilot's existing flight_attempts stay intact — these need
+    // manual reconciliation, not an automatic clear.
     throw new Error(`pipeline rejected IGC: ${result.error.stage}/${(result.error.error as { code: string }).code}`);
   }
 
@@ -180,27 +230,13 @@ async function reprocessOne(db: Database, sub: SubmissionRow): Promise<void> {
   const nowIso = new Date().toISOString();
 
   db.transaction(() => {
-    // Drop only the task_results rows that point at this submission's
-    // attempts — the FK is task_results.best_attempt_id → flight_attempts(id),
-    // and we're about to delete those attempts. A full per-task DELETE +
-    // rebuild here would be O(N²) when many stale submissions share a task;
-    // the boot sweep in server.ts re-derives the whole table once afterward.
-    db.prepare(
-      `DELETE FROM task_results
-       WHERE best_attempt_id IN (SELECT id FROM flight_attempts WHERE submission_id = ?)`,
-    ).run(sub.id);
-
     // Drop old attempt + crossing rows for this submission. Reprocess is
     // re-scoring the same IGC against a newer SCORER_VERSION, so we need
     // to replace the existing rows wholesale; soft-delete would leave the
     // stale attempts visible alongside the freshly-scored ones, so hard-
     // delete is the right call. turnpoint_crossings has no soft-delete
     // column either, so the same delete-and-reinsert applies.
-    db.prepare(
-      `DELETE FROM turnpoint_crossings
-       WHERE attempt_id IN (SELECT id FROM flight_attempts WHERE submission_id = ?)`,
-    ).run(sub.id);
-    db.prepare(`DELETE FROM flight_attempts WHERE submission_id = ?`).run(sub.id);
+    clearSubmissionAttempts(db, sub.id);
 
     for (let i = 0; i < scoredAttempts.length; i++) {
       const attempt = scoredAttempts[i];

@@ -207,7 +207,7 @@ describe('goal D-shape: chord + semi-circle together', () => {
 describe('segmentNearGoalLine', () => {
   // East-west chord at origin, half-length 100 m, bearing 90°. The chord is
   // sized off a 100 m goal cylinder, so tolerance = tagToleranceM(100) = 5 m
-  // (the 5 m floor; 0.5 % of 100 m is 0.5 m, below the floor).
+  // (the 5 m floor; 0.1 % of 100 m is 0.1 m, below the floor).
   const R = 100;
   const BRG = 90;
   const TOL = 5;
@@ -280,7 +280,7 @@ describe('segmentNearGoalLine', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('cylinder tolerance boundary (segmentIntersectsCircle + tagToleranceM)', () => {
-  // A 400 m cylinder gets a 5 m tolerance (the floor — 0.5% of 400 is 2 m)
+  // A 400 m cylinder gets a 5 m tolerance (the floor — 0.1% of 400 is 0.4 m)
   it('tags an inbound segment ending 4 m short of a 400 m cylinder', () => {
     const r = 400;
     const effectiveR = r + tagToleranceM(r); // 405
@@ -296,12 +296,14 @@ describe('cylinder tolerance boundary (segmentIntersectsCircle + tagToleranceM)'
     expect(t).toBeNull();
   });
 
-  it('uses the 0.5% rule above the floor (4000 m → 20 m tolerance)', () => {
-    const r = 4000;
-    const effectiveR = r + tagToleranceM(r); // 4020 — 0.5 % of 4000 = 20 m, above the 5 m floor
-    // 15 m short of the strict edge — within 20 m tolerance
-    const t = segmentIntersectsCircle({ x: 5000, y: 0 }, { x: 4015, y: 0 }, effectiveR);
-    expect(t).not.toBeNull();
+  it('uses the 0.1% rule above the floor (10000 m → 10 m tolerance)', () => {
+    const r = 10000;
+    const effectiveR = r + tagToleranceM(r); // 10010 — 0.1 % of 10000 = 10 m, above the 5 m floor
+    // 5 m short of the strict edge — within the 10 m tolerance
+    expect(segmentIntersectsCircle({ x: 11000, y: 0 }, { x: 10005, y: 0 }, effectiveR)).not.toBeNull();
+    // 15 m short of the strict edge — outside the 10 m tolerance (the old
+    // 0.5% band would have taken this; S7F 2025 §9.1.1 does not)
+    expect(segmentIntersectsCircle({ x: 11000, y: 0 }, { x: 10015, y: 0 }, effectiveR)).toBeNull();
   });
 });
 

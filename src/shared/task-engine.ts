@@ -7,18 +7,22 @@
 // =============================================================================
 
 // =============================================================================
-// FAI §9.1.3 cylinder tolerance
+// FAI §9.1.1 cylinder tolerance (S7F 2025)
 //
-// "Tolerance is applied separately to the straight portion and to the
-// semi-circle." Standard practice across FAI scoring tools is 0.5 % of the
-// radius with a minimum of 5 m. The boundary effectively shifts outward by
-// `tagToleranceM(r)` — a fix at distance ≤ r + tolerance is considered
-// inside. The optimised-route geometry continues to use the strict radius;
-// tolerance only governs whether a track tags the cylinder.
+//   relativeTolerance = 0.1 %   (from GAP 2026: 0.0 %)
+//   absoluteTolerance = 5 m
+//   outerRadius = max(radius * (1 + relativeTolerance), radius + absoluteTolerance)
+//
+// i.e. the tolerance is max(5 m, 0.1 % of the radius). §9.1.3 applies the
+// same tolerance separately to the goal-line chord and semi-circle. The
+// boundary effectively shifts outward by `tagToleranceM(r)` — a fix at
+// distance ≤ r + tolerance is considered inside. The optimised-route
+// geometry continues to use the strict radius; tolerance only governs
+// whether a track tags the cylinder.
 // =============================================================================
 
 export function tagToleranceM(radiusM: number): number {
-  return Math.max(5, radiusM * 0.005);
+  return Math.max(5, radiusM * 0.001);
 }
 
 // =============================================================================
@@ -349,42 +353,88 @@ export function computePartialDistanceKm(
 export const MAX_POINTS = 1000;
 
 /**
+ * FAI S7F §11 points allocation — goal-ratio-dependent distance/time split.
+ *
+ *   GoalRatio      = NumberOfPilotsInGoal / NumberOfPilotsFlying
+ *   DistanceWeight = 0.9 - 1.665*GR + 1.713*GR² - 0.587*GR³
+ *
+ * Full FAI PG then carves the (1 - DistanceWeight) remainder into leading
+ * (LeadingTimeRatio, default 26 %), arrival (0 for PG) and time weights:
+ *   TimeWeight = 1 - DistanceWeight - LeadingWeight - ArrivalWeight
+ *
+ * This league deliberately drops leading and arrival points (see
+ * src/shared/SCORING.md), so time absorbs the full remainder:
+ *   TimeWeight = 1 - DistanceWeight
+ *
+ * Available points are the weights * MAX_POINTS. §11 rounds the available
+ * pools to whole points; we keep full precision here because per-task
+ * normalisation (rebuildTaskResults) rescales everything afterwards and the
+ * S7F round-once principle puts the single rounding on the persisted value.
+ */
+export function goalRatioWeights(goalRatio: number): { distanceWeight: number; timeWeight: number } {
+  const gr = Math.min(1, Math.max(0, goalRatio));
+  const distanceWeight = 0.9 - 1.665 * gr + 1.713 * gr ** 2 - 0.587 * gr ** 3;
+  const timeWeight = 1 - distanceWeight;
+  return { distanceWeight, timeWeight };
+}
+
+/**
  * Distance points for one pilot.
- *   Goal:     MAX_POINTS
- *   Non-goal: MAX_POINTS * sqrt(dist / bestDist)
+ *   Goal:     availablePoints
+ *   Non-goal: availablePoints * sqrt(dist / bestDist)
+ *
+ * `availablePoints` is the §11 AvailableDistancePoints pool
+ * (DistanceWeight * 1000 — see goalRatioWeights). It defaults to MAX_POINTS
+ * for isolated unit-test use; every production call site passes the
+ * goal-ratio-weighted pool.
  *
  * Returns full precision — rounding to one decimal happens exactly once, on
  * the final persisted value after task-level normalisation
  * (rebuildTaskResults in src/job-queue.ts), per the S7F round-once principle.
  */
-export function computeDistancePoints(distKm: number, bestDistKm: number, reachedGoal: boolean): number {
-  if (reachedGoal) return MAX_POINTS;
+export function computeDistancePoints(
+  distKm: number,
+  bestDistKm: number,
+  reachedGoal: boolean,
+  availablePoints: number = MAX_POINTS,
+): number {
+  if (reachedGoal) return availablePoints;
   if (bestDistKm <= 0) return 0;
-  return MAX_POINTS * Math.sqrt(distKm / bestDistKm);
+  return availablePoints * Math.sqrt(distKm / bestDistKm);
 }
 
 /**
  * Time points for one goal pilot — FAI Sporting Code S7F §12.2.
  *
  *   SpeedFraction = max(0, 1 - ((T - BestTime) / sqrt(BestTime)) ^ (5/6))
- *   TimePoints    = SpeedFraction * MAX_POINTS
+ *   TimePoints    = SpeedFraction * availablePoints
  *
  * Times in the formula are in HOURS (per the spec). BestTime is the fastest
  * task time among goal pilots. A pilot scores zero only when their time is at
  * or beyond BestTime + sqrt(BestTime) — an absolute cutoff anchored to the
  * winner's time, not to the slowest finisher.
  *
+ * `availablePoints` is the §11 AvailableTimePoints pool
+ * (TimeWeight * 1000 — see goalRatioWeights). It defaults to MAX_POINTS for
+ * isolated unit-test use; every production call site passes the
+ * goal-ratio-weighted pool.
+ *
  * Returns full precision — see computeDistancePoints for where rounding
  * happens.
  *
- * @param taskTimeS      This pilot's task time in seconds
- * @param allGoalTimesS  All goal pilots' task times including this one
+ * @param taskTimeS       This pilot's task time in seconds
+ * @param allGoalTimesS   All goal pilots' task times including this one
+ * @param availablePoints AvailableTimePoints pool (defaults to MAX_POINTS)
  */
-export function computeTimePoints(taskTimeS: number, allGoalTimesS: number[]): number {
-  if (allGoalTimesS.length === 0) return MAX_POINTS;
+export function computeTimePoints(
+  taskTimeS: number,
+  allGoalTimesS: number[],
+  availablePoints: number = MAX_POINTS,
+): number {
+  if (allGoalTimesS.length === 0) return availablePoints;
   const bestTimeH = Math.min(...allGoalTimesS) / 3600;
-  if (bestTimeH <= 0) return taskTimeS <= 0 ? MAX_POINTS : 0;
+  if (bestTimeH <= 0) return taskTimeS <= 0 ? availablePoints : 0;
   const excessH = Math.max(0, taskTimeS / 3600 - bestTimeH);
   const speedFraction = Math.max(0, 1 - (excessH / Math.sqrt(bestTimeH)) ** (5 / 6));
-  return MAX_POINTS * speedFraction;
+  return availablePoints * speedFraction;
 }

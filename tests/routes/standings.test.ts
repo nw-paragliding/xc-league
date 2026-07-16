@@ -392,9 +392,10 @@ describe('rebuildTaskResults', () => {
   // Regression for time-point staleness: when a new goal time enters the set,
   // every goal pilot's time_points must reflect the full updated range.
   it('rescores time_points across all goal pilots when the goal-times set changes', () => {
-    // normalized_score=2000 matches the unscaled winner total
-    // (distance_points=1000 + time_points=1000 for the fastest pilot), so the
-    // post-rebuild values are the computeTimePoints outputs rounded to 0.1.
+    // All four pilots reach goal → §11 goal ratio 1 → DistanceWeight 0.361,
+    // TimeWeight 0.639. The fastest pilot's raw total is exactly
+    // 361 + 639 = 1000, so normalized_score=2000 makes the scale exactly 2
+    // and every persisted value is the weighted raw doubled.
     const taskTime = createTestTask(db, season.id, league.id, { name: 'Time-points' });
     db.prepare(`UPDATE tasks SET normalized_score = 2000 WHERE id = ?`).run(taskTime.id);
 
@@ -433,14 +434,15 @@ describe('rebuildTaskResults', () => {
     expect(rows).toHaveLength(4);
 
     // FAI S7F §12.2: bestTime=3000s (0.8333h), cutoff at best + sqrt(best) ≈ 6286s.
-    // time_points = 1000 * max(0, 1 - ((t - best) / sqrt(best))^(5/6)), times in hours.
+    // time_points = 639 * max(0, 1 - ((t - best) / sqrt(best))^(5/6)) * 2 (scale),
+    // times in hours — i.e. SpeedFraction * 1278.
     const byUser = new Map(rows.map((r) => [r.user_id, r]));
-    expect(byUser.get(pilot4.id).time_points).toBeCloseTo(1000, 0); // fastest
-    expect(byUser.get(pilot.id).time_points).toBeCloseTo(757.6, 1); // 3600
-    expect(byUser.get(pilot2.id).time_points).toBeCloseTo(568.1, 1); // 4200
-    expect(byUser.get(pilot3.id).time_points).toBeCloseTo(230.4, 1); // slowest, still inside cutoff
-    // distance_points are tied at 1000 (all four flew 50km of best=50km).
-    for (const r of rows) expect(r.distance_points).toBeCloseTo(1000, 0);
+    expect(byUser.get(pilot4.id).time_points).toBeCloseTo(1278, 0); // fastest
+    expect(byUser.get(pilot.id).time_points).toBeCloseTo(968.2, 1); // 3600 (SF 0.7576)
+    expect(byUser.get(pilot2.id).time_points).toBeCloseTo(726.0, 1); // 4200 (SF 0.5681)
+    expect(byUser.get(pilot3.id).time_points).toBeCloseTo(294.5, 1); // slowest, still inside cutoff (SF 0.2304)
+    // distance_points are tied at 722 = 0.361 * 1000 * 2 (all four flew 50km of best=50km).
+    for (const r of rows) expect(r.distance_points).toBeCloseTo(722, 0);
   });
 
   // Regression: goalTimes is built per-pilot (fastest), not per-attempt.
@@ -483,10 +485,12 @@ describe('rebuildTaskResults', () => {
       .all(taskTime.id) as any[];
     expect(rows).toHaveLength(2);
     const byUser = new Map(rows.map((r) => [r.user_id, r]));
-    // §12.2 with t_best=3000s: pilot B at 3000 → 1000.
-    // Pilot A's *best* is 3600 (slower 4200 is ignored) → 757.6.
-    expect(byUser.get(pilot2.id).time_points).toBeCloseTo(1000, 0);
-    expect(byUser.get(pilot.id).time_points).toBeCloseTo(757.6, 1);
+    // Both pilots in goal → GR=1 → TimeWeight 0.639; winner raw total is
+    // 361 + 639 = 1000, normalized_score 2000 → scale 2 (time pool 1278).
+    // §12.2 with t_best=3000s: pilot B at 3000 → 1278.
+    // Pilot A's *best* is 3600 (slower 4200 is ignored) → SF 0.7576 → 968.2.
+    expect(byUser.get(pilot2.id).time_points).toBeCloseTo(1278, 0);
+    expect(byUser.get(pilot.id).time_points).toBeCloseTo(968.2, 1);
   });
 
   // §13.1: the PG time-points parameter is 0% — a speed-section time earns
@@ -518,11 +522,13 @@ describe('rebuildTaskResults', () => {
     expect(rows[1].rank).toBe(1); // shared rank — the ESS time confers nothing
   });
 
-  it('ranks a goal pilot above an equal-total non-goal pilot regardless of ESS times', () => {
+  it('orders a goal pilot above an equal-total non-goal pilot but shares the rank value', () => {
     // Under the §12.2 absolute cutoff a goal pilot slower than
     // t_best + sqrt(t_best) scores 0 time points, so a non-goal pilot at
-    // bestDist can tie them on total_points. The goal pilot must still rank
-    // first — a fast ESS-only time must not flip the order.
+    // bestDist can tie them on total_points. S7F ranks on the rounded
+    // TotalScore alone, so the two SHARE a rank; the goal pilot is merely
+    // listed first (deterministic render order), and the fast ESS-only time
+    // earns the non-goal pilot nothing.
     const fast = createTestUser(db, { email: 'fast@test.com', displayName: 'Fast Finisher' });
     addLeagueMember(db, league.id, fast.id, 'pilot');
 
@@ -550,17 +556,160 @@ describe('rebuildTaskResults', () => {
 
     rebuildTaskResults(db, task.id);
 
+    // Mirror the leaderboard route's deterministic order within a shared
+    // rank: goal-gated task time, then goal flag, then pilot id.
     const rows = db
-      .prepare('SELECT user_id, reached_goal, total_points, rank FROM task_results WHERE task_id = ? ORDER BY rank')
+      .prepare(
+        `SELECT user_id, reached_goal, total_points, rank FROM task_results WHERE task_id = ?
+         ORDER BY rank,
+                  COALESCE(CASE WHEN reached_goal = 1 THEN task_time_s END, 1e15),
+                  reached_goal DESC, user_id`,
+      )
       .all(task.id) as any[];
     expect(rows).toHaveLength(3);
     expect(rows[0].user_id).toBe(fast.id);
+    expect(rows[0].rank).toBe(1);
     // Slow goal pilot and non-goal pilot tie on points…
     expect(rows[1].total_points).toBe(rows[2].total_points);
-    // …but the goal pilot ranks above; the non-goal ESS time earns nothing.
+    // …the goal pilot is listed first, but the rank VALUE is shared (1, 2, 2).
     expect(rows[1].user_id).toBe(pilot.id);
     expect(rows[1].reached_goal).toBe(1);
+    expect(rows[1].rank).toBe(2);
     expect(rows[2].user_id).toBe(pilot2.id);
+    expect(rows[2].rank).toBe(2);
+  });
+
+  it('resumes competition ranking after a shared rank (1, 1, 3)', () => {
+    // Two non-goal pilots tie at bestDist; a third lands shorter. The tied
+    // pair share rank 1 and the next distinct total gets rank 3
+    // (1 + count of strictly better pilots), not rank 2.
+    const pilot3 = createTestUser(db, { email: 'third@test.com', displayName: 'Third Pilot' });
+    addLeagueMember(db, league.id, pilot3.id, 'pilot');
+
+    for (const p of [pilot, pilot2]) {
+      const sub = createTestSubmission(db, task.id, p.id, league.id);
+      createTestAttempt(db, sub, task.id, p.id, league.id, { reachedGoal: false, distanceFlownKm: 50 });
+    }
+    const sub3 = createTestSubmission(db, task.id, pilot3.id, league.id);
+    createTestAttempt(db, sub3, task.id, pilot3.id, league.id, { reachedGoal: false, distanceFlownKm: 20 });
+
+    rebuildTaskResults(db, task.id);
+
+    const rows = db
+      .prepare('SELECT user_id, total_points, rank FROM task_results WHERE task_id = ? ORDER BY rank, user_id')
+      .all(task.id) as any[];
+    expect(rows).toHaveLength(3);
+    expect(rows[0].rank).toBe(1);
+    expect(rows[1].rank).toBe(1);
+    expect(rows[0].total_points).toBe(rows[1].total_points);
+    expect(rows[2].user_id).toBe(pilot3.id);
     expect(rows[2].rank).toBe(3);
+  });
+
+  // ── FAI S7F §11 goal-ratio weighting ───────────────────────────────────────
+
+  it('GR = 0: distance pool is 900 raw, but normalization still lands the winner on 1000', () => {
+    // Nobody in goal → DistanceWeight 0.9 (TimeWeight 0.1 is moot — no time
+    // points without goal). Raw winner = 900; the per-task normalization
+    // rescales to normalized_score (default 1000), so relative spacing is
+    // all sqrt-of-distance: runner-up at a quarter distance = 500.
+    const sub1 = createTestSubmission(db, task.id, pilot.id, league.id);
+    createTestAttempt(db, sub1, task.id, pilot.id, league.id, { reachedGoal: false, distanceFlownKm: 80 });
+    const sub2 = createTestSubmission(db, task.id, pilot2.id, league.id);
+    createTestAttempt(db, sub2, task.id, pilot2.id, league.id, { reachedGoal: false, distanceFlownKm: 20 });
+
+    rebuildTaskResults(db, task.id);
+
+    const rows = db
+      .prepare(
+        'SELECT user_id, distance_points, time_points, total_points FROM task_results WHERE task_id = ? ORDER BY rank',
+      )
+      .all(task.id) as any[];
+    expect(rows).toHaveLength(2);
+    expect(rows[0].user_id).toBe(pilot.id);
+    expect(rows[0].total_points).toBe(1000);
+    expect(rows[0].time_points).toBe(0);
+    expect(rows[1].total_points).toBe(500); // 900·√(20/80) = 450 raw, × 1000/900
+  });
+
+  it('GR = 0.5 worked example: two of four in goal → DW 0.422375 / TW 0.577625 exactly', () => {
+    // A (goal, 3000 s), B (goal, 3600 s), C (25 km), D (12.5 km); task
+    // distance 50 km. GR = 2/4 = 0.5:
+    //   DW = 0.9 − 1.665·0.5 + 1.713·0.25 − 0.587·0.125 = 0.422375
+    //   TW = 1 − DW = 0.577625
+    // A's raw total = 422.375 + 577.625 = 1000 → scale is exactly 1 at the
+    // default normalized_score, so the persisted rows expose the weighted
+    // raw values directly:
+    //   A: 422.4 + 577.6 = 1000
+    //   B: 422.4 + 577.625·SF(3600 vs 3000 = 0.7576) = 437.6 → 860.0
+    //   C: 422.375·√(25/50)   = 298.7
+    //   D: 422.375·√(12.5/50) = 211.2
+    const pilotC = createTestUser(db, { email: 'cc@test.com', displayName: 'Pilot C' });
+    const pilotD = createTestUser(db, { email: 'dd@test.com', displayName: 'Pilot D' });
+    addLeagueMember(db, league.id, pilotC.id, 'pilot');
+    addLeagueMember(db, league.id, pilotD.id, 'pilot');
+
+    const seed = (p: { id: string }, opts: Parameters<typeof createTestAttempt>[5]) => {
+      const sub = createTestSubmission(db, task.id, p.id, league.id);
+      createTestAttempt(db, sub, task.id, p.id, league.id, opts);
+    };
+    seed(pilot, { reachedGoal: true, distanceFlownKm: 50, taskTimeS: 3000 });
+    seed(pilot2, { reachedGoal: true, distanceFlownKm: 50, taskTimeS: 3600 });
+    seed(pilotC, { reachedGoal: false, distanceFlownKm: 25 });
+    seed(pilotD, { reachedGoal: false, distanceFlownKm: 12.5 });
+
+    rebuildTaskResults(db, task.id);
+
+    const rows = db
+      .prepare('SELECT user_id, distance_points, time_points, total_points, rank FROM task_results WHERE task_id = ?')
+      .all(task.id) as any[];
+    const byUser = new Map(rows.map((r) => [r.user_id, r]));
+
+    const a = byUser.get(pilot.id);
+    expect(a.distance_points).toBe(422.4); // DW · 1000, rounded once
+    expect(a.time_points).toBe(577.6); // TW · 1000, rounded once
+    expect(a.total_points).toBe(1000);
+    expect(a.rank).toBe(1);
+
+    const b = byUser.get(pilot2.id);
+    expect(b.distance_points).toBe(422.4);
+    expect(b.time_points).toBe(437.6);
+    expect(b.total_points).toBe(860);
+
+    expect(byUser.get(pilotC.id).total_points).toBe(298.7);
+    expect(byUser.get(pilotD.id).total_points).toBe(211.2);
+  });
+
+  it('GR-changing upload parity: server numbers the frontend preview must reproduce', () => {
+    // Companion to the previewPipeline.test.ts case "a goal preview moves
+    // the goal ratio": one stored non-goal pilot at 40 km, then a goal
+    // upload at 50 km / 3600 s arrives. GR moves 0 → 1/2 → DW 0.422375.
+    // The frontend preview of that second flight must show exactly the
+    // numbers this rebuild persists.
+    const sub1 = createTestSubmission(db, task.id, pilot.id, league.id);
+    createTestAttempt(db, sub1, task.id, pilot.id, league.id, { reachedGoal: false, distanceFlownKm: 40 });
+    const sub2 = createTestSubmission(db, task.id, pilot2.id, league.id);
+    createTestAttempt(db, sub2, task.id, pilot2.id, league.id, {
+      reachedGoal: true,
+      distanceFlownKm: 50,
+      taskTimeS: 3600,
+    });
+
+    rebuildTaskResults(db, task.id);
+
+    const rows = db
+      .prepare('SELECT user_id, distance_points, time_points, total_points FROM task_results WHERE task_id = ?')
+      .all(task.id) as any[];
+    const byUser = new Map(rows.map((r) => [r.user_id, r]));
+
+    const goal = byUser.get(pilot2.id);
+    expect(goal.distance_points).toBe(422.4);
+    expect(goal.time_points).toBe(577.6);
+    expect(goal.total_points).toBe(1000);
+
+    const short = byUser.get(pilot.id);
+    expect(short.distance_points).toBe(377.8); // 422.375·√(40/50)
+    expect(short.time_points).toBe(0);
+    expect(short.total_points).toBe(377.8);
   });
 });
