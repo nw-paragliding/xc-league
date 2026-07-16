@@ -5,20 +5,29 @@
 // §12.1: distance counts "up until the pilot landed or the task deadline was
 // reached". For XC seasons the pipeline finds the landing GLOBALLY, once per
 // track: the start of the first landing-stillness window — ≥ 30 s in which
-// every fix is below 5 km/h AND the gpsAlt spread stays under 15 m — that
-// begins at/after the track's first valid SSS crossing. Everything from that
-// timestamp onward is dead: no turnpoint or goal crossings, no distance
-// credit, and an SSS crossing at/after the cutoff can't even start an attempt
-// (a §12.1 XC flight ends at the first landing, so a retrieve car that
-// re-crosses the start boundary spawns nothing).
+// every fix is below 5 km/h AND the gpsAlt spread stays under 15 m — at/after
+// the accepted anchor SSS crossing. Everything from that timestamp onward is
+// dead: no turnpoint or goal crossings, no distance credit, and an SSS
+// crossing at/after the cutoff can't even start an attempt (a §12.1 XC flight
+// ends at the first landing, so a retrieve car that re-crosses the start
+// boundary spawns nothing).
+//
+// The anchor is SELF-CORRECTING: a stillness window is only accepted as THE
+// landing when the attempts in front of it show flight evidence — a turnpoint
+// crossing beyond the SSS, or ≥ 0.5 km of §9.3 course progress — before the
+// cutoff. A no-evidence window is pre-flight ground time (car up the hill,
+// hike-in); its crossings are discarded and the scan re-anchors at the first
+// crossing past the window, or errors NO_SSS_CROSSING when none exists.
 //
 // The altitude-flatness requirement keeps a glider parked in ridge lift
 // (steady 0–4 km/h over the ground but bobbing in the lift band) from being
 // read as landed; a landed pilot's GPS altitude is flat within noise.
 //
-// A truncation or suppression that voids at least one otherwise-valid
-// crossing raises the attempt's ⚑ (hasFlaggedCrossings) so it is visible for
-// review; distance-only truncation stays quiet.
+// A truncation that voids an otherwise-valid crossing of the attempt's own
+// scan raises the attempt's ⚑ (hasFlaggedCrossings); a suppressed
+// post-landing SSS crossing flags only the surviving attempts that did NOT
+// reach goal (a sealed goal score cannot have been affected by it).
+// Distance-only truncation stays quiet.
 //
 // HAF seasons are exempt from all of this — travelling on the ground is part
 // of the game.
@@ -389,6 +398,235 @@ describe('landing truncation — genuine slow flight is NOT a landing', () => {
     expect(attempt.truncationVoidedCrossing).toBe(true);
     const [scored] = scoreAttempts([attempt], [], TASK_KM);
     expect(scored.hasFlaggedCrossings).toBe(true);
+  });
+});
+
+describe('self-correcting anchor — pre-flight ground movement across the SSS (XC)', () => {
+  // Finding 1 regression: the logger is running before launch and the drive
+  // up the hill crosses the SSS cylinder at vehicle speed. Rigging stillness
+  // at launch must NOT be accepted as the landing — the drive shows no course
+  // progress, so the scan re-anchors at the first in-flight crossing and the
+  // genuine flight scores in full (it scored 0.0 before this fix).
+  function driveUpThenFlyTrack(): Fix[] {
+    const fixes: Fix[] = [
+      fx(0, 47.49, 30), // car driving up the hill, south of the SSS
+      fx(60, 47.4945, 30),
+      fx(120, 47.499, 30), // crossed the SSS boundary (≈ 47.4964) ≈ t=85 s
+    ];
+    for (let t = 125; t <= 200; t += 5) fixes.push(fx(t, 47.4995, 0.5)); // 75 s rigging, alt flat
+    fixes.push(fx(260, 47.505, 30)); // launches; exits the SSS in flight ≈ t=245 s
+    fixes.push(fx(320, 47.52, 50));
+    fixes.push(fx(380, 47.55, 55));
+    fixes.push(fx(440, 47.58, 55));
+    fixes.push(fx(500, 47.61, 55)); // TP1
+    fixes.push(fx(560, 47.64, 55));
+    fixes.push(fx(620, 47.67, 55));
+    fixes.push(fx(680, 47.7, 55)); // TP2
+    fixes.push(fx(740, 47.73, 55));
+    fixes.push(fx(800, 47.76, 55));
+    fixes.push(fx(860, 47.79, 55));
+    fixes.push(fx(920, 47.81, 55)); // goal
+    return fixes;
+  }
+
+  it('drive-up at 30 km/h through the SSS + rigging stillness: the flight still scores goal', () => {
+    const attempts = detect(driveUpThenFlyTrack(), 'XC');
+
+    // The car's crossing spawned nothing; only the in-flight exit survives.
+    expect(attempts).toHaveLength(1);
+    const [attempt] = attempts;
+    expect(attempt.sssCrossing.crossingTime).toBeGreaterThan(200_000);
+    expect(attempt.reachedGoal).toBe(true);
+    expect(attempt.taskTimeS).toBeGreaterThan(0);
+    expect(attempt.distanceFlownKm).toBeCloseTo(TASK_KM, 2);
+    // Re-anchored past the rigging window; no landing after launch.
+    expect(attempt.landingCutoffMs).toBeNull();
+    expect(attempt.truncationVoidedCrossing).toBeFalsy();
+
+    const [scored] = scoreAttempts([attempt], [], TASK_KM);
+    expect(scored.hasFlaggedCrossings).toBe(false);
+  });
+
+  it('HAF season is exempt: the driven crossing is a legitimate start', () => {
+    const attempts = detect(driveUpThenFlyTrack(), 'HIKE_AND_FLY');
+    expect(attempts).toHaveLength(2);
+    for (const attempt of attempts) {
+      expect(attempt.landingCutoffMs).toBeNull();
+      expect(attempt.reachedGoal).toBe(true);
+    }
+  });
+
+  it('hike-in whose walking crossing has a GPS-jitter fix above walking pace: same rescue', () => {
+    // The walk across the boundary is 4 km/h with one 9 km/h jitter endpoint
+    // on the crossing segment — fast enough to defeat any walking-pace speed
+    // gate (it defeated the old 8 km/h one). The walk itself then reads as a
+    // stillness window (< 5 km/h); with no course progress in front of it the
+    // scan re-anchors at the in-flight exit and the flight scores in full.
+    const fixes: Fix[] = [
+      fx(0, 47.495, 4), // walking north toward the boundary
+      fx(60, 47.4957, 4),
+      fx(120, 47.497, 9), // jitter endpoint; crossed ≈ 47.4964 ≈ t=92 s
+      fx(180, 47.4977, 4),
+      fx(240, 47.4984, 4),
+    ];
+    for (let t = 245; t <= 320; t += 5) fixes.push(fx(t, 47.4985, 0.4)); // 75 s rigging, alt flat
+    fixes.push(fx(380, 47.506, 30)); // launches; exits the SSS in flight ≈ t=361 s
+    fixes.push(fx(440, 47.52, 50));
+    fixes.push(fx(500, 47.55, 55));
+    fixes.push(fx(560, 47.58, 55));
+    fixes.push(fx(620, 47.61, 55)); // TP1
+    fixes.push(fx(680, 47.64, 55));
+    fixes.push(fx(740, 47.67, 55));
+    fixes.push(fx(800, 47.7, 55)); // TP2
+    fixes.push(fx(860, 47.73, 55));
+    fixes.push(fx(920, 47.76, 55));
+    fixes.push(fx(980, 47.79, 55));
+    fixes.push(fx(1040, 47.81, 55)); // goal
+    const attempts = detect(fixes, 'XC');
+
+    expect(attempts).toHaveLength(1);
+    const [attempt] = attempts;
+    expect(attempt.sssCrossing.crossingTime).toBeGreaterThan(320_000);
+    expect(attempt.reachedGoal).toBe(true);
+    expect(attempt.distanceFlownKm).toBeCloseTo(TASK_KM, 2);
+    expect(attempt.landingCutoffMs).toBeNull();
+
+    const [scored] = scoreAttempts([attempt], [], TASK_KM);
+    expect(scored.hasFlaggedCrossings).toBe(false);
+  });
+});
+
+describe('suppression flag scoping — post-landing SSS re-cross (XC)', () => {
+  it('a clean goal flight is NOT flagged when the retrieve re-crosses the SSS', () => {
+    // The most common clean profile at hill sites: fly the task to goal,
+    // land, go still, then the retrieve car drives home back through the
+    // start cylinder. The car crossing is suppressed, but the goal score was
+    // sealed at the goal crossing — flagging it would bury real flags.
+    const fixes: Fix[] = [
+      fx(0, 47.5, 40), // launch at the SSS centre; exits ≈ t=22 s
+      fx(60, 47.52, 60),
+      fx(120, 47.55, 60),
+      fx(180, 47.58, 60),
+      fx(240, 47.61, 60), // TP1
+      fx(300, 47.64, 60),
+      fx(360, 47.67, 60),
+      fx(420, 47.7, 60), // TP2
+      fx(480, 47.73, 60),
+      fx(540, 47.76, 60),
+      fx(600, 47.79, 60),
+      fx(660, 47.8, 40), // goal crossed ≈ t=638 s, lands
+    ];
+    for (let t = 665; t <= 700; t += 5) fixes.push(fx(t, 47.8, 0.5)); // 35 s still, alt flat
+    fixes.push(fx(760, 47.7, 80)); // retrieve drives south
+    fixes.push(fx(820, 47.6, 80));
+    fixes.push(fx(880, 47.52, 80));
+    fixes.push(fx(940, 47.5, 80)); // car re-enters the SSS cylinder ≈ t=907 s
+
+    const attempts = detect(fixes, 'XC');
+
+    // Car crossing suppressed; only the flown attempt survives.
+    expect(attempts).toHaveLength(1);
+    const [attempt] = attempts;
+    expect(attempt.landingCutoffMs).toBe(665_000);
+    expect(attempt.reachedGoal).toBe(true);
+    expect(attempt.taskTimeS).toBeGreaterThan(0);
+    expect(attempt.distanceFlownKm).toBeCloseTo(TASK_KM, 2);
+    // Goal attempts are exempt from the suppression flag.
+    expect(attempt.truncationVoidedCrossing).toBeFalsy();
+    const [scored] = scoreAttempts([attempt], [], TASK_KM);
+    expect(scored.hasFlaggedCrossings).toBe(false);
+  });
+
+  it('a partial flight IS still flagged when a post-landing crossing is suppressed', () => {
+    // Lands mid-course (no TP beyond the SSS), retrieve re-crosses the SSS.
+    // The suppressed crossing might have been the real flight, so the ⚑
+    // stays on the partial attempt.
+    const fixes: Fix[] = [
+      fx(0, 47.5, 40), // exits SSS ≈ t=11 s
+      fx(60, 47.52, 40),
+      fx(120, 47.55, 60),
+      fx(180, 47.56, 20), // touch-down short of TP1
+    ];
+    for (let t = 185; t <= 220; t += 5) fixes.push(fx(t, 47.56, 0.5)); // 35 s still, alt flat
+    fixes.push(fx(280, 47.53, 60)); // retrieve drives back south
+    fixes.push(fx(340, 47.5, 60)); // re-enters the SSS cylinder ≈ t=333 s
+
+    const attempts = detect(fixes, 'XC');
+
+    expect(attempts).toHaveLength(1);
+    const [attempt] = attempts;
+    expect(attempt.landingCutoffMs).toBe(185_000);
+    expect(attempt.reachedGoal).toBe(false);
+    expect(attempt.lastTurnpointIndex).toBe(0);
+    // ~6.3 km of genuine course progress (47.5036 → 47.56), then dead.
+    expect(attempt.distanceFlownKm).toBeCloseTo(6.27, 1);
+    // Suppression flags the non-goal survivor.
+    expect(attempt.truncationVoidedCrossing).toBe(true);
+    const [scored] = scoreAttempts([attempt], [], TASK_KM);
+    expect(scored.hasFlaggedCrossings).toBe(true);
+  });
+});
+
+describe('accepted residual — pre-flight vehicle making course progress (XC)', () => {
+  // Documented limitation, pinned so it stays deliberate: a pre-flight car
+  // that crosses the SSS and drives MORE than the 0.5 km flight-evidence
+  // epsilon ALONG the course line before stopping at launch defeats the
+  // no-progress test. The rigging stillness is then accepted as THE landing:
+  // the genuine flight (whose SSS exit postdates it) is suppressed and every
+  // surviving car attempt is truncated at the cutoff and flagged. The flight
+  // is lost — visibly (⚑ for admin review), never silently scored off the
+  // car's track.
+  function carAlongCourseThenFlyTrack(): Fix[] {
+    const fixes: Fix[] = [
+      fx(0, 47.49, 30), // car enters from the south, crossing ≈ t=73 s
+      fx(60, 47.4945, 30),
+      fx(120, 47.503, 30),
+      fx(180, 47.512, 30), // exits the far side ≈ t=124 s, driving up the course
+      fx(240, 47.5215, 30), // ≈ 2.0 km of course progress
+      fx(300, 47.512, 30), // drives back toward launch
+      fx(360, 47.503, 30), // re-enters ≈ t=356 s
+      fx(420, 47.4995, 10), // parks at launch inside the cylinder
+    ];
+    for (let t = 425; t <= 495; t += 5) fixes.push(fx(t, 47.4995, 0.5)); // 70 s rigging, alt flat
+    fixes.push(fx(555, 47.5045, 25)); // launches; SSS exit ≈ t=544 s — SUPPRESSED
+    fixes.push(fx(615, 47.52, 45));
+    fixes.push(fx(675, 47.55, 55));
+    fixes.push(fx(735, 47.58, 55));
+    fixes.push(fx(795, 47.61, 55)); // TP1 (voided — post-cutoff)
+    fixes.push(fx(855, 47.65, 55));
+    fixes.push(fx(915, 47.7, 55)); // TP2 (voided)
+    fixes.push(fx(975, 47.75, 55));
+    fixes.push(fx(1035, 47.81, 55)); // goal (voided)
+    return fixes;
+  }
+
+  it('the flight is suppressed-and-flagged, never scored as the car attempt reaching goal', () => {
+    const attempts = detect(carAlongCourseThenFlyTrack(), 'XC');
+
+    // The three pre-cutoff car crossings all spawn (truncated) attempts; the
+    // in-flight exit at ≈ 544 s postdates the rigging cutoff and spawns none.
+    expect(attempts).toHaveLength(3);
+    for (const attempt of attempts) {
+      expect(attempt.landingCutoffMs).toBe(425_000);
+      expect(attempt.sssCrossing.crossingTime).toBeLessThan(425_000);
+      // Nothing flown counts: no goal, no task time, no TPs beyond the SSS.
+      expect(attempt.reachedGoal).toBe(false);
+      expect(attempt.taskTimeS).toBeNull();
+      expect(attempt.turnpointCrossings.map((c) => c.sequenceIndex)).toEqual([0]);
+      // Both the suppression and the voided TP/goal crossings raise the ⚑.
+      expect(attempt.truncationVoidedCrossing).toBe(true);
+    }
+
+    const scored = scoreAttempts(attempts, [], TASK_KM);
+    const best = scored[selectBestAttempt(scored)];
+    // The persisted best is the car's truncated course progress (~2 km) —
+    // NOT the full flown task — and it is flagged for review.
+    expect(best.reachedGoal).toBe(false);
+    expect(best.distanceFlownKm).toBeCloseTo(2.0, 1);
+    expect(best.distanceFlownKm).toBeLessThan(TASK_KM / 4);
+    expect(best.hasFlaggedCrossings).toBe(true);
+    // The t_best pool gets nothing from this upload.
+    expect(scored.every((a) => !a.reachedGoal && a.taskTimeS === null)).toBe(true);
   });
 });
 

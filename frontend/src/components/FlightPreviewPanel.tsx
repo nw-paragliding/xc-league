@@ -95,6 +95,10 @@ export default function FlightPreviewPanel({
         reachedGoal: best.reachedGoal,
         turnpointsCrossed: best.turnpointCrossings.length,
         taskTimeS: best.taskTimeS,
+        // Truncation-voided crossings (XC) or failed ground checks (HAF).
+        // Surfaced with the same ⚑ glyph the leaderboard uses, so the pilot
+        // isn't shown a clean preview of a flight that will land flagged.
+        flagged: best.hasFlaggedCrossings,
       }
     : null;
 
@@ -245,6 +249,12 @@ export default function FlightPreviewPanel({
                     Your leaderboard row after upload: <strong>{fmtPts(predicted.totalPoints)} pts</strong>.
                   </>
                 )}
+                {predicted.hasFlaggedCrossings && (
+                  <div style={{ marginTop: 4, color: 'var(--warning)' }}>
+                    <strong>⚑</strong> Your leaderboard row will carry the review flag — this track has crossings
+                    flagged for admin review.
+                  </div>
+                )}
               </div>
             )}
             {previousBest && predicted?.source === 'preview' && (
@@ -305,6 +315,12 @@ interface ColumnMetrics {
   reachedGoal: boolean;
   turnpointsCrossed?: number;
   taskTimeS: number | null;
+  /**
+   * hasFlaggedCrossings on the attempt — rendered as the leaderboard's ⚑
+   * glyph. Optional so the Previous Best column (which doesn't set it) stays
+   * unchanged.
+   */
+  flagged?: boolean;
 }
 
 function Column({
@@ -374,6 +390,20 @@ function Column({
       <Row k="Goal" v={metrics.reachedGoal ? '✓' : '✗'} />
       {metrics.turnpointsCrossed != null && <Row k="Turnpoints" v={String(metrics.turnpointsCrossed)} />}
       <Row k="Task time" v={fmtTime(metrics.taskTimeS)} delta={dTime} />
+      {metrics.flagged && (
+        <div
+          style={{
+            marginTop: 6,
+            paddingTop: 6,
+            borderTop: '1px solid var(--border)',
+            fontSize: 10,
+            fontWeight: 700,
+            color: 'var(--warning)',
+          }}
+        >
+          ⚑ flagged for review
+        </div>
+      )}
     </div>
   );
 }

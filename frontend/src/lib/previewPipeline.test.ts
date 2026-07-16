@@ -12,6 +12,7 @@
 // =============================================================================
 
 import { describe, expect, it } from 'vitest';
+import { parseAndValidate, runPipelineFromParsed, type ScoredAttempt } from '../../../src/shared/pipeline';
 import {
   FIXTURE_INPUT,
   FIXTURE_TASK_CLOSE_DATE,
@@ -20,6 +21,18 @@ import {
 } from '../../../src/shared/pipeline-parity-fixture';
 import type { LeaderboardEntry, Task, Turnpoint } from '../api/tasks';
 import { normalizePreviewPoints, previewSubmission } from './previewPipeline';
+
+// Mirror previewPipeline's rounding so scale-application assertions are exact.
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+// normalizePreviewPoints takes a Pick of ScoredAttempt including
+// hasFlaggedCrossings; most tests here don't care about the flag.
+function att(
+  overrides: Pick<ScoredAttempt, 'distanceFlownKm' | 'reachedGoal' | 'taskTimeS'> &
+    Partial<Pick<ScoredAttempt, 'hasFlaggedCrossings'>>,
+): Pick<ScoredAttempt, 'distanceFlownKm' | 'reachedGoal' | 'taskTimeS' | 'hasFlaggedCrossings'> {
+  return { hasFlaggedCrossings: false, ...overrides };
+}
 
 // Adapt the pipeline-shaped fixture turnpoints to the frontend's API shape.
 // previewSubmission re-maps them via its own turnpointToDef, so this is the
@@ -168,7 +181,12 @@ describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () =>
       mkEntry({ pilotId: 'A', distanceFlownKm: 50, reachedGoal: true, taskTimeS: 3600 }),
       mkEntry({ pilotId: 'B', distanceFlownKm: 50, reachedGoal: true, taskTimeS: 4500 }),
     ];
-    const r = normalizePreviewPoints({ distanceFlownKm: 50, reachedGoal: true, taskTimeS: 5400 }, entries, 'A', 1000);
+    const r = normalizePreviewPoints(
+      att({ distanceFlownKm: 50, reachedGoal: true, taskTimeS: 5400 }),
+      entries,
+      'A',
+      1000,
+    );
 
     expect(r.distancePoints).toBeCloseTo(500, 1);
     expect(r.timePoints).toBeCloseTo(219.4, 1);
@@ -186,7 +204,12 @@ describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () =>
       mkEntry({ pilotId: 'me', distanceFlownKm: 50, reachedGoal: false }),
       mkEntry({ pilotId: 'other', distanceFlownKm: 40, reachedGoal: false }),
     ];
-    const r = normalizePreviewPoints({ distanceFlownKm: 50, reachedGoal: true, taskTimeS: 3600 }, entries, 'me', 1000);
+    const r = normalizePreviewPoints(
+      att({ distanceFlownKm: 50, reachedGoal: true, taskTimeS: 3600 }),
+      entries,
+      'me',
+      1000,
+    );
 
     // Preview wins → winner raw = 1000 dist + 1000 time (sole goal time) =
     // 2000, scale 0.5.
@@ -204,7 +227,12 @@ describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () =>
     // panel now sources the pilot's post-upload row from `predicted` instead
     // of the stored pre-upload points.
     const entries = [mkEntry({ pilotId: 'me', distanceFlownKm: 30, reachedGoal: false, totalPoints: 1000 })];
-    const r = normalizePreviewPoints({ distanceFlownKm: 30, reachedGoal: true, taskTimeS: 3600 }, entries, 'me', 1000);
+    const r = normalizePreviewPoints(
+      att({ distanceFlownKm: 30, reachedGoal: true, taskTimeS: 3600 }),
+      entries,
+      'me',
+      1000,
+    );
 
     // Preview raw: 1000 dist (full task distance in goal) + 1000 time (sole
     // goal time) = 2000 → winner → scale 0.5 → normalized 1000.
@@ -220,7 +248,12 @@ describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () =>
     // MAX(distance) over ALL attempts), so the 10 km preview scores
     // sqrt(10/30) of 1000, and the standing row remains the winner.
     const entries = [mkEntry({ pilotId: 'me', distanceFlownKm: 30, reachedGoal: false })];
-    const r = normalizePreviewPoints({ distanceFlownKm: 10, reachedGoal: false, taskTimeS: null }, entries, 'me', 1000);
+    const r = normalizePreviewPoints(
+      att({ distanceFlownKm: 10, reachedGoal: false, taskTimeS: null }),
+      entries,
+      'me',
+      1000,
+    );
 
     expect(r.distancePoints).toBeCloseTo(577.4, 1);
     expect(r.totalPoints).toBeCloseTo(577.4, 1);
@@ -231,11 +264,208 @@ describe('normalizePreviewPoints — pool parity with rebuildTaskResults', () =>
 
   it('treats the preview as the only candidate when the pilot has no leaderboard row', () => {
     const entries = [mkEntry({ pilotId: 'other', distanceFlownKm: 40, reachedGoal: false })];
-    const r = normalizePreviewPoints({ distanceFlownKm: 20, reachedGoal: false, taskTimeS: null }, entries, 'me', 1000);
+    const r = normalizePreviewPoints(
+      att({ distanceFlownKm: 20, reachedGoal: false, taskTimeS: null }),
+      entries,
+      'me',
+      1000,
+    );
 
     expect(r.predicted.source).toBe('preview');
     // bestDist = 40 → preview raw = 1000·sqrt(20/40) = 707.1; winner is
     // 'other' at raw 1000 → scale 1.
     expect(r.totalPoints).toBeCloseTo(707.1, 1);
+  });
+});
+
+// =============================================================================
+// hasFlaggedCrossings on the predicted row
+// =============================================================================
+
+describe('normalizePreviewPoints — predicted row carries hasFlaggedCrossings', () => {
+  it("wires the preview attempt's flag when the preview becomes the pilot's row", () => {
+    const entries = [mkEntry({ pilotId: 'other', distanceFlownKm: 40, reachedGoal: false })];
+    const r = normalizePreviewPoints(
+      att({ distanceFlownKm: 20, reachedGoal: false, taskTimeS: null, hasFlaggedCrossings: true }),
+      entries,
+      'me',
+      1000,
+    );
+
+    expect(r.predicted.source).toBe('preview');
+    expect(r.predicted.hasFlaggedCrossings).toBe(true);
+  });
+
+  it("wires the existing row's flag when the previous best stays the pilot's row", () => {
+    // Existing goal row beats a non-goal preview; the row keeps ITS flag
+    // state (flagged here), not the clean preview's.
+    const entries = [
+      mkEntry({ pilotId: 'me', distanceFlownKm: 50, reachedGoal: true, taskTimeS: 3600, hasFlaggedCrossings: true }),
+    ];
+    const r = normalizePreviewPoints(
+      att({ distanceFlownKm: 20, reachedGoal: false, taskTimeS: null }),
+      entries,
+      'me',
+      1000,
+    );
+
+    expect(r.predicted.source).toBe('existing');
+    expect(r.predicted.hasFlaggedCrossings).toBe(true);
+  });
+
+  it('keeps the predicted row clean when neither the winning candidate nor the preview is flagged', () => {
+    const entries = [
+      mkEntry({ pilotId: 'me', distanceFlownKm: 50, reachedGoal: true, taskTimeS: 3600, hasFlaggedCrossings: false }),
+    ];
+    // Flagged preview LOSES to the clean existing row — the flag must not
+    // leak onto the predicted (existing) row.
+    const r = normalizePreviewPoints(
+      att({ distanceFlownKm: 20, reachedGoal: false, taskTimeS: null, hasFlaggedCrossings: true }),
+      entries,
+      'me',
+      1000,
+    );
+
+    expect(r.predicted.source).toBe('existing');
+    expect(r.predicted.hasFlaggedCrossings).toBe(false);
+  });
+});
+
+describe('previewSubmission — flagged flight surfaces hasFlaggedCrossings (metrics + predicted path)', () => {
+  it('HAF ground-check failure flags the best attempt and the predicted row', async () => {
+    // HIKE_AND_FLY season with TP1 force-ground. The fixture track flies
+    // through TP1 at ~60 km/h with no 20 s sub-5 km/h window inside the
+    // cylinder, so Stage 4 leaves the crossing unconfirmed and flags the
+    // attempt — exactly what the leaderboard renders as ⚑. The preview panel
+    // reads the flag off attempts[bestAttemptIndex] (metrics path) and off
+    // predicted (after-upload note), so both must carry it.
+    const hafTask: Task = {
+      ...task,
+      turnpoints: turnpoints.map((tp) => (tp.sequenceIndex === 1 ? { ...tp, forceGround: true } : tp)),
+    };
+    const res = await previewSubmission(FIXTURE_INPUT.igcText, hafTask, { competitionType: 'HIKE_AND_FLY' }, [], 'me');
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
+    const best = res.value.attempts[res.value.bestAttemptIndex];
+    expect(best.hasFlaggedCrossings).toBe(true);
+
+    expect(res.value.predicted.source).toBe('preview');
+    expect(res.value.predicted.hasFlaggedCrossings).toBe(true);
+  });
+
+  it('clean XC flight previews unflagged on both paths', async () => {
+    const res = await previewSubmission(
+      FIXTURE_INPUT.igcText,
+      task,
+      { competitionType: 'XC' },
+      leaderboardEntries,
+      'new-pilot',
+    );
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
+    expect(res.value.attempts[res.value.bestAttemptIndex].hasFlaggedCrossings).toBe(false);
+    expect(res.value.predicted.hasFlaggedCrossings).toBe(false);
+  });
+});
+
+// =============================================================================
+// One scale across all previewed attempts
+// =============================================================================
+
+// A track that spawns THREE attempts: north out of the SSS to TP1, back south
+// INTO the SSS (second crossing), out again (third crossing), then TP1 and
+// goal. Crossing direction is irrelevant (§6.2.1) and attempts are not
+// bounded by later SSS crossings, so all three attempts greedily reach goal
+// with different task times. Every inter-fix speed is ≥ ~33 km/h — no
+// stillness, so no landing cutoff, no suppression, no flags.
+//
+// Lat in IGC DDMMmmm: 47.495→4729700, 47.500→4730000, 47.510→4730600,
+// 47.520→4731200, 47.540→4732400 (same geometry as the parity fixture).
+const MULTI_ATTEMPT_IGC = [
+  'AXLK00001',
+  'HFDTE230126',
+  'B1000004729700N12200000WA0050000500', // 47.495 outside SSS
+  'B1001004730000N12200000WA0050000500', // 47.500 inside SSS
+  'B1002004730600N12200000WA0050000500', // 47.510 out → SSS crossing #1
+  'B1003004731200N12200000WA0050000500', // 47.520 TP1
+  'B1004004730000N12200000WA0050000500', // 47.500 back in → SSS crossing #2
+  'B1005004730600N12200000WA0050000500', // 47.510 out again → SSS crossing #3
+  'B1006004731200N12200000WA0050000500', // 47.520 TP1
+  'B1007004732400N12200000WA0050000500', // 47.540 GOAL
+].join('\n');
+
+describe('previewSubmission — every attempt shares the post-upload scale', () => {
+  it('applies the single taskValue/winnerRaw scale to non-best attempts (no raw-1000-scale leftovers)', async () => {
+    // Prior finisher at 120 s holds the winner raw total (2000), so the
+    // normalisation scale is well below 1 — any attempt left on the raw
+    // pipeline scale would stick out.
+    const res = await previewSubmission(
+      MULTI_ATTEMPT_IGC,
+      task,
+      { competitionType: 'XC' },
+      leaderboardEntries,
+      'new-pilot',
+    );
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value.attempts.length).toBeGreaterThanOrEqual(2);
+
+    // Raw pipeline run with the exact inputs previewSubmission derives from
+    // the task + leaderboard (existingGoalTimes [120], best distance 3.65).
+    const parsed = parseAndValidate(MULTI_ATTEMPT_IGC);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const raw = await runPipelineFromParsed(
+      parsed.value,
+      {
+        igcText: MULTI_ATTEMPT_IGC,
+        task: { id: task.id, turnpoints: FIXTURE_TURNPOINTS },
+        existingGoalTimes: [120],
+        competitionType: 'XC',
+      },
+      FIXTURE_TASK_OPEN_DATE,
+      FIXTURE_TASK_CLOSE_DATE,
+      3.65,
+    );
+    expect(raw.ok).toBe(true);
+    if (!raw.ok) return;
+
+    const bestIdx = res.value.bestAttemptIndex;
+    expect(raw.value.bestAttemptIndex).toBe(bestIdx);
+    expect(raw.value.scoredAttempts).toHaveLength(res.value.attempts.length);
+
+    // The scale previewSubmission applied — recomputed through the same
+    // exported entry point it uses.
+    const { scale, ...bestNormalized } = normalizePreviewPoints(
+      raw.value.scoredAttempts[bestIdx],
+      leaderboardEntries,
+      'new-pilot',
+      1000,
+    );
+    expect(scale).toBeGreaterThan(0);
+    expect(scale).toBeLessThan(1); // guard: the scale actually moves the numbers
+
+    res.value.attempts.forEach((a, i) => {
+      const r = raw.value.scoredAttempts[i];
+      if (i === bestIdx) {
+        // Best attempt: the fully pooled recomputation (leaderboard values).
+        expect(a.distancePoints).toBeCloseTo(bestNormalized.distancePoints, 5);
+        expect(a.timePoints).toBeCloseTo(bestNormalized.timePoints, 5);
+        expect(a.totalPoints).toBeCloseTo(bestNormalized.totalPoints, 5);
+      } else {
+        // Non-best attempts: raw pipeline points × the SAME scale. Before
+        // the fix these came back untouched on the raw 1000-point scale.
+        expect(r.totalPoints).toBeGreaterThan(0);
+        expect(a.distancePoints).toBeCloseTo(round1(r.distancePoints * scale), 5);
+        expect(a.timePoints).toBeCloseTo(round1(r.timePoints * scale), 5);
+        expect(a.totalPoints).toBeCloseTo(round1(a.distancePoints + a.timePoints), 5);
+        expect(a.totalPoints).toBeLessThan(r.totalPoints);
+      }
+    });
   });
 });

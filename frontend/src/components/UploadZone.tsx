@@ -106,6 +106,19 @@ function ScoreResult({ result, onReset }: { result: SubmissionResponse; onReset:
           </span>
         </div>
       )}
+      {best.hasFlaggedCrossings && (
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: 11,
+            fontFamily: 'var(--font-mono)',
+            fontWeight: 700,
+            color: 'var(--warning)',
+          }}
+        >
+          ⚑ Flagged for review — your leaderboard row carries the review glyph
+        </div>
+      )}
       {prov && (
         <div className="provisional-note" style={{ marginTop: 8 }}>
           ⏳ Scores provisional — final when task closes

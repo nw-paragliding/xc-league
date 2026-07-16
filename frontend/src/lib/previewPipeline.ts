@@ -14,6 +14,13 @@ import type { LeaderboardEntry, Task, Turnpoint } from '../api/tasks';
 import type { ReplayFix } from '../api/track';
 
 export interface PreviewResult {
+  /**
+   * All detected attempts, with distancePoints/timePoints/totalPoints
+   * uniformly re-expressed on the post-upload leaderboard scale (the same
+   * `taskValue / winnerRaw` factor for every attempt). Only the best
+   * attempt's points feed the leaderboard; non-best attempts' points are
+   * informational.
+   */
   attempts: ScoredAttempt[];
   bestAttemptIndex: number;
   flightDate: string;
@@ -36,6 +43,13 @@ export interface PredictedStanding {
   distancePoints: number;
   timePoints: number;
   totalPoints: number;
+  /**
+   * Whether the pilot's post-upload leaderboard row would carry the ⚑ review
+   * flag. Derivable for both sources: the existing row exposes it on
+   * LeaderboardEntry, and the preview's best attempt carries it directly
+   * (truncation-voided crossings on XC, failed ground checks on HAF).
+   */
+  hasFlaggedCrossings: boolean;
 }
 
 export interface PreviewError {
@@ -91,11 +105,22 @@ function round1(n: number): number {
 // Exported for tests. `preview` only needs the scoring-relevant fields of a
 // ScoredAttempt so tests don't have to fabricate crossings.
 export function normalizePreviewPoints(
-  preview: Pick<ScoredAttempt, 'distanceFlownKm' | 'reachedGoal' | 'taskTimeS'>,
+  preview: Pick<ScoredAttempt, 'distanceFlownKm' | 'reachedGoal' | 'taskTimeS' | 'hasFlaggedCrossings'>,
   leaderboard: LeaderboardEntry[],
   currentUserId: string | undefined,
   taskValue: number,
-): { distancePoints: number; timePoints: number; totalPoints: number; predicted: PredictedStanding } {
+): {
+  distancePoints: number;
+  timePoints: number;
+  totalPoints: number;
+  /**
+   * taskValue / winner's raw total — the single post-upload scale. Callers
+   * apply it to every non-best attempt so the whole attempts array is on one
+   * scale. 0 when no attempt scores (winner raw total ≤ 0).
+   */
+  scale: number;
+  predicted: PredictedStanding;
+} {
   const existing = (currentUserId && leaderboard.find((e) => e.pilotId === currentUserId)) || null;
   const others = existing ? leaderboard.filter((e) => e !== existing) : leaderboard;
 
@@ -159,11 +184,13 @@ export function normalizePreviewPoints(
   if (winnerRaw <= 0) {
     return {
       ...zero,
+      scale: 0,
       predicted: {
         source: existingWins ? 'existing' : 'preview',
         distanceFlownKm: existingWins && existing ? existing.distanceFlownKm : preview.distanceFlownKm,
         reachedGoal: existingWins && existing ? existing.reachedGoal : preview.reachedGoal,
         taskTimeS: existingWins && existing ? existing.taskTimeS : preview.taskTimeS,
+        hasFlaggedCrossings: existingWins && existing ? existing.hasFlaggedCrossings : preview.hasFlaggedCrossings,
         ...zero,
       },
     };
@@ -184,6 +211,7 @@ export function normalizePreviewPoints(
           distanceFlownKm: existing.distanceFlownKm,
           reachedGoal: existing.reachedGoal,
           taskTimeS: existing.taskTimeS,
+          hasFlaggedCrossings: existing.hasFlaggedCrossings,
           ...normalize(existingRaw),
         }
       : {
@@ -191,10 +219,11 @@ export function normalizePreviewPoints(
           distanceFlownKm: preview.distanceFlownKm,
           reachedGoal: preview.reachedGoal,
           taskTimeS: preview.taskTimeS,
+          hasFlaggedCrossings: preview.hasFlaggedCrossings,
           ...previewNormalized,
         };
 
-  return { ...previewNormalized, predicted };
+  return { ...previewNormalized, scale, predicted };
 }
 
 // Discriminated narrow on PipelineError.stage so the compiler surfaces
@@ -266,13 +295,22 @@ export async function previewSubmission(
   // scale as the leaderboard's "Previous Best" comparison shows.
   const bestIdx = result.value.bestAttemptIndex;
   const bestAttempt = result.value.scoredAttempts[bestIdx];
-  const { predicted, ...normalized } = normalizePreviewPoints(
+  const { predicted, scale, ...normalized } = normalizePreviewPoints(
     bestAttempt,
     leaderboardEntries,
     currentUserId,
     task.taskValue ?? MAX_POINTS,
   );
-  const normalizedAttempts = result.value.scoredAttempts.map((a, i) => (i === bestIdx ? { ...a, ...normalized } : a));
+  // One scale for the whole array: the best attempt gets the fully pooled
+  // recomputation (its points are what the leaderboard would show); every
+  // other attempt has its raw pipeline points multiplied by the SAME scale so
+  // no attempt is left on the raw 1000-point scale next to normalized ones.
+  const normalizedAttempts = result.value.scoredAttempts.map((a, i) => {
+    if (i === bestIdx) return { ...a, ...normalized };
+    const distancePoints = round1(a.distancePoints * scale);
+    const timePoints = round1(a.timePoints * scale);
+    return { ...a, distancePoints, timePoints, totalPoints: round1(distancePoints + timePoints) };
+  });
 
   return {
     ok: true,

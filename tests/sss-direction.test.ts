@@ -11,14 +11,19 @@
 // (start cylinder that does not contain launch) previously produced zero SSS
 // crossings and rejected the whole upload with NO_SSS_CROSSING.
 //
-// XC movement gate: an XC start is flown, not walked. A boundary crossing
-// only spawns an attempt when the crossing segment shows movement — the
-// faster of its two endpoint fixes is ≥ 8 km/h. A pilot who walks across an
-// entry-style start boundary (~4–6 km/h) before launching gets the explicit
-// NO_SSS_CROSSING error, not a silently zeroed flight anchored at their
-// launch-prep stillness. Accepted edge: a pilot parked exactly on the
-// boundary in strong wind loses that particular crossing and starts on a
-// later one. HAF is exempt — walking is the point of the game there.
+// XC drift gate: a boundary crossing is ignored only when BOTH endpoint
+// fixes of the crossing segment are below the stillness threshold (5 km/h) —
+// the GPS drift of a parked pilot. No higher speed floor is possible: a
+// paraglider penetrating a strong headwind crosses at single-digit ground
+// speed, indistinguishable from walking by speed alone. Walking and driving
+// crossings therefore pass the gate, and the SELF-CORRECTING landing anchor
+// in detectAttempts decides what was flight: an anchor whose stillness
+// window has no course progress in front of it is pre-flight ground
+// movement — its crossings are discarded and the scan re-anchors past the
+// window, or errors NO_SSS_CROSSING when no later crossing exists. Accepted
+// edge: a pilot parked exactly on the boundary loses that drift crossing and
+// starts on a later one. HAF is exempt — walking is the point of the game
+// there.
 //
 // The greedy multi-attempt model is preserved: extra crossings mean extra
 // attempts, and Stage 7 best-attempt selection picks the right one.
@@ -100,14 +105,15 @@ describe('entry-style SSS (launch outside the start cylinder)', () => {
   });
 });
 
-describe('XC movement gate on SSS crossings', () => {
+describe('XC drift gate and pre-flight anchor rejection on SSS crossings', () => {
   it('walk-in to an entry-style start, rig, fly inside: NO_SSS_CROSSING, not a silent 0 km', () => {
     // Pilot parks outside the 5 km entry SSS (boundary ≈ 47.5548), walks
     // north across it at 4 km/h, stands still 60 s rigging, then flies the
     // entire in-cylinder course through goal without ever re-crossing the
-    // SSS boundary. The walked crossing is the ONLY boundary crossing in
-    // the track; it must not spawn an attempt whose landing scan anchors at
-    // the rigging stillness and silently zeroes the flight.
+    // SSS boundary. Both endpoints of the walked crossing segment sit below
+    // the 5 km/h stillness threshold, so the drift gate drops it — and it is
+    // the ONLY boundary crossing in the track, so the upload gets the
+    // explicit error, not a flight silently zeroed at the rigging stillness.
     const fixes: Fix[] = [
       fx(0, 47.554, -122.0, 0), // parked
       fx(60, 47.5546, -122.0, 4), // walking
@@ -134,9 +140,10 @@ describe('XC movement gate on SSS crossings', () => {
   });
 
   it('parked-drift across the boundary is ignored; the flight starts on a later crossing', () => {
-    // Accepted edge of the gate: a pilot parked on the SSS boundary in
-    // strong wind drifts across it at ~3 km/h — that crossing is lost. The
-    // subsequent flown crossings still spawn attempts.
+    // Accepted edge of the drift gate: a pilot parked on the SSS boundary in
+    // strong wind drifts across it at ~3 km/h — BOTH endpoint fixes of the
+    // crossing segment are below the 5 km/h stillness threshold, so that
+    // crossing is lost. The subsequent flown crossings still spawn attempts.
     const task: TaskDefinition = {
       id: 'task-drift',
       turnpoints: [
@@ -164,6 +171,79 @@ describe('XC movement gate on SSS crossings', () => {
       expect(attempt.sssCrossing.crossingTime).toBeGreaterThan(100_000);
       expect(attempt.reachedGoal).toBe(true);
     }
+  });
+
+  it('a slow-wind boundary penetration at ~6 km/h — the only crossing — still scores goal', () => {
+    // Routine strong-ridge-day physics for a paraglider: trim ~38–40 km/h
+    // minus ~33 km/h headwind ≈ 6 km/h ground speed while pushing out
+    // through the start boundary. Both endpoint fixes of the crossing
+    // segment are below 8 km/h — the old walking-pace gate dropped this
+    // crossing and, with no other boundary crossing in the track, rejected a
+    // legitimate goal flight with NO_SSS_CROSSING. The drift gate (5 km/h)
+    // lets it through, and no stillness follows, so the attempt stands.
+    const task: TaskDefinition = {
+      id: 'task-slow-wind',
+      turnpoints: [
+        { id: 'sss', sequenceIndex: 0, lat: 47.5, lng: -122.0, radiusM: 400, type: 'SSS' },
+        { id: 'goal', sequenceIndex: 1, lat: 47.6, lng: -122.0, radiusM: 400, type: 'GOAL_CYLINDER' },
+      ],
+    };
+    const fixes: Fix[] = [
+      fx(0, 47.5, -122.0, 6), // soaring inside the cylinder, pushing north
+      fx(60, 47.501, -122.0, 6),
+      fx(120, 47.502, -122.0, 6),
+      fx(180, 47.503, -122.0, 6),
+      fx(240, 47.504, -122.0, 6), // penetrates the boundary (≈ 47.5036) ≈ t=216 s
+      fx(300, 47.507, -122.0, 12), // climbs away
+      fx(360, 47.52, -122.0, 40),
+      fx(420, 47.55, -122.0, 55),
+      fx(480, 47.58, -122.0, 55),
+      fx(540, 47.61, -122.0, 55), // goal (boundary ≈ 47.5964), never re-enters SSS
+    ];
+
+    const res = detectAttempts(fixes, task, 'XC');
+    expect(res.ok).toBe(true); // was: NO_SSS_CROSSING
+    if (!res.ok) return;
+
+    expect(res.value).toHaveLength(1);
+    const [attempt] = res.value;
+    expect(attempt.sssCrossing.crossingTime).toBeGreaterThan(180_000);
+    expect(attempt.sssCrossing.crossingTime).toBeLessThan(240_000);
+    expect(attempt.reachedGoal).toBe(true);
+    expect(attempt.taskTimeS).toBeGreaterThan(0);
+    expect(attempt.landingCutoffMs).toBeNull();
+    expect(attempt.truncationVoidedCrossing).toBeFalsy();
+  });
+
+  it('a walk-in crossing ABOVE the drift gate still errors when the whole flight stays inside', () => {
+    // Same walk-in shape as above but at 6 km/h — fast enough to pass the
+    // drift gate, so the crossing reaches the anchor logic. The rigging
+    // stillness in front of it shows no course progress (pre-flight ground
+    // time) and the flight never re-crosses the 5 km SSS boundary, so there
+    // is no crossing to re-anchor on: the upload gets the same explicit
+    // NO_SSS_CROSSING error, never a silently truncated pre-flight attempt.
+    const fixes: Fix[] = [
+      fx(0, 47.554, -122.0, 6), // walking north toward the boundary
+      fx(60, 47.5546, -122.0, 6),
+      fx(120, 47.5552, -122.0, 6), // walked across the boundary ≈ t=80 s
+      ...Array.from({ length: 15 }, (_, i) => fx(130 + i * 5, 47.5553, -122.0, 0.5)), // 70 s rigging
+      fx(260, 47.56, -122.0, 30), // launches
+      fx(320, 47.575, -122.0, 45),
+      fx(380, 47.59, -122.0, 45),
+      fx(440, 47.605, -122.0, 45),
+      fx(500, 47.617, -122.0, 45), // goal reached, still inside SSS
+    ];
+
+    const res = detectAttempts(fixes, ENTRY_TASK, 'XC');
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error.code).toBe('NO_SSS_CROSSING');
+
+    // HAF is exempt: the walked crossing is a legitimate start there.
+    const hafRes = detectAttempts(fixes, ENTRY_TASK, 'HIKE_AND_FLY');
+    expect(hafRes.ok).toBe(true);
+    if (!hafRes.ok) return;
+    expect(hafRes.value[0].reachedGoal).toBe(true);
   });
 });
 

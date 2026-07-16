@@ -275,19 +275,39 @@ export interface AttemptTrace {
   distanceFlownKm: number; // populated by calculateDistances (initialised to 0 here)
   // XC only: the GLOBAL landing cutoff for the whole track — the start of the
   // first landing-stillness window (≥ 30 s of every fix below 5 km/h with a
-  // gpsAlt range under 15 m) that begins at/after the track's first valid SSS
-  // crossing. A §12.1 XC flight ends at the first landing, so the same cutoff
-  // applies to every attempt: fixes and crossings from this timestamp onward
-  // are post-landing and dead, and attempts whose SSS crossing postdates the
+  // gpsAlt range under 15 m) at/after the accepted anchor SSS crossing. The
+  // anchor is self-correcting: a stillness window with no flight evidence in
+  // front of it (no course progress) is pre-flight ground time, not a
+  // landing, and the scan re-anchors past it — see detectAttempts Step 3.
+  // A §12.1 XC flight ends at the first landing, so the same cutoff applies
+  // to every attempt: fixes and crossings from this timestamp onward are
+  // post-landing and dead, and attempts whose SSS crossing postdates the
   // cutoff are suppressed before they exist. null when the pilot never went
   // still, or for HAF where ground travel is legitimate.
   landingCutoffMs?: number | null;
   // Set when the landing cutoff voided at least one otherwise-valid crossing
-  // (a turnpoint/goal crossing past the cutoff, or a whole suppressed
-  // attempt). Surfaces as hasFlaggedCrossings (⚑) so admins can review the
-  // truncation instead of it failing silently. Distance-only truncation
-  // (no voided crossing) does not set it.
+  // this attempt could have counted: a turnpoint/goal crossing past the
+  // cutoff found by the attempt's own scan, or — for attempts that did NOT
+  // reach goal — a whole suppressed post-landing attempt (the suppressed
+  // crossing might have been their real flight). Attempts that reached goal
+  // are not flagged by suppression alone: a post-landing SSS re-cross cannot
+  // have affected a score that was sealed at the goal crossing. Surfaces as
+  // hasFlaggedCrossings (⚑) so admins can review the truncation instead of
+  // it failing silently. Distance-only truncation (no voided crossing) does
+  // not set it.
   truncationVoidedCrossing?: boolean;
+}
+
+/** detectAttempts-internal: one greedy TP-matcher run from a single SSS crossing. */
+interface AttemptScan {
+  sssCrossing: CylinderCrossing;
+  essCrossing: CylinderCrossing | null;
+  goalCrossing: CylinderCrossing | null;
+  turnpointCrossings: CylinderCrossing[];
+  reachedGoal: boolean;
+  lastTurnpointIndex: number;
+  taskTimeS: number | null;
+  truncationVoidedCrossing: boolean;
 }
 
 /**
@@ -297,6 +317,9 @@ export interface AttemptTrace {
  * crossing direction irrelevant, so entry-style starts work too):
  *   - Greedily match remaining TPs forward using segment-circle intersection
  *   - Build an AttemptTrace per SSS crossing
+ *
+ * XC only: a self-correcting landing anchor (Step 3) decides which crossings
+ * were flight and where the §12.1 landing falls — see the comments there.
  */
 export function detectAttempts(
   fixes: Fix[],
@@ -320,20 +343,21 @@ export function detectAttempts(
   // or both legs of a graze-through — spawns an attempt; Stage 7 picks the
   // best, so extra attempts are harmless.
   //
-  // Movement gate (XC only): an XC start is flown, not walked. A boundary
-  // crossing only spawns an attempt when the crossing segment shows movement
-  // — the faster of its two endpoint fixes is at least
-  // SSS_CROSSING_MIN_SPEED_KMH. This ignores on-foot crossings (~4–6 km/h
-  // walk-in to an entry-style start) and parked-drift crossings, which
-  // previously anchored the landing scan at launch prep and silently zeroed
-  // the whole flight; a walk-in track now gets the explicit NO_SSS_CROSSING
-  // error again. Accepted edge: a pilot parked exactly on the boundary in
-  // strong wind loses that particular crossing and starts on a later one. A
-  // fix with an unknown speed passes the gate (benefit of the doubt). HAF is
-  // exempt — travelling on foot is the point of the game there.
+  // Drift gate (XC only): an SSS boundary crossing is ignored only when BOTH
+  // endpoint fixes of the crossing segment are below the stillness threshold
+  // (SUSTAINED_STILLNESS_SPEED_KMH) — the GPS-noise drift of a parked pilot,
+  // not travel. Anything faster passes: walking, driving and slow flight all
+  // look alike at the boundary — a paraglider penetrating a strong headwind
+  // routinely crosses at single-digit ground speed, so no speed floor can
+  // separate flight from ground travel here. The landing-anchor loop in
+  // Step 3 decides what was actually flight. Accepted edge: a pilot parked
+  // exactly on the boundary in still-drift loses that particular crossing
+  // and starts on a later one. A fix with an unknown speed passes the gate
+  // (benefit of the doubt). HAF is exempt — travelling on foot is the point
+  // of the game there.
   const sssCrossings: Array<{ fixIndex: number; t: number; crossingTime: number }> = [];
   const sssEffectiveR = sss.radiusM + tagToleranceM(sss.radiusM);
-  const applyMovementGate = competitionType === 'XC';
+  const applyDriftGate = competitionType === 'XC';
 
   for (let i = 0; i < fixes.length - 1; i++) {
     const a = fixes[i];
@@ -342,7 +366,7 @@ export function detectAttempts(
       a.derivedSpeedKmh ?? Number.POSITIVE_INFINITY,
       b.derivedSpeedKmh ?? Number.POSITIVE_INFINITY,
     );
-    if (applyMovementGate && segmentMaxSpeed < SSS_CROSSING_MIN_SPEED_KMH) continue;
+    if (applyDriftGate && segmentMaxSpeed < SUSTAINED_STILLNESS_SPEED_KMH) continue;
     const aLocal = projectToLocal(a.lat, a.lng, sss.lat, sss.lng);
     const bLocal = projectToLocal(b.lat, b.lng, sss.lat, sss.lng);
 
@@ -355,39 +379,38 @@ export function detectAttempts(
     return err({ code: 'NO_SSS_CROSSING', message: 'No SSS cylinder crossing was detected in the track' });
   }
 
-  // XC: a landed pilot's later fixes (packing up, walking, car retrieve)
-  // must not earn crossings or distance — §9.3 counts only points "where
-  // the pilot is still flying", §12.1 only "up until the pilot landed".
-  // The landing is GLOBAL to the track: the start of the first
-  // landing-stillness window (≥ 30 s in which every fix is below 5 km/h
-  // AND the gpsAlt range stays under 15 m — a glider parked in ridge lift
-  // bobs in altitude; a landed pilot's GPS alt is flat within noise) that
-  // begins at/after the FIRST valid SSS crossing. Anchoring at the first
-  // crossing keeps pre-launch rigging stillness out of scope; using one
-  // cutoff for every attempt means a post-landing retrieve that re-crosses
-  // the SSS boundary can never spawn a scoreable attempt.
-  // HAF is exempt: travelling on the ground is part of the game there.
-  const landingCutoffMs =
-    competitionType === 'XC'
-      ? findLandingCutoffMs(fixes.filter((f) => f.timestamp >= sssCrossings[0].crossingTime))
-      : null;
+  // ── Step 2: greedy TP matcher — one run per SSS crossing ───────────────────
 
-  // ── Step 2: For each SSS crossing, greedily match remaining TPs ────────────
-  const attempts: AttemptTrace[] = [];
-  // §12.1: the XC flight ended at the landing, so an SSS crossing at/after
-  // the cutoff is on the ground and can never start a valid attempt. The
-  // suppressed crossing itself passed the movement gate, so the suppression
-  // voids an otherwise-valid crossing — flag the surviving attempts (⚑) so
-  // the truncation is visible for review.
-  let suppressedAttempt = false;
-
-  for (let ai = 0; ai < sssCrossings.length; ai++) {
-    const sssCross = sssCrossings[ai];
-    if (landingCutoffMs !== null && sssCross.crossingTime >= landingCutoffMs) {
-      suppressedAttempt = true;
-      continue;
+  // Pre-compute goal line bearing once per task (avoid re-running
+  // optimiseRoute per attempt/segment).
+  const goalTp = task.turnpoints[task.turnpoints.length - 1];
+  let cachedGoalBearing: number | undefined;
+  if (goalTp?.type === 'GOAL_LINE') {
+    cachedGoalBearing = goalTp.goalLineBearingDeg ?? undefined;
+    if (cachedGoalBearing == null) {
+      try {
+        const cyls: Cylinder[] = task.turnpoints.map((t) => ({
+          lat: t.lat,
+          lng: t.lng,
+          radiusM: t.radiusM,
+          type: t.type,
+        }));
+        cachedGoalBearing = optimiseRoute(cyls).goalLineBearingDeg;
+      } catch {
+        const prevTp = task.turnpoints[task.turnpoints.length - 2];
+        if (prevTp) {
+          const prevLocal = projectToLocal(prevTp.lat, prevTp.lng, goalTp.lat, goalTp.lng);
+          const inboundAngle = (Math.atan2(-prevLocal.x, -prevLocal.y) * 180) / Math.PI;
+          cachedGoalBearing = (inboundAngle + 90 + 360) % 360;
+        }
+      }
     }
+  }
 
+  const scanFromCrossing = (
+    sssCross: { fixIndex: number; t: number; crossingTime: number },
+    landingCutoffMs: number | null,
+  ): AttemptScan => {
     const sssCrossing: CylinderCrossing = {
       turnpointId: sss.id,
       sequenceIndex: sss.sequenceIndex,
@@ -412,31 +435,6 @@ export function detectAttempts(
     // Set when the landing cutoff voids an otherwise-valid crossing for
     // this attempt — surfaces as ⚑ instead of a silent rescore.
     let truncationVoidedCrossing = false;
-
-    // Pre-compute goal line bearing once per attempt (avoid re-running optimiseRoute per segment)
-    const goalTp = task.turnpoints[task.turnpoints.length - 1];
-    let cachedGoalBearing: number | undefined;
-    if (goalTp?.type === 'GOAL_LINE') {
-      cachedGoalBearing = goalTp.goalLineBearingDeg ?? undefined;
-      if (cachedGoalBearing == null) {
-        try {
-          const cyls: Cylinder[] = task.turnpoints.map((t) => ({
-            lat: t.lat,
-            lng: t.lng,
-            radiusM: t.radiusM,
-            type: t.type,
-          }));
-          cachedGoalBearing = optimiseRoute(cyls).goalLineBearingDeg;
-        } catch {
-          const prevTp = task.turnpoints[task.turnpoints.length - 2];
-          if (prevTp) {
-            const prevLocal = projectToLocal(prevTp.lat, prevTp.lng, goalTp.lat, goalTp.lng);
-            const inboundAngle = (Math.atan2(-prevLocal.x, -prevLocal.y) * 180) / Math.PI;
-            cachedGoalBearing = (inboundAngle + 90 + 360) % 360;
-          }
-        }
-      }
-    }
 
     // Use while loop so we can re-check the same fix-pair after a TP is achieved.
     // The scan deliberately continues PAST the landing cutoff: a would-be
@@ -569,10 +567,7 @@ export function detectAttempts(
     const timingCrossing = essCrossing ?? goalCrossing;
     const taskTimeS = timingCrossing !== null ? (timingCrossing.crossingTime - sssCrossing.crossingTime) / 1000 : null;
 
-    attempts.push({
-      // attempts.length, not the crossing index: suppressed crossings leave
-      // gaps in `ai`, and attemptIndex must stay contiguous for persistence.
-      attemptIndex: attempts.length,
+    return {
       sssCrossing,
       essCrossing,
       goalCrossing,
@@ -580,25 +575,148 @@ export function detectAttempts(
       reachedGoal,
       lastTurnpointIndex,
       taskTimeS,
-      distanceFlownKm: 0, // populated by calculateDistances
-      landingCutoffMs,
       truncationVoidedCrossing,
-    });
+    };
+  };
+
+  // ── Step 3: XC landing anchor ───────────────────────────────────────────────
+  // A landed pilot's later fixes (packing up, walking, car retrieve) must not
+  // earn crossings or distance — §9.3 counts only points "where the pilot is
+  // still flying", §12.1 only "up until the pilot landed". The landing is
+  // GLOBAL to the track: the start of the first landing-stillness window
+  // (≥ 30 s in which every fix is below 5 km/h AND the gpsAlt range stays
+  // under 15 m — a glider parked in ridge lift bobs in altitude; a landed
+  // pilot's GPS alt is flat within noise) at/after the anchor SSS crossing.
+  //
+  // The anchor is SELF-CORRECTING. Stillness alone cannot tell a landing
+  // from launch-prep rigging, and the drift gate deliberately lets walking
+  // and driving crossings through (no speed floor separates them from slow
+  // flight in wind). So each candidate anchor is tested for FLIGHT EVIDENCE:
+  // do the attempts spawned from crossings in [anchor, cutoff) make any
+  // course progress before the cutoff — a turnpoint crossing beyond the SSS,
+  // or at least FLIGHT_EVIDENCE_MIN_PROGRESS_KM of §9.3 partial distance?
+  //   - Evidence found: the cutoff is THE landing for the whole track. Later
+  //     SSS crossings are post-landing and suppressed — a retrieve car that
+  //     re-crosses the start boundary can never spawn a scoreable attempt.
+  //   - No evidence, later crossings exist: the anchor was pre-flight ground
+  //     movement (car up the hill, hike-in); its crossings are discarded
+  //     (they spawn no attempts) and the scan re-anchors at the first
+  //     crossing past the window. Anchors strictly advance, so this
+  //     terminates.
+  //   - No evidence, no later crossings: explicit NO_SSS_CROSSING — a
+  //     walk-in/drive-in track must never silently persist a truncated
+  //     pre-flight attempt.
+  // HAF is exempt: travelling on the ground is part of the game there.
+  let landingCutoffMs: number | null = null;
+  let suppressedPostLandingCrossing = false;
+  let scans: AttemptScan[] = [];
+
+  if (competitionType !== 'XC') {
+    scans = sssCrossings.map((c) => scanFromCrossing(c, null));
+  } else {
+    // Route/cylinders for the flight-evidence probe. On degenerate geometry
+    // (optimiseRoute throws) distance evidence is unavailable — but so is
+    // all distance credit (calculateDistances zeroes it), so TP-crossing
+    // evidence alone deciding is consistent.
+    const probeCylinders: Cylinder[] = task.turnpoints.map((tp) => ({
+      lat: tp.lat,
+      lng: tp.lng,
+      radiusM: tp.radiusM,
+      type: tp.type,
+      forceGround: tp.forceGround,
+      goalLineBearingDeg: tp.goalLineBearingDeg,
+    }));
+    let probeRoute: OptimisedRoute | null = null;
+    try {
+      probeRoute = optimiseRoute(probeCylinders);
+    } catch {
+      probeRoute = null;
+    }
+
+    const courseProgressKm = (scan: AttemptScan, cutoffMs: number): number => {
+      if (probeRoute === null) return 0;
+      const pilotFixes = fixes
+        .filter((f) => f.timestamp >= scan.sssCrossing.crossingTime && f.timestamp < cutoffMs)
+        .map((f) => ({ lat: f.lat, lng: f.lng, timestamp: f.timestamp }));
+      const crossings = scan.turnpointCrossings.map((c) => ({
+        sequenceIndex: c.sequenceIndex,
+        crossingTime: c.crossingTime,
+      }));
+      return computePartialDistanceKm(probeRoute, probeCylinders, crossings, pilotFixes);
+    };
+
+    let anchorIdx = 0;
+    for (;;) {
+      const anchor = sssCrossings[anchorIdx];
+      const cutoff = findLandingCutoffMs(fixes.filter((f) => f.timestamp >= anchor.crossingTime));
+
+      if (cutoff === null) {
+        // No stillness after this anchor — the pilot flew until the track
+        // ends. Every remaining crossing spawns an attempt; nothing is dead.
+        scans = sssCrossings.slice(anchorIdx).map((c) => scanFromCrossing(c, null));
+        landingCutoffMs = null;
+        break;
+      }
+
+      // Crossings in [anchor, cutoff) are this anchor's attempt candidates.
+      let firstPostCutoffIdx = sssCrossings.length;
+      for (let i = anchorIdx; i < sssCrossings.length; i++) {
+        if (sssCrossings[i].crossingTime >= cutoff) {
+          firstPostCutoffIdx = i;
+          break;
+        }
+      }
+      const candidateScans = sssCrossings.slice(anchorIdx, firstPostCutoffIdx).map((c) => scanFromCrossing(c, cutoff));
+
+      const hasFlightEvidence =
+        candidateScans.some((s) => s.turnpointCrossings.length > 1) ||
+        candidateScans.some((s) => courseProgressKm(s, cutoff) >= FLIGHT_EVIDENCE_MIN_PROGRESS_KM);
+
+      if (hasFlightEvidence) {
+        scans = candidateScans;
+        landingCutoffMs = cutoff;
+        // §12.1: an SSS crossing at/after the landing is on the ground and
+        // can never start a valid attempt. It passed the drift gate, so the
+        // suppression voids an otherwise-valid crossing — remembered here
+        // and surfaced as ⚑ on the surviving non-goal attempts below.
+        suppressedPostLandingCrossing = firstPostCutoffIdx < sssCrossings.length;
+        break;
+      }
+
+      // No flight evidence: the stillness was pre-flight ground time (car up
+      // the hill, hike-in), not a landing. These crossings spawn no attempts.
+      const nextAnchorIdx = Math.max(firstPostCutoffIdx, anchorIdx + 1);
+      if (nextAnchorIdx >= sssCrossings.length) {
+        return err({
+          code: 'NO_SSS_CROSSING',
+          message:
+            'No flown SSS cylinder crossing was detected — the only start-boundary crossings were pre-flight ground movement',
+        });
+      }
+      anchorIdx = nextAnchorIdx;
+    }
   }
 
-  if (attempts.length === 0) {
-    // Every gate-passing SSS crossing postdated the landing — degenerate,
-    // but surface the same explicit error a crossing-free track gets.
-    return err({
-      code: 'NO_SSS_CROSSING',
-      message: 'No SSS cylinder crossing was detected before the landing',
-    });
-  }
+  // ── Step 4: materialise attempts ────────────────────────────────────────────
+  const attempts: AttemptTrace[] = scans.map((scan, i) => ({
+    // Index over the surviving scans — discarded/suppressed crossings leave
+    // no gaps, and attemptIndex must stay contiguous for persistence.
+    attemptIndex: i,
+    ...scan,
+    distanceFlownKm: 0, // populated by calculateDistances
+    landingCutoffMs,
+  }));
 
-  if (suppressedAttempt) {
-    // A whole attempt was voided by the landing cutoff — make the
-    // suppression visible on everything that survives.
-    for (const attempt of attempts) attempt.truncationVoidedCrossing = true;
+  if (suppressedPostLandingCrossing) {
+    // Scope the ⚑: a post-landing SSS re-cross cannot have affected an
+    // attempt that already reached goal (its scan sealed at the goal
+    // crossing, before the landing), so goal attempts stay clean — flagging
+    // them would bury the flags that actually need review. Partial attempts
+    // keep the flag: the suppressed crossing might have been their real
+    // flight.
+    for (const attempt of attempts) {
+      if (!attempt.reachedGoal) attempt.truncationVoidedCrossing = true;
+    }
   }
 
   return ok(attempts);
@@ -899,10 +1017,26 @@ const SUSTAINED_STILLNESS_SPEED_KMH = 5;
 // 0–4 km/h ground speed but bobbing in lift) from reading as landed.
 const LANDING_STILLNESS_WINDOW_S = 30;
 const LANDING_MAX_ALT_RANGE_M = 15;
-// Stage 3 movement gate: minimum endpoint ground speed for an SSS boundary
-// crossing to spawn an attempt. Walking pace is ~4–6 km/h; slow flight in
-// wind stays comfortably above this.
-const SSS_CROSSING_MIN_SPEED_KMH = 8;
+// Stage 3 flight-evidence threshold: minimum §9.3 course progress (km) the
+// attempts in front of a candidate landing anchor must show for the anchor's
+// stillness window to be accepted as THE landing (see detectAttempts Step 3).
+// Must sit below the shortest genuine post-start flight the suppression
+// machinery protects (the sink-back bomb-out in the retrieve-car regression
+// makes ~0.7 km of course progress) and above the geometric slop of a
+// vehicle or walker crossing the start boundary near the optimised route
+// start point (~0.1 km).
+//
+// Accepted residual: a pre-flight vehicle that drives MORE than this
+// distance along the course line after crossing the SSS and then stops
+// (rigging stillness) defeats the no-progress test — launch-prep stillness
+// is then accepted as the landing and the genuine flight that follows is
+// suppressed-and-flagged (⚑, visible to admins) rather than scored. Inverse
+// residual: a genuine flight with LESS than this much course progress looks
+// like ground movement — with no later boundary crossing the upload gets the
+// explicit NO_SSS_CROSSING error rather than a silent truncation; with a
+// later crossing the scan re-anchors there. Both are the same
+// flight-vs-drive limitation class as the stillness signature itself.
+const FLIGHT_EVIDENCE_MIN_PROGRESS_KM = 0.5;
 const EARTH_RADIUS_M = 6_371_000;
 const DEG_RAD = Math.PI / 180;
 
