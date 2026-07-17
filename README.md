@@ -8,13 +8,15 @@ A fullstack TypeScript application for paragliding and hike & fly competition sc
 - **Frontend**: React + Vite + TypeScript (ESNext)
 - **Database**: SQLite with WAL mode, better-sqlite3
 - **Auth**: Google OAuth → JWT (RS256, HttpOnly cookies)
-- **Job Queue**: SQLite-backed queue with single-process worker
+- **Scoring**: FAI S7F-derived GAP model, fully synchronous — shared pipeline code runs on
+  both server (authoritative) and client (upload preview); see
+  [src/shared/SCORING.md](./src/shared/SCORING.md)
 
 ## Quick Start
 
 ### Prerequisites
 
-- Node.js >=20 (managed with `fnm`)
+- Node.js >=22 (managed with `fnm`)
 - Python 3.8+ (managed with `uv` for native module compilation)
 
 ### Setup
@@ -73,12 +75,12 @@ This project uses Google OAuth for authentication. The OAuth client is managed u
 
 **For Local Development:**
 
-1. **The OAuth client is already configured** with these credentials (managed by admin@nwparagliding.com):
-   - Client ID: `861900491662-msd4hraiu4dqre5f3ktgpopc4j1gc8pg.apps.googleusercontent.com`
-   - Client Secret: `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`
-   - Authorized redirect URI: `http://localhost:3000/api/v1/auth/oauth/google/callback`
+1. Obtain the local-dev OAuth client ID and secret from admin@nwparagliding.com — never
+   commit them (`.env` is gitignored; `.env.example` carries placeholders only). The
+   authorized redirect URI for local dev is
+   `http://localhost:3000/api/v1/auth/oauth/google/callback`.
 
-2. **These credentials are already in the project** - you just need to copy `.env.example` to `.env` (they're pre-filled)
+2. Put the values in `.env` as `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` (see `.env.example`).
 
 3. **To test login:**
    - Start the dev server: `npm run dev`
@@ -120,36 +122,45 @@ npm run typecheck    # Type check both projects
 ```
 /
 ├── src/                    # Backend TypeScript source
-│   ├── server.ts          # Fastify entry point
+│   ├── server.ts          # Fastify entry point (migrations + boot rescore sweep)
 │   ├── auth.ts            # JWT + OAuth middleware
-│   ├── pipeline.ts        # IGC processing pipeline
-│   ├── job-queue.ts       # Background job system
+│   ├── shared/            # Code shared with the frontend (preview parity)
+│   │   ├── pipeline.ts    # IGC processing pipeline
+│   │   ├── task-engine.ts # Geometry + GAP scoring formulas
+│   │   └── SCORING.md     # The league's scoring model
+│   ├── job-queue.ts       # Queue infra + rebuildTaskResults (scoring rebuild)
+│   ├── upload.ts          # IGC upload handler
+│   ├── reprocess.ts       # Boot-time reprocess of stale tracks (SCORER_VERSION)
+│   ├── task-parsers.ts    # .xctsk / .cup import
+│   ├── task-exporters.ts  # .xctsk / .cup export + QR codes
 │   ├── schema.sql         # Database schema
+│   ├── migrations/        # Numbered SQL migrations
 │   └── routes/            # API route handlers
 ├── frontend/              # React frontend
 │   ├── src/
 │   │   ├── main.tsx       # React entry point
 │   │   ├── App.tsx        # Root component
 │   │   ├── api/           # API client functions
+│   │   ├── lib/           # previewPipeline (client-side scoring preview)
 │   │   ├── hooks/         # React hooks
 │   │   └── pages/         # Page components
 │   └── vite.config.ts
+├── docs/                  # Architecture documentation
 └── AGENTS.md              # Coding agent guidelines
 
 ```
 
-## Current Status
+## Features
 
-🚧 **Early Development** 🚧
-
-- ✅ Database schema and migrations ready
-- ✅ Authentication architecture implemented
-- ✅ Frontend UI components complete
-- ✅ IGC processing pipeline designed
-- ✅ API route handlers (auth, leagues, tasks, submissions)
-- ✅ Google OAuth login working (localhost)
-- 🚧 Job worker (disabled until TaskRepository implemented)
-- 🚧 IGC upload and processing (route exists, needs implementation)
+- Multi-league / multi-season platform with Google OAuth and role-based admin
+- Task management: .xctsk / .cup import, export, and QR codes (XCTrack-compatible)
+- IGC upload with full GAP scoring: FAI S7F §12.2 time points, §11 goal-ratio
+  distance/time split, landing detection, direction-agnostic start crossings,
+  crossing-order enforcement (see [src/shared/SCORING.md](./src/shared/SCORING.md))
+- Client-side upload preview running the same shared pipeline the server scores with
+- Hike & fly seasons with ground-only turnpoints (`[GND]` prefix)
+- Live leaderboards and season standings; scores rebuild on every submission while a
+  task is open, tracks reprocess automatically when the scorer version changes
 
 ## Deployment
 
@@ -188,8 +199,11 @@ fly deploy --remote-only \
 
 ## Documentation
 
-- See [AGENTS.md](./AGENTS.md) for detailed coding guidelines and architecture notes
-- See [src/api-spec.ts](./src/api-spec.ts) for REST API specification
+- [src/shared/SCORING.md](./src/shared/SCORING.md) — the league's scoring model (formulas,
+  deliberate deviations from FAI S7F, rescoring lifecycle)
+- [docs/backend-architecture.md](./docs/backend-architecture.md) — backend architecture
+- [AGENTS.md](./AGENTS.md) — coding guidelines and architecture notes for agents
+- [src/api-spec.ts](./src/api-spec.ts) — REST API specification
 
 ## License
 
