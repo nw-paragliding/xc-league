@@ -395,10 +395,14 @@ See `.env.example` for all required variables. Key ones:
 
 ### Current State / Known Issues
 
-- **Routes not implemented**: The `src/routes/` directory is empty. Route handlers are currently commented out in `server.ts`
-- **Job worker disabled**: `bootstrapWorker()` is commented out because `TaskRepository` is not yet implemented
-- **OAuth not configured**: Google OAuth requires real credentials; placeholder values in `.env` will not work for login
-- **No health endpoint**: The API doesn't have a `/health` route yet
+- **Fully implemented**: routes (`src/routes/`), IGC upload + scoring, task import/export,
+  and the boot-time reprocess/rebuild sweep are all live — see
+  `docs/backend-architecture.md` for the current shape
+- **Job queue is idle infrastructure**: `bootstrapWorker()` runs but no job types are
+  registered; scoring is synchronous (`rebuildTaskResults` inline)
+- **OAuth needs real credentials**: obtain them from admin@nwparagliding.com; placeholder
+  values in `.env` will not work for login (never commit real values)
+- **No health endpoint**: the API doesn't have a `/health` route yet
 
 ---
 

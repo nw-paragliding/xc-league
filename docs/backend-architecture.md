@@ -59,22 +59,27 @@ In production, Fastify also serves the Vite-built frontend from `dist/client/` a
 ├── src/                        # Backend TypeScript source
 │   ├── server.ts               # Entry point — plugin registration, startup
 │   ├── auth.ts                 # JWT, OAuth flow, request decoration, auth guards
-│   ├── pipeline.ts             # IGC processing pipeline (pure functions)
-│   ├── job-queue.ts            # SQLite-backed job queue + worker
-│   ├── upload.ts               # IGC upload and download handlers
-│   ├── track-replay.ts         # Track replay endpoint
+│   ├── shared/                 # Code shared with the frontend (client preview parity)
+│   │   ├── pipeline.ts         # IGC processing pipeline (pure functions)
+│   │   ├── task-engine.ts      # Geometry, route optimisation, GAP scoring formulas
+│   │   ├── pipeline-parity-fixture.ts  # Shared fixture pinning client/server parity
+│   │   └── SCORING.md          # The league's scoring model (FAI S7F-derived)
+│   ├── job-queue.ts            # Job-queue infra + rebuildTaskResults (scoring rebuild)
+│   ├── upload.ts               # IGC upload handler (runs the pipeline inline)
+│   ├── reprocess.ts            # Boot-time re-run of stale tracks (SCORER_VERSION)
 │   ├── task-parsers.ts         # .xctsk and .cup file parsers
 │   ├── task-exporters.ts       # .xctsk, .cup exporters + QR deep-link builder
-│   ├── migrate.ts              # Migration runner (standalone process)
+│   ├── migrate.ts              # Migration runner
+│   ├── migration-helpers.ts    # Shared migration utilities
 │   ├── schema.sql              # Base database schema (applied once by migration 0001)
 │   ├── api-spec.ts             # Inline API specification comments
-│   ├── optimiser.ts            # Route optimisation utilities
 │   ├── migrations/             # Numbered SQL migration files (0002, 0003, ...)
 │   └── routes/
 │       ├── auth.ts             # Fastify route wiring for auth endpoints
 │       ├── admin.ts            # Super-admin endpoints
 │       └── leagues.ts          # All league / season / task / submission endpoints
 ├── frontend/                   # React + Vite frontend (separate tsconfig)
+├── docs/                       # This document and friends
 ├── dist/                       # Compiled output (gitignored)
 │   ├── server.js               # Built backend entry point
 │   └── client/                 # Vite frontend build
@@ -95,7 +100,7 @@ Responsible for wiring everything together and starting the HTTP listener.
 1. `import 'dotenv/config'` — must be the first import; loads `.env`
 2. Open SQLite with `journal_mode = WAL`, `foreign_keys = ON`, `busy_timeout = 5000`
 3. `loadAuthConfig()` — reads all required env vars, crashes fast with a clear message if any are missing
-4. Instantiate `SQLiteJobQueue`; `bootstrapWorker()` is commented out until `TaskRepository` is implemented
+4. Instantiate `SQLiteJobQueue` + `bootstrapWorker()` (the worker runs but no job types are registered today — scoring is synchronous; stale jobs of removed types are deleted)
 5. Register Fastify plugins in order:
    - `@fastify/cookie` — required for the auth cookie
    - `@fastify/multipart` — 5 MB file limit, 1 file per request
@@ -103,8 +108,11 @@ Responsible for wiring everything together and starting the HTTP listener.
    - `authPlugin` — JWT decode + `request.user` decoration on every request
 6. In production: register `@fastify/static` serving `dist/client/`; `setNotFoundHandler` sends `index.html` for non-API GETs
 7. Dynamically import and register route modules under `/api/v1`: auth, admin, leagues
-8. Register `SIGTERM` / `SIGINT` graceful shutdown handlers
-9. Listen on `0.0.0.0:PORT`
+8. Run migrations, then the boot scoring sweep: `reprocessStaleSubmissions()` (re-runs the
+   pipeline for tracks stored under an older `SCORER_VERSION`) followed by
+   `rebuildTaskResults` over every non-deleted task
+9. Register `SIGTERM` / `SIGINT` graceful shutdown handlers
+10. Listen on `0.0.0.0:PORT`
 
 **Key constants:**
 
@@ -169,17 +177,17 @@ Called by route handlers, not as middleware:
 
 ---
 
-### `src/pipeline.ts` — IGC Processing Pipeline
+### `src/shared/pipeline.ts` — IGC Processing Pipeline
 
-A purely functional, staged pipeline. Every stage returns `Result<T, E>` and never throws. No database access occurs inside the pipeline — all inputs are passed in by the caller.
+A purely functional, staged pipeline. Every stage returns `Result<T, E>` and never throws. No database access occurs inside the pipeline — all inputs are passed in by the caller. It lives under `src/shared/` because the frontend imports it directly for the upload preview (`frontend/src/lib/previewPipeline.ts`) — client and server run the same code, pinned by the parity tests against `src/shared/pipeline-parity-fixture.ts`. The geometry and GAP scoring formulas live alongside it in `src/shared/task-engine.ts`; the scoring model is documented in `src/shared/SCORING.md`.
 
 See [Section 7](#7-igc-processing-pipeline) for full stage-by-stage documentation.
 
 ---
 
-### `src/job-queue.ts` — Background Job Queue
+### `src/job-queue.ts` — Job Queue Infra + `rebuildTaskResults`
 
-A SQLite-backed job queue with an EventEmitter-woken worker running in the same process.
+A SQLite-backed job queue with an EventEmitter-woken worker running in the same process (currently idle — no registered job types). This module also hosts `rebuildTaskResults`, the synchronous authoritative scoring rebuild.
 
 See [Section 8](#8-job-queue-and-background-workers) for full documentation.
 
@@ -210,9 +218,9 @@ migration 0013 — "closed" is derived from `close_date`.)
 
 ---
 
-### `src/track-replay.ts` — Track Replay
+### Track Replay (`src/routes/leagues.ts`)
 
-Handles `GET .../submissions/:submissionId/track`.
+Handles `GET .../submissions/:submissionId/track` (implemented inside the leagues route module — there is no separate `track-replay.ts`).
 
 **Design decision:** GPS fixes are **not stored** in the database. They are re-parsed from the raw IGC BLOB on every request (~10–30 ms). Storing ~10,000 fixes per submission at club scale (e.g. 200 submissions) would add ~50 MB of rarely-accessed data to SQLite. Turnpoint crossing events (computed at submission time) are loaded from the DB and overlaid on the re-parsed fixes.
 
@@ -588,6 +596,11 @@ runPipeline result
 ---
 
 ## 8. Job Queue and Background Workers
+
+> **Status: idle infrastructure.** No job types are registered today — scoring runs
+> synchronously (`rebuildTaskResults` inline on upload/delete paths, boot-time reprocess in
+> `src/reprocess.ts`, standings as a live SQL aggregate). The queue/worker below is kept for
+> future async work (notifications etc.); the server deletes jobs of removed types at startup.
 
 ### Queue Architecture
 
